@@ -40,7 +40,7 @@
 #endif
 
 /* ═══════════════════════════════════════════════════════════════════════
- * ARGS — Unified CLI Parameters
+ * ARGS — CLI Parameters (Otto Score only)
  * ═══════════════════════════════════════════════════════════════════════ */
 
 typedef struct {
@@ -53,21 +53,9 @@ typedef struct {
     int    debug;           /* --debug: verbose output */
     unsigned int seed;      /* Random seed (--seed, default: 42) */
     char   out[256];        /* --out DIR: export directory */
-    float  lr;              /* Learning rate (--lr, default: 0.05 for Otto) */
-    uint32_t lr_uint;       /* Learning rate as uint32 */
-    uint32_t lr_min_uint;   /* Min LR for AdamW (unused by Otto) */
-    int    warmup_epochs;   /* Warmup epochs (unused by Otto) */
-    int    no_decay;        /* --no-decay: constant LR */
-    int    lr_shift;        /* Bits per epoch for shift decay */
+    float  lr;              /* Step size (--lr, default: 0.05) */
     int    threadN;         /* OpenMP threads (--threadN, default: 8) */
     int    debug_h0;        /* --debug-h0: per-neuron debug */
-    int    debug_h1;        /* --debug-h1: unused */
-    int    debug_detail;    /* --debug-detail: unused */
-    int    hebbian_random;  /* unused (Otto Score compatibility) */
-    int    hebbian_down_pp; /* unused */
-    int    hebbian_up_pp;   /* unused */
-    int    hebbian_mismatch; /* unused */
-    char   filter[64];      /* --filter: unused */
 } ki_Args;
 
 static inline ki_Args ki_args_defaults(void) {
@@ -82,20 +70,8 @@ static inline ki_Args ki_args_defaults(void) {
     a.seed          = 42;
     a.out[0]        = '\0';
     a.lr            = 0.05f;
-    a.lr_uint       = 0;
-    a.lr_min_uint   = 0;
-    a.warmup_epochs = 0;
-    a.no_decay      = 0;
-    a.lr_shift      = 1;
     a.threadN       = 8;
     a.debug_h0      = 0;
-    a.debug_h1      = 0;
-    a.debug_detail  = 0;
-    a.hebbian_random = 0;
-    a.hebbian_down_pp = 33;
-    a.hebbian_up_pp   = 66;
-    a.hebbian_mismatch = 0;
-    a.filter[0] = '\0';
     return a;
 }
 
@@ -149,16 +125,6 @@ static inline void ki_parse_args(int argc, char *argv[], ki_Args *a) {
             a->out[sizeof(a->out) - 1] = '\0';
         } else if (strcmp(argv[i], "--debug-h0") == 0) {
             a->debug_h0 = 1;
-        } else if (strcmp(argv[i], "--hebbian-random") == 0 ||
-                   strcmp(argv[i], "--hebbian-mismatch") == 0 ||
-                   strcmp(argv[i], "--warmup") == 0 ||
-                   strcmp(argv[i], "--no-decay") == 0 ||
-                   strcmp(argv[i], "--filter") == 0 ||
-                   strcmp(argv[i], "--debug-h1") == 0 ||
-                   strcmp(argv[i], "--debug-detail") == 0) {
-            /* Consume value if present */
-            if (i + 1 < argc && argv[i+1][0] != '-') i++;
-            /* Silently accept (compatibility with ki-w0) */
         } else {
             fprintf(stderr, "[ERROR] Unknown argument: %s\nTry --help\n", argv[i]);
             exit(1);
@@ -258,8 +224,6 @@ static int ki_mnist_read(ki_MNISTData *out) {
         "data/mnist",
         "../data/mnist",
         "www/data/mnist",
-        "mnist",
-        "../mnist",
         NULL
     };
     const char *data_dir = NULL;

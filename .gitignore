@@ -6,3 +6,4 @@
 
 logs/
 tags
+*.sw*

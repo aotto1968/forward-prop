@@ -39,46 +39,43 @@ Tested on: Linux x86_64, gcc-15, AVX-512. Also works on ARM64 with clang.
 ## Quick Start
 
 ```bash
-# Build both XNOR and XOR variants
 make all
-
-# Download MNIST data (required once)
 make setup
-
-# Test with bundled model (H=512, 20 epochs training, >96% expected)
 make test
-
-# Push to GitHub (after git init + remote config)
 make push
 ```
 
 Expected output:
 ```
-Model:    H=512  XNOR
-Eval:     96.3%  (9630/10000)
-Time:     276ms  (27.6 µs/sample)
+=== XNOR inference with XNOR-trained model ===
+  Model:   H=512  XNOR
+  Eval:    96.3%
+
+=== XOR inference with XOR-trained model ===
+  Model:   H=512  XOR
+  Eval:    96.7%
 ```
 
 ## XNOR vs XOR
 
 Both variants are built from the same source using a compile-time switch.
-**The model determines which mode to use. The bundled model is XNOR-trained.**
+**Each variant requires its matching model.**
 
-| Mode | Build | H0_MATCH | With bundled model | With own XOR model |
-|:-----|:------|:---------|:------------------:|:------------------:|
-| XNOR | `make xnor` | `~(in ^ W0)` | **96.3%** ✅ | random ❌ |
-| XOR  | `make xor`  | `in ^ W0` | random ❌ | **96.3%** ✅ |
+| Mode | Build | H0_MATCH | Model file | Accuracy |
+|:-----|:------|:---------|:-----------|:---------|
+| XNOR | `make xnor` | `~(in ^ W0)` | `models/model-xnor.otto` | **96.3%** |
+| XOR  | `make xor`  | `in ^ W0` | `models/model-xor.otto` | **96.7%** |
 
 Both modes achieve identical accuracy at the same H. XOR saves one NOT
 operation per bit on DRAM hardware — useful for chip implementations.
-To train an XOR model, use the trainer in `ki-w2/` with `-DH0_XOR`.
+To train your own model, use the trainer in `ki-w2/` with the matching
+compile flag (`-DH0_XOR` for XOR mode).
 
 ## Full MNIST Evaluation
 
-To evaluate on all 10,000 test samples:
-
 ```bash
-./mlp-otto-score-ifc-xnor.exe --out models/ --evalN 10000
+./mlp-otto-score-ifc-xnor.exe --out models/ --model model-xnor.otto --evalN 10000
+./mlp-otto-score-ifc-xor.exe --out models/ --model model-xor.otto --evalN 10000
 ```
 
 You can also use your own exported model (see the trainer in `ki-w2/`):
@@ -105,9 +102,10 @@ Single binary file containing everything needed for inference:
   Per-class base scores
 ```
 
-| Model | H | Size | Accuracy | Download |
-|:------|:-:|:----:|:--------:|:---------|
-| `models/model.otto` | 512 | ~1.0 MB | **95.5%** | included |
+| Model | H | Size | Accuracy |
+|:------|:-:|:----:|:--------:|
+| `models/model-xnor.otto` | 512 | ~1.0 MB | **96.3%** |
+| `models/model-xor.otto` | 512 | ~1.0 MB | **96.7%** |
 
 ## Training Your Own Model
 
@@ -133,7 +131,8 @@ make mlp-otto-score.exe
 │   ├── maj3.h               # MAJ3 majority_tree
 │   └── w0_random.h          # splitmix64 RNG
 ├── models/
-│   └── model.otto           # Pre-trained (H=512, 20ep, XNOR)
+│   ├── model-xnor.otto      # Pre-trained XNOR (H=512, 20ep, 96.3%)
+│   └── model-xor.otto       # Pre-trained XOR (H=512, 20ep, 96.7%)
 └── .gitignore
 ```
 

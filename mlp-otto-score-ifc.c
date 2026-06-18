@@ -1,16 +1,18 @@
 /*
- * ki-w2/mlp-otto-score-ifc.c — Otto Score Inference
- * ===================================================
+ * mlp-otto-score-ifc.c — Otto Score Inference
+ * =============================================
  *
- * Loads an exported Otto Score model (model.otto) and classifies
- * MNIST Test-Daten. Rein &|~ + int32 — kein float, kein AdamW.
+ * Loads an exported Otto Score model and classifies MNIST test data.
+ * Pure &|~ + int32 — no float, no multiply, no AdamW.
  *
  * Build:
- *   make mlp-otto-score-ifc.exe
+ *   make all                   (XNOR + XOR)
+ *   make xnor                  (XNOR only)
+ *   make xor                   (XOR only)
  *
  * Usage:
- *   ./mlp-otto-score-ifc.exe --load out/h2048/
- *   ./mlp-otto-score-ifc.exe --load out/h2048/ --evalN 2000 --quick
+ *   ./mlp-otto-score-ifc-xnor.exe --model models/model-xnor.otto
+ *   ./mlp-otto-score-ifc-xor.exe  --model models/model-xor.otto
  */
 #include "ki-common.h"
 #include "maj3.h"
@@ -62,11 +64,10 @@ typedef struct {
 
 
 /* ═══════════════════════════════════════════════════════════════════
- * MODEL LOADER — loads model.otto from directory
- * ═══════════════════════════════════════════════════════════════════ */
-static OttoModel *model_load(const char *dir) {
-    char path[512];
-    snprintf(path, sizeof(path), "%s/model.otto", dir);
+ * MODEL LOADER — loads model from .otto file
+ * ═══════════════════════════════════════════════════════════════════
+ */
+static OttoModel *model_load_path(const char *path) {
 
     FILE *f = fopen(path, "rb");
     if (!f) {
@@ -202,23 +203,23 @@ static float accuracy_pct(const uint32_t *X, const uint8_t *Y, int N,
 
 
 /* ═══════════════════════════════════════════════════════════════════
- * MAIN — minimal arg parser, inference only needs --out --evalN --threadN
+ * MAIN — minimal arg parser
  * ═══════════════════════════════════════════════════════════════════ */
 int main(int argc, char *argv[]) {
-    char export_dir[256] = "";
+    char model_path[512] = "";
     int evalN = 10000;
     int threadN = 8;
 
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
-            printf("Usage: %s --out <export-dir> [options]\n", argv[0]);
-            printf("  --out DIR     Load model from directory (required)\n");
+            printf("Usage: %s --model <path> [options]\n", argv[0]);
+            printf("  --model PATH  Path to .otto model file (required)\n");
             printf("  --evalN N     Eval samples (default: 10000)\n");
             printf("  --threadN N   OpenMP threads (default: 8)\n");
             return 0;
-        } else if (strcmp(argv[i], "--out") == 0 && i + 1 < argc) {
-            strncpy(export_dir, argv[++i], sizeof(export_dir) - 1);
-            export_dir[sizeof(export_dir) - 1] = '\0';
+        } else if (strcmp(argv[i], "--model") == 0 && i + 1 < argc) {
+            strncpy(model_path, argv[++i], sizeof(model_path) - 1);
+            model_path[sizeof(model_path) - 1] = '\0';
         } else if (strcmp(argv[i], "--evalN") == 0 && i + 1 < argc) {
             evalN = atoi(argv[++i]);
         } else if (strcmp(argv[i], "--threadN") == 0 && i + 1 < argc) {
@@ -230,16 +231,16 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    if (export_dir[0] == '\0') {
-        fprintf(stderr, "[FATAL] --out DIR is required\n");
-        fprintf(stderr, "Usage: %s --out <export-dir>\n", argv[0]);
+    if (model_path[0] == '\0') {
+        fprintf(stderr, "[FATAL] --model PATH is required\n");
+        fprintf(stderr, "Usage: %s --model <path-to-model.otto>\n", argv[0]);
         return 1;
     }
 
     omp_set_num_threads(threadN);
 
     /* ── Load Model ──────────────────────────────────────────── */
-    OttoModel *model = model_load(export_dir);
+    OttoModel *model = model_load_path(model_path);
     if (!model) return 1;
 
     /* ── Load MNIST ──────────────────────────────────────────── */

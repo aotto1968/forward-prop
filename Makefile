@@ -37,12 +37,12 @@ mlp-otto-score-ifc-xnor.exe: $(SRC) ki-common.h lib/maj3.h
 mlp-otto-score-ifc-xor.exe: $(SRC) ki-common.h lib/maj3.h
 	$(CC) $(CFLAGS) -DH0_XOR -o $@ $(SRC) $(LDLIBS)
 
-test: mlp-otto-score-ifc-xnor.exe
-	@echo "Testing XNOR inference with bundled model..."
-	@./mlp-otto-score-ifc-xnor.exe --out models/ --evalN 2000
+test: mlp-otto-score-ifc-xnor.exe mlp-otto-score-ifc-xor.exe
+	@echo "=== XNOR inference with XNOR-trained model ==="
+	@./mlp-otto-score-ifc-xnor.exe --model models/model-xnor.otto --evalN 2000 2>&1 | grep -E 'Model:|Eval:'
 	@echo ""
-	@echo "Testing XOR inference with bundled model..."
-	@./mlp-otto-score-ifc-xor.exe --out models/ --evalN 2000
+	@echo "=== XOR inference with XOR-trained model ==="
+	@./mlp-otto-score-ifc-xor.exe --model models/model-xor.otto --evalN 2000 2>&1 | grep -E 'Model:|Eval:'
 
 clean:
 	rm -f *.exe

@@ -74,8 +74,8 @@ compile flag (`-DH0_XOR` for XOR mode).
 ## Full MNIST Evaluation
 
 ```bash
-./mlp-otto-score-ifc-xnor.exe --out models/ --model model-xnor.otto --evalN 10000
-./mlp-otto-score-ifc-xor.exe --out models/ --model model-xor.otto --evalN 10000
+./mlp-otto-score-ifc-xnor.exe --model models/model-xnor.otto --evalN 10000
+./mlp-otto-score-ifc-xor.exe --model models/model-xor.otto --evalN 10000
 ```
 
 You can also use your own exported model (see the trainer in `ki-w2/`):

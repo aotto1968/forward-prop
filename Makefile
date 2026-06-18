@@ -10,6 +10,7 @@
 #   make xor    — mlp-otto-score-ifc-xor.exe  (in^W0)
 #   make clean  — remove executables
 #   make test   — quick accuracy test with bundled model
+#   make push   — push to GitHub (requires configured remote)
 
 CC       = gcc
 CFLAGS   = -O3 -march=native -fopenmp -Wall -Wextra -Werror \
@@ -19,7 +20,7 @@ LDLIBS   = -lm -lz
 
 SRC      = mlp-otto-score-ifc.c
 
-.PHONY: all xnor xor clean test setup
+.PHONY: all xnor xor clean test setup push
 
 all: xnor xor
 
@@ -45,3 +46,21 @@ test: mlp-otto-score-ifc-xnor.exe
 
 clean:
 	rm -f *.exe
+
+push:
+	@if ! git rev-parse --git-dir >/dev/null 2>&1; then \
+		echo "[ERROR] Not a git repository. Run: git init && git add -A && git commit -m 'msg'"; \
+		exit 1; \
+	fi
+	@if ! git remote -v | grep -q origin; then \
+		echo "[ERROR] No remote 'origin' configured."; \
+		echo "  Setup: git remote add origin https://<TOKEN>@github.com/aotto1968/forward-prop.git"; \
+		echo "   or:   git remote add origin git@github.com:aotto1968/forward-prop.git"; \
+		exit 1; \
+	fi
+	@if ! git diff --quiet HEAD 2>/dev/null || ! git diff --cached --quiet HEAD 2>/dev/null; then \
+		echo "  Uncommitted changes. Run: git add -A && git commit -m '...'"; \
+		exit 1; \
+	fi
+	@echo "Pushing to GitHub..."
+	git push -u origin master

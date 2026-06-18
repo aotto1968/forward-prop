@@ -48,8 +48,8 @@ make setup
 # Test with bundled model (H=512, 20 epochs training, >96% expected)
 make test
 
-# Or manually:
-./mlp-otto-score-ifc-xnor.exe --out models/
+# Push to GitHub (after git init + remote config)
+make push
 ```
 
 Expected output:

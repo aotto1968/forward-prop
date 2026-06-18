@@ -1,0 +1,5 @@
+# Executables
+*.exe
+
+# macOS
+.DS_Store

@@ -5,6 +5,7 @@
 #
 # Targets:
 #   make (all)  — builds both
+#   make setup  — download MNIST dataset (required once)
 #   make xnor   — mlp-otto-score-ifc-xnor.exe (default: ~(in^W0))
 #   make xor    — mlp-otto-score-ifc-xor.exe  (in^W0)
 #   make clean  — remove executables
@@ -18,9 +19,13 @@ LDLIBS   = -lm -lz
 
 SRC      = mlp-otto-score-ifc.c
 
-.PHONY: all xnor xor clean test
+.PHONY: all xnor xor clean test setup
 
 all: xnor xor
+
+setup:
+	@echo "Downloading MNIST dataset..."
+	@bash fetch_mnist.sh
 
 xnor: mlp-otto-score-ifc-xnor.exe
 xor:  mlp-otto-score-ifc-xor.exe

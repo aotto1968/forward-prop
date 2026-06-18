@@ -43,7 +43,7 @@ Tested on: Linux x86_64, gcc-15, AVX-512. Also works on ARM64 with clang.
 make all
 
 # Download MNIST data (required once)
-bash fetch_mnist.sh
+make setup
 
 # Test with bundled model (H=512, 20 epochs training, >96% expected)
 make test

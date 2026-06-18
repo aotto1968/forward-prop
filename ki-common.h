@@ -56,6 +56,7 @@ typedef struct {
     float  lr;              /* Step size (--lr, default: 0.05) */
     int    threadN;         /* OpenMP threads (--threadN, default: 8) */
     int    debug_h0;        /* --debug-h0: per-neuron debug */
+    int    shuffle;         /* --shuffle: randomize train/eval split */
 } ki_Args;
 
 static inline ki_Args ki_args_defaults(void) {
@@ -72,6 +73,7 @@ static inline ki_Args ki_args_defaults(void) {
     a.lr            = 0.05f;
     a.threadN       = 8;
     a.debug_h0      = 0;
+    a.shuffle       = 0;
     return a;
 }
 
@@ -94,6 +96,7 @@ static inline void ki_parse_args(int argc, char *argv[], ki_Args *a) {
             printf("  --dry-run         Print architecture and exit\n");
             printf("  --debug           Verbose output\n");
             printf("  --debug-h0        Per-neuron debug\n");
+            printf("  --shuffle         Shuffle data before train/eval split\n");
             exit(0);
         } else if (strcmp(argv[i], "--dry-run") == 0) {
             a->dry_run = 1;
@@ -125,6 +128,8 @@ static inline void ki_parse_args(int argc, char *argv[], ki_Args *a) {
             a->out[sizeof(a->out) - 1] = '\0';
         } else if (strcmp(argv[i], "--debug-h0") == 0) {
             a->debug_h0 = 1;
+        } else if (strcmp(argv[i], "--shuffle") == 0) {
+            a->shuffle = 1;
         } else {
             fprintf(stderr, "[ERROR] Unknown argument: %s\nTry --help\n", argv[i]);
             exit(1);

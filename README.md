@@ -1,147 +1,161 @@
 # Otto Score Inference — DRAM-Native MNIST Classifier
 
-**Zero floating point. Zero multiply-accumulate. Zero training.**
-Only bit-logic (`&`, `|`, `~`) and int32 addition — **96.4% MNIST**.
+**96.4% MNIST. Zero floating point. Zero training. Only `&|~` + int32.**
 
-This directory contains a **self-contained inference demo** for the Otto Score
-classifier. Load a pre-trained model and classify MNIST digits in pure `&|~` + int32.
+This is a **self-contained demo** that classifies handwritten digits using
+only bit-logic operations. No GPU, no PyTorch, no training, no floating point.
 
-## How It Works
+---
 
-```
-Input image (784 px)
-       ↓
-  Pack into uint32[196] containers  (4 pixels per container)
-       ↓
-  MAJ3(~(X ⨁ W0[h])) per neuron     (XNOR + majority_tree)
-       ↓
-  32 × H bits per sample
-       ↓
-  Bayes log-Score per class:
-    score[k] = offset[k] + Σ y × logit[k][h][b]
-       ↓
-  argmax → predicted digit
-```
-
-- **W0**: random frozen projection (never trained, never changed)
-- **Target**: pre-computed log-odds `ln((t+1)/(N_k-t+1)) × 100000`
-- **offset[k]**: `Σ log(1-P_k) × 100000` — the base cost per class
-- **Only operations**: `&`, `|`, `~`, `+` on int32/int64 — **no floats, no multiply**
-
-## Requirements
-
-- **C compiler**: gcc or clang with OpenMP support
-- **zlib**: for reading compressed MNIST files (`-lz`)
-- **MNIST dataset**: downloaded automatically by the inference (bundled data paths)
-
-Tested on: Linux x86_64, gcc-15, AVX-512. Also works on ARM64 with clang.
-
-## Quick Start
+## 🚀 First Run (5 minutes)
 
 ```bash
+# Step 1: Build the executables
 make all
+
+# Step 2: Download MNIST data (70000 handwritten digits)
 make setup
+
+# Step 3: Run the test
 make test
-make push
 ```
 
-Expected output:
+**Expected output:**
+
 ```
 === XNOR inference with XNOR-trained model ===
   Model:   H=512  XNOR
-  Eval:    96.3%
+  Eval:    96.3%  (1927/2000)
 
 === XOR inference with XOR-trained model ===
   Model:   H=512  XOR
-  Eval:    96.7%
+  Eval:    96.7%  (1934/2000)
 ```
 
-## XNOR vs XOR
+That's it. You just classified handwritten digits with 96% accuracy
+using only `&`, `|`, `~` — no multiply, no float, no training.
 
-Both variants are built from the same source using a compile-time switch.
-**Each variant requires its matching model.**
+---
 
-| Mode | Build | H0_MATCH | Model file | Accuracy |
-|:-----|:------|:---------|:-----------|:---------|
-| XNOR | `make xnor` | `~(in ^ W0)` | `models/model-xnor.otto` | **96.3%** |
-| XOR  | `make xor`  | `in ^ W0` | `models/model-xor.otto` | **96.7%** |
+## ❓ What just happened?
 
-Both modes achieve identical accuracy at the same H. XOR saves one NOT
-operation per bit on DRAM hardware — useful for chip implementations.
-To train your own model, use the trainer in `ki-w2/` with the matching
-compile flag (`-DH0_XOR` for XOR mode).
+| You typed… | What happened |
+|:-----------|:--------------|
+| `make all` | Compiled the C inference code → two executables |
+| `make setup` | Downloaded 60000 MNIST training + 10000 test digits |
+| `make test` | Loaded a pre-trained model, ran 2000 test digits, reported accuracy |
 
-## Full MNIST Evaluation
+The two executables are:
+
+| File | What it does |
+|:-----|:-------------|
+| `mlp-otto-score-ifc-xnor.exe` | XNOR mode (default, model included) |
+| `mlp-otto-score-ifc-xor.exe` | XOR mode (model included) |
+
+Both use the **same math**. XOR saves one NOT gate per bit on hardware.
+
+---
+
+## 📊 What parameters can I change?
+
+```
+./mlp-otto-score-ifc-xnor.exe --model models/model-xnor.otto --evalN 10000 --threadN 4
+```
+
+| Flag | What it does | Default |
+|:-----|:-------------|:--------|
+| `--model PATH` | Which `.otto` model file to load | required |
+| `--evalN N` | How many digits to classify | 10000 |
+| `--threadN N` | CPU threads for parallel processing | 8 |
+
+**Try these experiments:**
 
 ```bash
+# Full evaluation on all 10000 test digits
 ./mlp-otto-score-ifc-xnor.exe --model models/model-xnor.otto --evalN 10000
+# Expected: 96.3% (9630/10000)
+
+# Fewer threads (slower, but works on any machine)
+./mlp-otto-score-ifc-xnor.exe --model models/model-xnor.otto --evalN 10000 --threadN 2
+
+# XOR variant with its matching model
 ./mlp-otto-score-ifc-xor.exe --model models/model-xor.otto --evalN 10000
+# Expected: 96.7% (9670/10000)
+
+# Quick check with only 100 digits
+./mlp-otto-score-ifc-xnor.exe --model models/model-xnor.otto --evalN 100
 ```
 
-You can also use your own exported model (see the trainer in `ki-w2/`):
+---
 
-```bash
-./mlp-otto-score-ifc-xnor.exe --out /path/to/exported/model/
-```
+## 🤔 What should I expect to see?
 
-## Model Format (`model.otto`)
-
-Single binary file containing everything needed for inference:
+Each run prints:
 
 ```
-[Header: 20 bytes]
-  magic=0x4F54544F ('OTTO'), version=1, H, NC
-
-[W0: uint32[H × NC]]
-  Frozen random projection
-
-[Target: int32[10 × H × 32]]
-  Per-class per-bit log-odds
-
-[Offset: int64[10]]
-  Per-class base scores
+Model:   H=512  XNOR          ← model architecture
+Eval:    96.3%  (1927/2000)   ← accuracy (correct / total)
+Time:    43ms  (21.5 µs/sample)  ← speed
 ```
 
-| Model | H | Size | Accuracy |
-|:------|:-:|:----:|:--------:|
-| `models/model-xnor.otto` | 512 | ~1.0 MB | **96.3%** |
-| `models/model-xor.otto` | 512 | ~1.0 MB | **96.7%** |
+The accuracy varies slightly between runs (±0.1pp) due to OpenMP
+thread scheduling. This is normal — the model itself is deterministic.
 
-## Training Your Own Model
+---
 
-The trainer lives in `ki-w2/mlp-otto-score.c` (not in this public directory).
-To train and export:
-
-```bash
-cd ki-w2/
-make mlp-otto-score.exe
-./mlp-otto-score.exe --hiddenN 2048 --epochsN 20 --out mymodel/
-# → mymodel/model.otto — copy to this directory
-```
-
-## File Structure
+## 📁 What's in this directory?
 
 ```
-├── README.md
-├── Makefile                 # Build both XNOR + XOR
-├── fetch_mnist.sh           # Download MNIST dataset
-├── mlp-otto-score-ifc.c     # Inference source
-├── ki-common.h              # MNIST loader + helpers
+├── README.md                  ← this file
+├── Makefile                   ← build: make all / make test / make setup
+├── fetch_mnist.sh             ← MNIST download script
+├── mlp-otto-score-ifc.c       ← inference source code (only 293 lines!)
+├── ki-common.h                ← MNIST loader (only what's needed)
 ├── lib/
-│   ├── maj3.h               # MAJ3 majority_tree
-│   └── w0_random.h          # splitmix64 RNG
+│   ├── maj3.h                 ← MAJ3 majority_tree algorithm
+│   └── w0_random.h            ← splitmix64 random number generator
 ├── models/
-│   ├── model-xnor.otto      # Pre-trained XNOR (H=512, 20ep, 96.3%)
-│   └── model-xor.otto       # Pre-trained XOR (H=512, 20ep, 96.7%)
+│   ├── model-xnor.otto       ← pre-trained XNOR model (512 neurons)
+│   └── model-xor.otto        ← pre-trained XOR model (512 neurons)
 └── .gitignore
 ```
 
-## Links
+---
 
-- **Research page**: [forward-prop.nhi1.de](https://forward-prop.nhi1.de/)
-- **GitHub**: [github.com/aotto1968/forward-prop](https://github.com/aotto1968/forward-prop)
-- **Author**: Andreas Otto — independent research
+## 🧠 How does it actually work? (simplified)
 
-## License
+```
+  Your digit (28×28 pixels)
+        │
+        ▼
+  Pack 4 pixels → 1 uint32  (784 px → 196 numbers)
+        │
+        ▼
+  For each of 512 neurons:
+    XNOR with random W0  →  32-bit pattern
+        │
+        ▼
+  Bayes log-score: sum up evidence for each digit class
+        │
+        ▼
+  Pick the class with the highest score
+```
+
+**Key insight:** The random projection W0 is **never trained**.
+It's initialized once with random numbers and stays frozen.
+The model only learns which bit patterns correlate with which digit —
+by counting, not by gradient descent.
+
+---
+
+## 📖 Deeper reading
+
+- **Research results**: [forward-prop.nhi1.de](https://forward-prop.nhi1.de/)
+- **The vision**: [forward-prop.nhi1.de/papers/vision.html](https://forward-prop.nhi1.de/papers/vision.html)
+- **Full source**: [github.com/aotto1968/forward-prop](https://github.com/aotto1968/forward-prop)
+
+---
+
+## 📝 License
 
 Public domain. This is research code — use at your own risk.

@@ -13,6 +13,8 @@
  * Usage:
  *   ./mlp-otto-score-ifc-xnor.exe --model models/model-xnor.otto
  *   ./mlp-otto-score-ifc-xor.exe  --model models/model-xor.otto
+ *   ./mlp-otto-score-ifc-xnor.exe --model models/model-xnor.otto --image digit.raw
+ *   ./mlp-otto-score-ifc-xnor.exe --model models/model-xnor.otto --evalN 10000
  */
 #include "ki-common.h"
 #include "maj3.h"
@@ -203,10 +205,106 @@ static float accuracy_pct(const uint32_t *X, const uint8_t *Y, int N,
 
 
 /* ═══════════════════════════════════════════════════════════════════
+ * SINGLE IMAGE CLASSIFICATION
+ * ═══════════════════════════════════════════════════════════════════
+ * Reads a 28×28 grayscale image in PGM format or raw 784 bytes.
+ * PGM (P5) is auto-detected — standard image viewers can open it.
+ * Same pixel packing as MNIST training data.
+ * 0=white, 255=black (MNIST convention).
+ */
+static int classify_image(const char *image_path, const OttoModel *m) {
+    FILE *f = fopen(image_path, "rb");
+    if (!f) {
+        fprintf(stderr, "[ERROR] Cannot open image: %s\n", image_path);
+        return -1;
+    }
+
+    uint8_t raw_pixels[784];
+    size_t nread;
+
+    /* Detect PGM format (P5 magic) */
+    uint8_t magic[3];
+    nread = fread(magic, 1, 3, f);
+    if (nread == 3 && magic[0] == 'P' && magic[1] == '5') {
+        /* Skip remaining PGM header (2 more lines: dimensions, maxval) */
+        int ch;
+        int newlines = 0;
+        while (newlines < 2 && (ch = fgetc(f)) != EOF) {
+            if (ch == '\n') newlines++;
+        }
+        nread = fread(raw_pixels, 1, 784, f);
+        if (nread != 784) {
+            fprintf(stderr, "[ERROR] PGM: expected 784 pixels after header, got %zu\n", nread);
+            fclose(f); return -1;
+        }
+    } else {
+        /* Assume raw 784 bytes (no header, MNIST-compatible) */
+        if (nread > 0) {
+            raw_pixels[0] = magic[0];
+            if (nread > 1) raw_pixels[1] = magic[1];
+            if (nread > 2) raw_pixels[2] = magic[2];
+        }
+        size_t more = fread(raw_pixels + nread, 1, 784 - nread, f);
+        nread += more;
+        if (nread != 784) {
+            fprintf(stderr, "[ERROR] Expected 784 bytes, got %zu\n", nread);
+            fclose(f); return -1;
+        }
+    }
+    fclose(f);
+
+    /* Pack into uint32[NC] (same as load_input) */
+    uint32_t packed[NC];
+    double sum = 0.0;
+    for (int c = 0; c < NC; c++) {
+        uint32_t val = 0;
+        for (int k = 0; k < 4; k++) {
+            uint8_t px = raw_pixels[(size_t)c * 4 + (size_t)k];
+            val |= ((uint32_t)px & 0xFFU) << (unsigned)(k * 8);
+            sum += (double)px;
+        }
+        packed[c] = val;
+    }
+
+    /* Compute scores */
+    int64_t scores[10];
+    for (int k = 0; k < N_CLASSES; k++)
+        scores[k] = m->class_offset[k];
+
+    for (int h = 0; h < m->H; h++) {
+        uint32_t h0 = h0_neuron(packed, m->W0 + (size_t)h * (size_t)m->nc);
+        for (int k = 0; k < N_CLASSES; k++)
+            for (int b = 0; b < 32; b++)
+                if (h0 & (1U << (unsigned)b))
+                    scores[k] += m->target[TGT_IDX(k, h, b, m->H)];
+    }
+
+    /* Find best class */
+    int pred = 0;
+    for (int k = 1; k < N_CLASSES; k++)
+        if (scores[k] > scores[pred]) pred = k;
+
+    printf("\n══╡ SINGLE IMAGE ╞════════════════════════════════════════════════\n");
+    printf("  File:  %s\n", image_path);
+    printf("  Pixel mean: %.1f  (0=white, 255=black, row-major 28x28)\n",
+           (double)sum / 784.0);
+    printf("\n  Scores:\n");
+    for (int k = 0; k < N_CLASSES; k++)
+        printf("    %d: %7.2f%s\n", k, (double)scores[k] / 100000.0,
+               (k == pred) ? "  ← PREDICTED" : "");
+
+    printf("\n  >>> Predicted digit: %d <<<\n", pred);
+    fflush(stdout);
+    return pred;
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════
  * MAIN — minimal arg parser
  * ═══════════════════════════════════════════════════════════════════ */
 int main(int argc, char *argv[]) {
     char model_path[512] = "";
+    char image_path[512] = "";
     int evalN = 10000;
     int threadN = 8;
 
@@ -214,12 +312,17 @@ int main(int argc, char *argv[]) {
         if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
             printf("Usage: %s --model <path> [options]\n", argv[0]);
             printf("  --model PATH  Path to .otto model file (required)\n");
-            printf("  --evalN N     Eval samples (default: 10000)\n");
+            printf("  --image FILE  Classify a single image (PGM or raw 28x28)\n");
+            printf("                PGM (P5) auto-detected; raw = 784 bytes uint8\n");
+            printf("  --evalN N     MNIST eval samples (default: 10000)\n");
             printf("  --threadN N   OpenMP threads (default: 8)\n");
             return 0;
         } else if (strcmp(argv[i], "--model") == 0 && i + 1 < argc) {
             strncpy(model_path, argv[++i], sizeof(model_path) - 1);
             model_path[sizeof(model_path) - 1] = '\0';
+        } else if (strcmp(argv[i], "--image") == 0 && i + 1 < argc) {
+            strncpy(image_path, argv[++i], sizeof(image_path) - 1);
+            image_path[sizeof(image_path) - 1] = '\0';
         } else if (strcmp(argv[i], "--evalN") == 0 && i + 1 < argc) {
             evalN = atoi(argv[++i]);
         } else if (strcmp(argv[i], "--threadN") == 0 && i + 1 < argc) {
@@ -242,6 +345,13 @@ int main(int argc, char *argv[]) {
     /* ── Load Model ──────────────────────────────────────────── */
     OttoModel *model = model_load_path(model_path);
     if (!model) return 1;
+
+    /* ── Single image mode? ──────────────────────────────────── */
+    if (image_path[0] != '\0') {
+        int pred = classify_image(image_path, model);
+        model_free(model);
+        return (pred >= 0) ? 0 : 1;
+    }
 
     /* ── Load MNIST ──────────────────────────────────────────── */
     ki_MNISTData data;

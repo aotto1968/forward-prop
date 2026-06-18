@@ -20,13 +20,22 @@ LDLIBS   = -lm -lz
 
 SRC      = mlp-otto-score-ifc.c
 
-.PHONY: all xnor xor clean test setup push
+.PHONY: all xnor xor clean test test-image setup push
 
 all: xnor xor
 
 setup:
 	@echo "Downloading MNIST dataset..."
 	@bash fetch_mnist.sh
+
+test-image: mlp-otto-score-ifc-xnor.exe
+	@echo "=== Single image classification test ==="
+	@echo "  tests/digit5.pgm (MNIST train[0], label=5)..."
+	@./mlp-otto-score-ifc-xnor.exe --model models/model-xnor.otto --image tests/digit5.pgm 2>&1 | grep 'Predicted'
+	@echo "  tests/digit9.pgm (MNIST train[4], label=9)..."
+	@./mlp-otto-score-ifc-xnor.exe --model models/model-xnor.otto --image tests/digit9.pgm 2>&1 | grep 'Predicted'
+	@echo "  tests/shoe.pgm (Fashion-MNIST ankle boot — should NOT be a digit)"
+	@./mlp-otto-score-ifc-xnor.exe --model models/model-xnor.otto --image tests/shoe.pgm 2>&1 | grep 'Predicted'
 
 xnor: mlp-otto-score-ifc-xnor.exe
 xor:  mlp-otto-score-ifc-xor.exe

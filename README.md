@@ -39,18 +39,18 @@ using only `&`, `|`, `~` — no multiply, no float, no training.
 
 ## ❓ What just happened?
 
-| You typed… | What happened |
-|:-----------|:--------------|
-| `make all` | Compiled the C inference code → two executables |
-| `make setup` | Downloaded 60000 MNIST training + 10000 test digits |
-| `make test` | Loaded a pre-trained model, ran 2000 test digits, reported accuracy |
+| You typed…   | What happened                                                       |
+| ------------ | ------------------------------------------------------------------- |
+| `make all`   | Compiled the C inference code → two executables                     |
+| `make setup` | Downloaded 60000 MNIST training + 10000 test digits                 |
+| `make test`  | Loaded a pre-trained model, ran 2000 test digits, reported accuracy |
 
 The two executables are:
 
-| File | What it does |
-|:-----|:-------------|
+| File                          | What it does                        |
+| ----------------------------- | ----------------------------------- |
 | `mlp-otto-score-ifc-xnor.exe` | XNOR mode (default, model included) |
-| `mlp-otto-score-ifc-xor.exe` | XOR mode (model included) |
+| `mlp-otto-score-ifc-xor.exe`  | XOR mode (model included)           |
 
 Both use the **same math**. XOR saves one NOT gate per bit on hardware.
 
@@ -62,29 +62,74 @@ Both use the **same math**. XOR saves one NOT gate per bit on hardware.
 ./mlp-otto-score-ifc-xnor.exe --model models/model-xnor.otto --evalN 10000 --threadN 4
 ```
 
-| Flag | What it does | Default |
-|:-----|:-------------|:--------|
-| `--model PATH` | Which `.otto` model file to load | required |
-| `--evalN N` | How many digits to classify | 10000 |
-| `--threadN N` | CPU threads for parallel processing | 8 |
+| Flag           | What it does                                   | Default  |
+| -------------- | ---------------------------------------------- | -------- |
+| `--model PATH` | Which `.otto` model file to load               | required |
+| `--evalN N`    | How many digits to classify                    | 10000    |
+| `--image FILE` | Classify a single image (raw 28x28, 784 bytes) | off      |
+| `--threadN N`  | CPU threads for parallel processing            | 8        |
 
 **Try these experiments:**
 
 ```bash
 # Full evaluation on all 10000 test digits
 ./mlp-otto-score-ifc-xnor.exe --model models/model-xnor.otto --evalN 10000
-# Expected: 96.3% (9630/10000)
+# Expected: ~86% (1-pass model, not iteratively trained)
 
 # Fewer threads (slower, but works on any machine)
 ./mlp-otto-score-ifc-xnor.exe --model models/model-xnor.otto --evalN 10000 --threadN 2
 
-# XOR variant with its matching model
-./mlp-otto-score-ifc-xor.exe --model models/model-xor.otto --evalN 10000
-# Expected: 96.7% (9670/10000)
-
 # Quick check with only 100 digits
 ./mlp-otto-score-ifc-xnor.exe --model models/model-xnor.otto --evalN 100
 ```
+
+## 🖼️ Classify your own handwritten digit
+
+Take a photo, convert it, classify it:
+
+```bash
+# Convert to PGM (Portable GrayMap — standard image format)
+convert mydigit.jpg -resize 28x28! -negate -depth 8 pgm:- > digit.pgm
+
+# Classify it!
+./mlp-otto-score-ifc-xnor.exe --model models/model-xnor.otto --image digit.pgm
+```
+
+The classifier accepts **PGM (P5)** images or raw 784-byte files.
+PGM is a standard format — every image viewer can open it.
+
+**Expected output:**
+
+```
+══╡ SINGLE IMAGE ╞════════════════════════════════════════════════
+  File:  digit.pgm
+  Pixel mean: 35.1  (0=white, 255=black, 28x28)
+
+  Scores:
+    0: -5577.13
+    5: -5230.35  ← PREDICTED
+    ...
+
+  >>> Predicted digit: 5 <<<
+```
+
+### ⚠️ The classifier has no "reject" class
+
+It only knows digits 0-9. Feed it a shoe, a cat, or random noise — it will always predict one of the 10 digits:
+
+```bash
+make test-image
+```
+
+```
+  tests/shoe.pgm (Fashion-MNIST ankle boot — should NOT be a digit)
+  >>> Predicted digit: 2 <<<
+```
+
+The shoe is classified as "2" because the model has never seen
+a shoe in training. There is no "unknown" / "none of the above" class.
+
+## 📖 How does it actually work? (simplified)
 
 ---
 
@@ -108,8 +153,9 @@ thread scheduling. This is normal — the model itself is deterministic.
 ```
 ├── README.md                  ← this file
 ├── Makefile                   ← build: make all / make test / make setup
-├── fetch_mnist.sh             ← MNIST download script
-├── mlp-otto-score-ifc.c       ← inference source code (only 293 lines!)
+├── fetch_mnist.sh           ← MNIST download script
+├── convert_to_pgm.sh        ← image → MNIST PGM converter
+├── mlp-otto-score-ifc.c     ← inference source code (only 293 lines!)
 ├── ki-common.h                ← MNIST loader (only what's needed)
 ├── lib/
 │   ├── maj3.h                 ← MAJ3 majority_tree algorithm
@@ -117,6 +163,10 @@ thread scheduling. This is normal — the model itself is deterministic.
 ├── models/
 │   ├── model-xnor.otto       ← pre-trained XNOR model (512 neurons)
 │   └── model-xor.otto        ← pre-trained XOR model (512 neurons)
+├── tests/
+│   ├── digit5.pgm           ← MNIST test image (label=5, viewable!)
+│   ├── digit9.pgm           ← MNIST test image (label=9, viewable!)
+│   └── shoe.pgm             ← Fashion-MNIST boot (NOT a digit!)
 └── .gitignore
 ```
 

@@ -39,12 +39,12 @@ make test
   Time:    210ms  (21.0 µs/sample)
 
 === XNOR ensemble v6 (H=128x3, --evalN 10000) ===
-  Eval:    95.1%  (9512/10000)
-  Time:    167ms  (16.7 µs/sample)
+  Eval:    95.6%  (9555/10000)
+  Time:    163ms  (16.3 µs/sample)
 
 === XOR ensemble v6 (H=128x3, --evalN 10000) ===
-  Eval:    94.7%  (9467/10000)
-  Time:    153ms  (15.3 µs/sample)
+  Eval:    95.6%  (9561/10000)
+  Time:    157ms  (15.7 µs/sample)
 ```
 
 That's it. You just classified handwritten digits with 96% accuracy

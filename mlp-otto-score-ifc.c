@@ -20,14 +20,22 @@
 #include "maj3.h"
 #include <inttypes.h>
 
-/* ── Konstanten ────────────────────────────────────────────────── */
+/* Konstanten */
 #define NC        196
 #define BITS       32
 #define N_CLASSES KI_NCLASSES
 
+/* OT_PRECISION — muss zum Trainer passen, default 10 → F=1024 */
+#ifndef OT_PRECISION
+#define OT_PRECISION 10
+#endif
+#define OT_F  (1 << OT_PRECISION)   /* Skalierungsfaktor für target/offset */
+
 /* Export file magic + version (must match trainer) */
 #define OTTO_MAGIC   0x4F54544FU   /* "OTTO" */
-#define OTTO_VERSION 1U
+#define OTTO_VERSION_SINGLE 1U    /* v1 = single model */
+#define OTTO_VERSION_ENSEMBLE 5U  /* v5 = ensemble (N members, no precision) */
+#define OTTO_VERSION_ENSEMBLE_V6 6U /* v6 = ensemble + precision field */
 
 /* Index: [10][H][32] */
 #define TGT_IDX(k, h, b, H) \
@@ -35,15 +43,20 @@
 
 
 /* ═══════════════════════════════════════════════════════════════════
- * MODEL — gepacktes geladenes Model
- * ═══════════════════════════════════════════════════════════════════ */
+ * MODEL — geladenes Model (single oder ensemble)
+ * ═══════════════════════════════════════════════════════════════════
+ * Version 1 (single): ensemble_n=1, arrays[0] werden genutzt.
+ * Version 5 (ensemble): ensemble_n=N, arrays[0..N-1] pro Member.
+ */
 typedef struct {
     uint32_t h0_mode;          /* 0=XNOR, 1=XOR */
-    int      H;                /* Hidden neurons */
-    int      nc;               /* Containers per image (muss NC passen) */
-    uint32_t *W0;              /* [H][nc] */
-    int32_t  *target;          /* [10][H][32] (log-odds) */
-    int64_t  class_offset[10]; /* per-class offset */
+    int      H;                /* Hidden neurons (pro Member) */
+    int      nc;               /* Containers per image */
+    int      ensemble_n;       /* Anzahl Ensemble-Member (1=Single) */
+    int      precision;        /* OT_PRECISION (F = 1<<precision) */
+    uint32_t *W0;              /* [ensemble_n][H][nc] */
+    int32_t  *target;          /* [ensemble_n][10][H][32] */
+    int64_t  *class_offset;    /* [ensemble_n][10] */
 } OttoModel;
 
 
@@ -77,13 +90,10 @@ static OttoModel *model_load_path(const char *path) {
         return NULL;
     }
 
-    /* Header lesen */
-    uint32_t magic, version, mode, H, ncc;
+    /* Header lesen: erst version, dann je nach Format den Rest */
+    uint32_t magic, version, mode = 0, ensemble_n = 1, H = 0, ncc = 0;
     if (fread(&magic,   sizeof(magic),   1, f) != 1 ||
-        fread(&version, sizeof(version), 1, f) != 1 ||
-        fread(&mode,    sizeof(mode),    1, f) != 1 ||
-        fread(&H,       sizeof(H),       1, f) != 1 ||
-        fread(&ncc,     sizeof(ncc),     1, f) != 1) {
+        fread(&version, sizeof(version), 1, f) != 1) {
         fprintf(stderr, "[FATAL] Cannot read header from %s\n", path);
         fclose(f); return NULL;
     }
@@ -93,58 +103,117 @@ static OttoModel *model_load_path(const char *path) {
                 path, magic, OTTO_MAGIC);
         fclose(f); return NULL;
     }
-    if (version != OTTO_VERSION) {
-        fprintf(stderr, "[FATAL] Unsupported version %u\n", version);
+
+    if (!(version == OTTO_VERSION_SINGLE || 
+          version == OTTO_VERSION_ENSEMBLE ||
+          version == OTTO_VERSION_ENSEMBLE_V6)) {
+        fprintf(stderr, "[FATAL] Unsupported version %u (expected %u, %u, or %u)\n",
+                version, OTTO_VERSION_SINGLE, OTTO_VERSION_ENSEMBLE, 
+                OTTO_VERSION_ENSEMBLE_V6);
+        fclose(f); return NULL;
+    }
+
+    if (version == OTTO_VERSION_SINGLE) {
+        /* v1: mode(4) + H(4) + NC(4) = 12 Bytes */
+        if (fread(&mode, sizeof(mode), 1, f) != 1 ||
+            fread(&H,    sizeof(H),    1, f) != 1 ||
+            fread(&ncc,  sizeof(ncc),  1, f) != 1) {
+            fprintf(stderr, "[FATAL] Cannot read v1 header\n");
+            fclose(f); return NULL;
+        }
+        ensemble_n = 1;
+    } else {
+        /* v5/v6: mode(4) + ensemble_n(4) + H(4) + NC(4) = 16 Bytes */
+        if (fread(&mode,       sizeof(mode),       1, f) != 1 ||
+            fread(&ensemble_n, sizeof(ensemble_n), 1, f) != 1 ||
+            fread(&H,          sizeof(H),          1, f) != 1 ||
+            fread(&ncc,        sizeof(ncc),        1, f) != 1) {
+            fprintf(stderr, "[FATAL] Cannot read v5 header\n");
+            fclose(f); return NULL;
+        }
+    }
+
+    if ((int)ncc != NC) {
+        fprintf(stderr, "[FATAL] Model NC=%u != compile-time NC=%d\n", ncc, NC);
         fclose(f); return NULL;
     }
 
     OttoModel *m = (OttoModel *)malloc(sizeof(OttoModel));
     if (!m) { fclose(f); return NULL; }
-    m->h0_mode = mode;
-    m->H       = (int)H;
-    m->nc      = (int)ncc;
+    m->h0_mode     = mode;
+    m->H           = (int)H;
+    m->nc          = (int)ncc;
+    m->ensemble_n  = (int)ensemble_n;
 
-    /* W0 laden */
-    size_t w0_count = (size_t)H * (size_t)ncc;
-    m->W0 = (uint32_t *)malloc(w0_count * sizeof(uint32_t));
-    if (!m->W0) { free(m); fclose(f); return NULL; }
-    if (fread(m->W0, sizeof(uint32_t), w0_count, f) != w0_count) {
-        fprintf(stderr, "[FATAL] Cannot read W0\n");
-        free(m->W0); free(m); fclose(f); return NULL;
+    /* Precision aus Header oder Default */
+    if (version == OTTO_VERSION_ENSEMBLE_V6) {
+        uint32_t prec = 0;
+        if (fread(&prec, sizeof(prec), 1, f) != 1) {
+            fprintf(stderr, "[FATAL] Cannot read precision from v6 header\n");
+            free(m); fclose(f); return NULL;
+        }
+        m->precision = (int)prec;
+        if (m->precision != OT_PRECISION)
+            fprintf(stderr, "[WARN] Model precision=%d != ifc OT_PRECISION=%d\n"
+                    "  Model: %s  (trained with different scaling!)\n",
+                    m->precision, OT_PRECISION, path);
+    } else if (version == OTTO_VERSION_ENSEMBLE) {
+        m->precision = OT_PRECISION;  /* v5: assume current default */
+    } else {
+        m->precision = 17;            /* v1: legacy ×100000 ≈ 1<<17 */
     }
 
-    /* Target laden */
-    size_t tgt_count = (size_t)H * 10 * 32;
-    m->target = (int32_t *)malloc(tgt_count * sizeof(int32_t));
-    if (!m->target) { free(m->W0); free(m); fclose(f); return NULL; }
-    if (fread(m->target, sizeof(int32_t), tgt_count, f) != tgt_count) {
-        fprintf(stderr, "[FATAL] Cannot read target\n");
-        free(m->target); free(m->W0); free(m); fclose(f); return NULL;
+    /* Daten lesen: Datei-Format ist W0[m] + Tgt[m] + Off[m] pro Member,
+     * nicht alle W0, dann alle Tgt, dann alle Off.  Vgl. export_ensemble(). */
+    size_t w0_per_m = (size_t)H * (size_t)ncc;
+    size_t tgt_per_m = (size_t)H * 10 * 32;
+    size_t w0_sz   = (size_t)ensemble_n * w0_per_m;
+    size_t tgt_sz  = (size_t)ensemble_n * tgt_per_m;
+    size_t off_sz  = (size_t)ensemble_n * 10;
+
+    m->W0          = (uint32_t *)malloc(w0_sz * sizeof(uint32_t));
+    m->target      = (int32_t  *)malloc(tgt_sz * sizeof(int32_t));
+    m->class_offset= (int64_t  *)malloc(off_sz * sizeof(int64_t));
+
+    if (!m->W0 || !m->target || !m->class_offset) {
+        free(m->W0); free(m->target); free(m->class_offset); free(m);
+        fclose(f); return NULL;
     }
 
-    /* class_offset laden */
-    if (fread(m->class_offset, sizeof(int64_t), 10, f) != 10) {
-        fprintf(stderr, "[FATAL] Cannot read class_offset\n");
-        free(m->target); free(m->W0); free(m); fclose(f); return NULL;
+    /* Lese member-weise: W0[m], Tgt[m], Off[m] */
+    for (size_t mem = 0; mem < (size_t)ensemble_n; mem++) {
+        if (fread(m->W0 + mem * w0_per_m, sizeof(uint32_t), w0_per_m, f) != w0_per_m ||
+            fread(m->target + mem * tgt_per_m, sizeof(int32_t), tgt_per_m, f) != tgt_per_m ||
+            fread(m->class_offset + mem * 10, sizeof(int64_t), 10, f) != 10) {
+            fprintf(stderr, "[FATAL] Cannot read member %zu data from %s\n",
+                    mem, path);
+            free(m->W0); free(m->target); free(m->class_offset); free(m);
+            fclose(f); return NULL;
+        }
     }
 
     fclose(f);
 
     printf("══╡ MODEL ╞═══════════════════════════════════════════════════════\n");
     printf("  File:  %s\n", path);
-    printf("  Mode:  %s\n", m->h0_mode == 0 ? "XNOR" : "XOR");
-    printf("  H:     %d\n", m->H);
-    printf("  NC:    %d\n", m->nc);
-    printf("  W0:    %zu KB\n", w0_count * sizeof(uint32_t) / 1024);
-    printf("  Tgt:   %zu KB\n", tgt_count * sizeof(int32_t) / 1024);
-    printf("  Off:   %zu B\n", 10 * sizeof(int64_t));
+    printf("  Mode:  %s   Version: %s   F=%d\n",
+           m->h0_mode == 0 ? "XNOR" : "XOR",
+           version == OTTO_VERSION_SINGLE ? "v1 (single)" : "v5 (ensemble)",
+           1 << m->precision);
+    printf("  H:     %d   NC: %d   Ensemble: %d\n",
+           m->H, m->nc, m->ensemble_n);
+    printf("  W0:    %zu KB   Tgt: %zu KB   Off: %zu KB   F=%d\n",
+           w0_sz * sizeof(uint32_t) / 1024,
+           tgt_sz * sizeof(int32_t) / 1024,
+           off_sz * sizeof(int64_t) / 1024,
+           1 << m->precision);
     fflush(stdout);
 
     return m;
 }
 
 static void model_free(OttoModel *m) {
-    if (m) { free(m->W0); free(m->target); free(m); }
+    if (m) { free(m->W0); free(m->target); free(m->class_offset); free(m); }
 }
 
 
@@ -166,19 +235,33 @@ static uint32_t h0_neuron(const uint32_t *in, const uint32_t *W0_row) {
 
 
 /* ═══════════════════════════════════════════════════════════════════
- * SCORE — Bayes log-Score
- * ═══════════════════════════════════════════════════════════════════ */
+ * SCORE — Bayes log-Score (summed across ensemble members)
+ * ═══════════════════════════════════════════════════════════════════
+ * Bei Single-Modell (ensemble_n=1) identisch zu v1.
+ * Bei Ensemble: scores[k] = Σ_m offset_m[k] + Σ_h Σ_b y × target_m[k][h][b]
+ */
 static void scores_otto(const uint32_t *in, const OttoModel *m,
                          int64_t scores[10]) {
     for (int k = 0; k < N_CLASSES; k++)
-        scores[k] = m->class_offset[k];
+        scores[k] = 0;
 
-    for (int h = 0; h < m->H; h++) {
-        uint32_t h0 = h0_neuron(in, m->W0 + (size_t)h * (size_t)m->nc);
-        for (int k = 0; k < N_CLASSES; k++) {
-            for (int b = 0; b < 32; b++) {
-                if (h0 & (1U << (unsigned)b))
-                    scores[k] += m->target[TGT_IDX(k, h, b, m->H)];
+    size_t w0_row_sz = (size_t)m->nc;
+    size_t tgt_m_sz  = (size_t)m->H * 10 * 32;  /* per member */
+
+    for (int mem = 0; mem < m->ensemble_n; mem++) {
+        size_t w0_off  = (size_t)mem * (size_t)m->H * w0_row_sz;
+        size_t tgt_off = (size_t)mem * tgt_m_sz;
+
+        for (int k = 0; k < N_CLASSES; k++)
+            scores[k] += m->class_offset[(size_t)mem * 10 + (size_t)k];
+
+        for (int h = 0; h < m->H; h++) {
+            uint32_t h0 = h0_neuron(in, m->W0 + w0_off + (size_t)h * w0_row_sz);
+            for (int k = 0; k < N_CLASSES; k++) {
+                for (int b = 0; b < 32; b++) {
+                    if (h0 & (1U << (unsigned)b))
+                        scores[k] += m->target[tgt_off + TGT_IDX(k, h, b, m->H)];
+                }
             }
         }
     }
@@ -266,18 +349,9 @@ static int classify_image(const char *image_path, const OttoModel *m) {
         packed[c] = val;
     }
 
-    /* Compute scores */
+    /* Compute scores via ensemble-aware function */
     int64_t scores[10];
-    for (int k = 0; k < N_CLASSES; k++)
-        scores[k] = m->class_offset[k];
-
-    for (int h = 0; h < m->H; h++) {
-        uint32_t h0 = h0_neuron(packed, m->W0 + (size_t)h * (size_t)m->nc);
-        for (int k = 0; k < N_CLASSES; k++)
-            for (int b = 0; b < 32; b++)
-                if (h0 & (1U << (unsigned)b))
-                    scores[k] += m->target[TGT_IDX(k, h, b, m->H)];
-    }
+    scores_otto(packed, m, scores);
 
     /* Find best class */
     int pred = 0;
@@ -288,9 +362,10 @@ static int classify_image(const char *image_path, const OttoModel *m) {
     printf("  File:  %s\n", image_path);
     printf("  Pixel mean: %.1f  (0=white, 255=black, row-major 28x28)\n",
            (double)sum / 784.0);
+    int scale = 1 << m->precision;
     printf("\n  Scores:\n");
     for (int k = 0; k < N_CLASSES; k++)
-        printf("    %d: %7.2f%s\n", k, (double)scores[k] / 100000.0,
+        printf("    %d: %7.2f%s\n", k, (double)scores[k] / (double)scale,
                (k == pred) ? "  ← PREDICTED" : "");
 
     printf("\n  >>> Predicted digit: %d <<<\n", pred);
@@ -383,9 +458,10 @@ int main(int argc, char *argv[]) {
     int elapsed = (int)((tv1.tv_sec - tv0.tv_sec) * 1000
                       + (tv1.tv_usec - tv0.tv_usec) / 1000);
 
+    int scale = 1 << model->precision;
     printf("\n══╡ RESULT ╞══════════════════════════════════════════════════════\n");
-    printf("  Model:   H=%d  %s\n", model->H,
-           model->h0_mode == 0 ? "XNOR" : "XOR");
+    printf("  Model:   H=%d  %s  F=%d\n", model->H,
+           model->h0_mode == 0 ? "XNOR" : "XOR", scale);
     printf("  Eval:    %.1f%%  (%d/%d)\n",
            acc, (int)(acc * (float)total_eval / 100.0f + 0.5f), total_eval);
     printf("  Time:    %dms  (%.1f µs/sample)\n",

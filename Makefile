@@ -47,11 +47,17 @@ mlp-otto-score-ifc-xor.exe: $(SRC) ki-common.h lib/maj3.h
 	$(CC) $(CFLAGS) -DH0_XOR -o $@ $(SRC) $(LDLIBS)
 
 test: mlp-otto-score-ifc-xnor.exe mlp-otto-score-ifc-xor.exe
-	@echo "=== XNOR inference with XNOR-trained model ==="
-	@./mlp-otto-score-ifc-xnor.exe --model models/model-xnor.otto --evalN 2000 2>&1 | grep -E 'Model:|Eval:'
+	@echo "=== XNOR v1 single (H=512, --evalN 10000) ==="
+	@./mlp-otto-score-ifc-xnor.exe --model models/model-xnor.otto --evalN 10000 2>&1 | grep -E 'Eval:|Time:'
 	@echo ""
-	@echo "=== XOR inference with XOR-trained model ==="
-	@./mlp-otto-score-ifc-xor.exe --model models/model-xor.otto --evalN 2000 2>&1 | grep -E 'Model:|Eval:'
+	@echo "=== XOR v1 single (H=512, --evalN 10000) ==="
+	@./mlp-otto-score-ifc-xor.exe --model models/model-xor.otto --evalN 10000 2>&1 | grep -E 'Eval:|Time:'
+	@echo ""
+	@echo "=== XNOR ensemble v6 (H=128x3, --evalN 10000) ==="
+	@./mlp-otto-score-ifc-xnor.exe --model models/model-ensemble-xnor.otto --evalN 10000 2>&1 | grep -E 'Eval:|Time:'
+	@echo ""
+	@echo "=== XOR ensemble v6 (H=128x3, --evalN 10000) ==="
+	@./mlp-otto-score-ifc-xor.exe --model models/model-ensemble-xor.otto --evalN 10000 2>&1 | grep -E 'Eval:|Time:'
 
 clean:
 	rm -f *.exe

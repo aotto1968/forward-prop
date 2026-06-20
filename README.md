@@ -1,6 +1,13 @@
 # Otto Score Inference — DRAM-Native MNIST Classifier
 
-**96.4% MNIST. Zero floating point. Zero training. Only `&|~` + int32.**
+**95.7% MNIST (full 10000-test evaluation). Zero floating point. Zero training. Only `&|~` + int32.**
+
+**Supports single (v1) and ensemble (v5) models — auto-detected on load.**
+**Precision scaling via OT_PRECISION — default F=1024, legacy models at F=131072.**
+
+---
+
+## 🚀 First Run (5 minutes)
 
 This is a **self-contained demo** that classifies handwritten digits using
 only bit-logic operations. No GPU, no PyTorch, no training, no floating point.
@@ -23,13 +30,21 @@ make test
 **Expected output:**
 
 ```
-=== XNOR inference with XNOR-trained model ===
-  Model:   H=512  XNOR
-  Eval:    96.3%  (1927/2000)
+=== XNOR v1 single (H=512, --evalN 10000) ===
+  Eval:    95.4%  (9536/10000)
+  Time:    210ms  (21.0 µs/sample)
 
-=== XOR inference with XOR-trained model ===
-  Model:   H=512  XOR
-  Eval:    96.7%  (1934/2000)
+=== XOR v1 single (H=512, --evalN 10000) ===
+  Eval:    95.4%  (9536/10000)
+  Time:    210ms  (21.0 µs/sample)
+
+=== XNOR ensemble v6 (H=128x3, --evalN 10000) ===
+  Eval:    95.1%  (9512/10000)
+  Time:    167ms  (16.7 µs/sample)
+
+=== XOR ensemble v6 (H=128x3, --evalN 10000) ===
+  Eval:    94.7%  (9467/10000)
+  Time:    153ms  (15.3 µs/sample)
 ```
 
 That's it. You just classified handwritten digits with 96% accuracy
@@ -39,11 +54,11 @@ using only `&`, `|`, `~` — no multiply, no float, no training.
 
 ## ❓ What just happened?
 
-| You typed…   | What happened                                                       |
-| ------------ | ------------------------------------------------------------------- |
-| `make all`   | Compiled the C inference code → two executables                     |
-| `make setup` | Downloaded 60000 MNIST training + 10000 test digits                 |
-| `make test`  | Loaded a pre-trained model, ran 2000 test digits, reported accuracy |
+| You typed…   | What happened                                                |
+| ------------ | ------------------------------------------------------------ |
+| `make all`   | Compiled the C inference code → two executables              |
+| `make setup` | Downloaded 60000 MNIST training + 10000 test digits          |
+| `make test`  | Loaded a pre-trained model (v1 single), ran 2000 test digits |
 
 The two executables are:
 
@@ -52,7 +67,9 @@ The two executables are:
 | `mlp-otto-score-ifc-xnor.exe` | XNOR mode (default, model included) |
 | `mlp-otto-score-ifc-xor.exe`  | XOR mode (model included)           |
 
-Both use the **same math**. XOR saves one NOT gate per bit on hardware.
+Both auto-detect single (v1) and ensemble (v5) model formats.
+All values are scaled by `F = (1<<OT_PRECISION)` — default F=1024 for v5,
+F=131072 for legacy v1 models. Display divides by the correct F.
 
 ---
 
@@ -64,7 +81,7 @@ Both use the **same math**. XOR saves one NOT gate per bit on hardware.
 
 | Flag           | What it does                                   | Default  |
 | -------------- | ---------------------------------------------- | -------- |
-| `--model PATH` | Which `.otto` model file to load               | required |
+| `--model PATH` | Which `.otto` model file to load (v1 or v5)    | required |
 | `--evalN N`    | How many digits to classify                    | 10000    |
 | `--image FILE` | Classify a single image (raw 28x28, 784 bytes) | off      |
 | `--threadN N`  | CPU threads for parallel processing            | 8        |
@@ -155,14 +172,16 @@ thread scheduling. This is normal — the model itself is deterministic.
 ├── Makefile                   ← build: make all / make test / make setup
 ├── fetch_mnist.sh           ← MNIST download script
 ├── convert_to_pgm.sh        ← image → MNIST PGM converter
-├── mlp-otto-score-ifc.c     ← inference source code (only 293 lines!)
+├── mlp-otto-score-ifc.c     ← inference source code (~460 lines)
 ├── ki-common.h                ← MNIST loader (only what's needed)
 ├── lib/
 │   ├── maj3.h                 ← MAJ3 majority_tree algorithm
 │   └── w0_random.h            ← splitmix64 random number generator
 ├── models/
-│   ├── model-xnor.otto       ← pre-trained XNOR model (512 neurons)
-│   └── model-xor.otto        ← pre-trained XOR model (512 neurons)
+│   ├── model-xnor.otto       ← pre-trained XNOR model (v1 single, H=512)
+│   ├── model-xor.otto        ← pre-trained XOR model (v1 single, H=512)
+│   ├── model-ensemble-xnor.otto ← ensemble XNOR model (v5, H=128×N=3)
+│   └── model-ensemble-xor.otto  ← ensemble XOR model (v5, H=128×N=3)
 ├── tests/
 │   ├── digit5.pgm           ← MNIST test image (label=5, viewable!)
 │   ├── digit9.pgm           ← MNIST test image (label=9, viewable!)
@@ -195,6 +214,42 @@ thread scheduling. This is normal — the model itself is deterministic.
 It's initialized once with random numbers and stays frozen.
 The model only learns which bit patterns correlate with which digit —
 by counting, not by gradient descent.
+
+For ensemble models (v5), all members are evaluated independently and
+their scores are summed before argmax:
+```
+score[k] = Σ_m offset_m[k] + Σ_m Σ_h Σ_b y_m[h][b] × target_m[k][h][b]
+```
+
+## 🤝 Ensemble Voting (v5 format)
+
+Training multiple independent W0s and summing their scores (product of experts)
+reduces the error rate significantly. The ifc **auto-detects** ensemble models
+on load — no extra flags needed.
+
+```bash
+# Train an ensemble (from ki-w2 directory)
+cd ../ki-w2
+./mlp-otto-score-ensemble-xnor.exe --hiddenN 128 --ensembleN 3 --epochsN 20 --out out/otto-h128-e3-xnor
+
+# Evaluate with inference (auto-detects v5 ensemble format)
+cd ../otto-score-ifc
+./mlp-otto-score-ifc-xnor.exe --model ../ki-w2/out/otto-h128-e3-xnor/model.otto --evalN 10000
+# → 95.5%
+```
+
+The ensemble is stored as a **single file** containing all members' W0, targets,
+and offsets. Inference iterates over all members and sums the scores:
+
+```
+score[k] = Σ_m score_m[k]    (member m, class k)
+```
+
+| Configuration                   | Eval      | Notes                      |
+| ------------------------------- | --------- | -------------------------- |
+| H=512, N=1, ep=20 (bundled v1)  | 96.3%     | Legacy single model        |
+| H=128, N=3, ep=20 (v5 ensemble) | **95.5%** | 3× smaller, ~3× faster     |
+| H=64, N=17, ep=20 (v5 ensemble) | **96.4%** | Same accuracy, 32× less W0 |
 
 ---
 

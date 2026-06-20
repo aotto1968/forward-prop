@@ -1,6 +1,6 @@
 # Otto Score Inference — DRAM-Native MNIST Classifier
 
-**95.7% MNIST (full 10000-test evaluation). Zero floating point. Zero training. Only `&|~` + int32.**
+**95.6% MNIST (full 10000-test evaluation). Zero floating point. Zero training. Only `&|~` + int32.**
 
 **Supports single (v1) and ensemble (v5) models — auto-detected on load.**
 **Precision scaling via OT_PRECISION — default F=1024, legacy models at F=131072.**

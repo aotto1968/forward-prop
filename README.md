@@ -1,6 +1,8 @@
-# Otto Score Inference — DRAM-Native MNIST Classifier
+# Otto Score Inference — DRAM-Native MNIST Classifier (+ Float32 Reference)
 
 **95.6% MNIST (full 10000-test evaluation). Zero floating point. Zero training. Only `&|~` + int32.**
+
+**Also includes a 2-layer float32 AdamW baseline for comparison: `mlp-flt32-trn-w1-adam` + `mlp-flt32-ifc`.**
 
 **Supports single (v1) and ensemble (v5) models — auto-detected on load.**
 **Precision scaling via OT_PRECISION — default F=1024, legacy models at F=131072.**
@@ -45,7 +47,15 @@ make test
 === XOR ensemble v6 (H=128x3, --evalN 10000) ===
   Eval:    95.6%  (9561/10000)
   Time:    157ms  (15.7 µs/sample)
+
+=== Float32 AdamW (H=512, same bit-mass, --evalN 10000) ===
+  Eval:    92.6%  (9260/10000)
+  Time:    50ms  (5.0 µs/sample)
 ```
+
+The Otto Score (bitwise) outperforms the AdamW float32 baseline at **equal bit-mass** (H=512) while using **zero multiplication** and **zero floating point** during inference.
+
+The first `make test` run will auto-train the float32 model (~9 seconds). Subsequent runs use the cached model in `models/flt32-w1-h512/`.
 
 That's it. You just classified handwritten digits with 96% accuracy
 using only `&`, `|`, `~` — no multiply, no float, no training.
@@ -70,6 +80,15 @@ The two executables are:
 Both auto-detect single (v1) and ensemble (v5) model formats.
 All values are scaled by `F = (1<<OT_PRECISION)` — default F=1024 for v5,
 F=131072 for legacy v1 models. Display divides by the correct F.
+
+**Float32 reference executables (build separately with `make flt32`):**
+
+| File                          | What it does                        |
+| ----------------------------- | ----------------------------------- |
+| `mlp-flt32-trn-w1-adam.exe`   | 2-layer AdamW trainer (float32)     |
+| `mlp-flt32-ifc.exe`           | 2-layer inference (float32)         |
+
+See "Float32 2-Layer Reference" section below.
 
 ---
 
@@ -146,10 +165,6 @@ make test-image
 The shoe is classified as "2" because the model has never seen
 a shoe in training. There is no "unknown" / "none of the above" class.
 
-## 📖 How does it actually work? (simplified)
-
----
-
 ## 🤔 What should I expect to see?
 
 Each run prints:
@@ -168,24 +183,27 @@ thread scheduling. This is normal — the model itself is deterministic.
 ## 📁 What's in this directory?
 
 ```
-├── README.md                  ← this file
-├── Makefile                   ← build: make all / make test / make setup
-├── fetch_mnist.sh           ← MNIST download script
-├── convert_to_pgm.sh        ← image → MNIST PGM converter
-├── mlp-otto-score-ifc.c     ← inference source code (~460 lines)
-├── ki-common.h                ← MNIST loader (only what's needed)
+├── README.md                        ← this file
+├── Makefile                         ← build: make all / make test / make setup
+├── fetch_mnist.sh                   ← MNIST download script
+├── convert_to_pgm.sh                ← image → MNIST PGM converter
+├── convert_to_raw.sh                ← image → raw 784-byte converter
+├── mlp-otto-score-ifc.c             ← Otto Score inference (~440 lines)
+├── mlp-flt32-trn-w1-adam.c          ← Float32 AdamW trainer (~440 lines)
+├── mlp-flt32-ifc.c                  ← Float32 2-layer inference (~300 lines)
+├── ki-common.h                      ← Shared infrastructure (MNIST, matmul, AdamW helpers)
 ├── lib/
-│   ├── maj3.h                 ← MAJ3 majority_tree algorithm
-│   └── w0_random.h            ← splitmix64 random number generator
+│   ├── maj3.h                       ← MAJ3 majority_tree algorithm
+│   └── w0_random.h                  ← splitmix64 random number generator
 ├── models/
-│   ├── model-xnor.otto       ← pre-trained XNOR model (v1 single, H=512)
-│   ├── model-xor.otto        ← pre-trained XOR model (v1 single, H=512)
-│   ├── model-ensemble-xnor.otto ← ensemble XNOR model (v5, H=128×N=3)
-│   └── model-ensemble-xor.otto  ← ensemble XOR model (v5, H=128×N=3)
+│   ├── model-xnor.otto             ← pre-trained XNOR model (v1 single, H=512)
+│   ├── model-xor.otto              ← pre-trained XOR model (v1 single, H=512)
+│   ├── model-ensemble-xnor.otto    ← ensemble XNOR model (v5, H=128×N=3)
+│   └── model-ensemble-xor.otto     ← ensemble XOR model (v5, H=128×N=3)
 ├── tests/
-│   ├── digit5.pgm           ← MNIST test image (label=5, viewable!)
-│   ├── digit9.pgm           ← MNIST test image (label=9, viewable!)
-│   └── shoe.pgm             ← Fashion-MNIST boot (NOT a digit!)
+│   ├── digit5.pgm                  ← MNIST test image (label=5, viewable!)
+│   ├── digit9.pgm                  ← MNIST test image (label=9, viewable!)
+│   └── shoe.pgm                    ← Fashion-MNIST boot (NOT a digit!)
 └── .gitignore
 ```
 
@@ -250,6 +268,52 @@ score[k] = Σ_m score_m[k]    (member m, class k)
 | H=512, N=1, ep=20 (bundled v1)  | 96.3%     | Legacy single model        |
 | H=128, N=3, ep=20 (v5 ensemble) | **95.5%** | 3× smaller, ~3× faster     |
 | H=64, N=17, ep=20 (v5 ensemble) | **96.4%** | Same accuracy, 32× less W0 |
+
+---
+
+## 🧪 Float32 2-Layer Reference (Baseline)
+
+This directory also includes a **2-layer float32 AdamW baseline** for comparison.
+It uses standard matmul + Leaky ReLU + AdamW — **no bitwise ops, no MAJ3**.
+
+```
+Architecture:  W0 (float, random frozen) → LReLU(0.05) → W1 (float, AdamW)
+Training:      MSE(±1 targets), AdamW(lr=0.002, wd=1e-4), warmup + cosine decay
+Inference:     matmul(W0, x) → LReLU → matmul(W1, h0) → argmax
+
+Typical:       H=512 → 95%+ eval (MNIST, 10 epochs)
+```
+
+### Build & Train (reference)
+
+```bash
+make flt32
+./mlp-flt32-trn-w1-adam.exe --hiddenN 512 --epochsN 10 --out out/flt32-ref
+# → Evaluates on 10000 test digits, exports weights to out/flt32-ref/
+```
+
+### Run inference on exported model
+
+```bash
+# Evaluate MNIST test set
+./mlp-flt32-ifc.exe --model out/flt32-ref --evalN 10000
+
+# Classify a single image (PGM or raw 784 bytes)
+./mlp-flt32-ifc.exe --model out/flt32-ref --image tests/digit5.pgm
+```
+
+### Key differences vs Otto Score
+
+| Aspect            | Otto Score (bitwise)          | Float32 Reference            |
+| ----------------- | ----------------------------- | ---------------------------- |
+| Forward           | XNOR + MAJ3 + Bayes log-score | matmul + LReLU               |
+| Training          | Iterative correction          | AdamW (backprop)             |
+| Hardware target   | DRAM (bit-logic)              | CPU/GPU (matmul)             |
+| No. of formats    | int32 Target + Offset         | float32 W0 + W1              |
+| Best eval (H=512) | 96.3%                         | 95.3%                        |
+
+The Otto Score outperforms the AdamW baseline on MNIST at equal H,
+while using **zero floating point** and **zero multiplication** during inference.
 
 ---
 

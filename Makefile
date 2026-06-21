@@ -1,16 +1,20 @@
-# Makefile — Otto Score Inference (public demo)
-# ===============================================
+# Makefile — Otto Score Inference + 2-Layer Float32 Reference (public demo)
+# ==========================================================================
 # Self-contained build for the public GitHub release.
-# Builds both XNOR and XOR inference executables.
+#
+# Programs:
+#   mlp-otto-score-ifc.c    — Otto Score inference (bitwise MAJ3 + Bayes)
+#   mlp-flt32-trn-w1-adam.c — Float32 2-layer AdamW trainer (reference)
+#   mlp-flt32-ifc.c         — Float32 2-layer inference (reference)
 #
 # Targets:
-#   make (all)  — builds both
-#   make setup  — download MNIST dataset (required once)
-#   make xnor   — mlp-otto-score-ifc-xnor.exe (default: ~(in^W0))
-#   make xor    — mlp-otto-score-ifc-xor.exe  (in^W0)
-#   make clean  — remove executables
-#   make test   — quick accuracy test with bundled model
-#   make push   — push to GitHub (requires configured remote)
+#   make (all)     — builds Otto Score (xnor + xor) + flt32-ifc
+#   make setup     — download MNIST dataset (required once)
+#   make otto      — mlp-otto-score-ifc-xnor.exe + xor
+#   make flt32     — mlp-flt32-trn-w1-adam.exe + mlp-flt32-ifc.exe
+#   make clean     — remove executables
+#   make test      — quick accuracy test with bundled models
+#   make push      — push to GitHub (requires configured remote)
 
 CC       = gcc
 CFLAGS   = -O3 -march=native -fopenmp -Wall -Wextra -Werror \
@@ -18,15 +22,23 @@ CFLAGS   = -O3 -march=native -fopenmp -Wall -Wextra -Werror \
            -Ilib
 LDLIBS   = -lm -lz
 
-SRC      = mlp-otto-score-ifc.c
+.PHONY: all otto flt32 setup clean test test-image push
 
-.PHONY: all xnor xor clean test test-image setup push
-
-all: xnor xor
+all: otto mlp-flt32-ifc.exe
 
 setup:
 	@echo "Downloading MNIST dataset..."
 	@bash fetch_mnist.sh
+
+# ── Otto Score (bitwise MAJ3 + Bayes log-Score) ────────────────────
+
+otto: mlp-otto-score-ifc-xnor.exe mlp-otto-score-ifc-xor.exe
+
+mlp-otto-score-ifc-xnor.exe: mlp-otto-score-ifc.c ki-common.h lib/maj3.h
+	$(CC) $(CFLAGS) -o $@ $< $(LDLIBS)
+
+mlp-otto-score-ifc-xor.exe: mlp-otto-score-ifc.c ki-common.h lib/maj3.h
+	$(CC) $(CFLAGS) -DH0_XOR -o $@ $< $(LDLIBS)
 
 test-image: mlp-otto-score-ifc-xnor.exe
 	@echo "=== Single image classification test ==="
@@ -37,27 +49,40 @@ test-image: mlp-otto-score-ifc-xnor.exe
 	@echo "  tests/shoe.pgm (Fashion-MNIST ankle boot — should NOT be a digit)"
 	@./mlp-otto-score-ifc-xnor.exe --model models/model-xnor.otto --image tests/shoe.pgm 2>&1 | grep 'Predicted'
 
-xnor: mlp-otto-score-ifc-xnor.exe
-xor:  mlp-otto-score-ifc-xor.exe
-
-mlp-otto-score-ifc-xnor.exe: $(SRC) ki-common.h lib/maj3.h
-	$(CC) $(CFLAGS) -o $@ $(SRC) $(LDLIBS)
-
-mlp-otto-score-ifc-xor.exe: $(SRC) ki-common.h lib/maj3.h
-	$(CC) $(CFLAGS) -DH0_XOR -o $@ $(SRC) $(LDLIBS)
-
-test: mlp-otto-score-ifc-xnor.exe mlp-otto-score-ifc-xor.exe
-	@echo "=== XNOR v1 single (H=512, --evalN 10000) ==="
+test: mlp-otto-score-ifc-xnor.exe mlp-otto-score-ifc-xor.exe mlp-flt32-ifc.exe models/flt32-w1-h512/weights.meta
+	@echo "=== Otto Score XNOR v1 single (H=512, eval=10000) ==="
 	@./mlp-otto-score-ifc-xnor.exe --model models/model-xnor.otto --evalN 10000 2>&1 | grep -E 'Eval:|Time:'
 	@echo ""
-	@echo "=== XOR v1 single (H=512, --evalN 10000) ==="
+	@echo "=== Otto Score XOR v1 single (H=512, eval=10000) ==="
 	@./mlp-otto-score-ifc-xor.exe --model models/model-xor.otto --evalN 10000 2>&1 | grep -E 'Eval:|Time:'
 	@echo ""
-	@echo "=== XNOR ensemble v6 (H=128x3, --evalN 10000) ==="
+	@echo "=== Otto Score XNOR ensemble v6 (H=128x3, eval=10000) ==="
 	@./mlp-otto-score-ifc-xnor.exe --model models/model-ensemble-xnor.otto --evalN 10000 2>&1 | grep -E 'Eval:|Time:'
 	@echo ""
-	@echo "=== XOR ensemble v6 (H=128x3, --evalN 10000) ==="
+	@echo "=== Otto Score XOR ensemble v6 (H=128x3, eval=10000) ==="
 	@./mlp-otto-score-ifc-xor.exe --model models/model-ensemble-xor.otto --evalN 10000 2>&1 | grep -E 'Eval:|Time:'
+	@echo ""
+	@echo "=== Float32 AdamW (H=512, same bit-mass, eval=10000) ==="
+	@./mlp-flt32-ifc.exe --model models/flt32-w1-h512 --evalN 10000 2>&1 | grep -E 'Eval:|Time:'
+
+# ── Float32 2-Layer AdamW Reference (matmul + LReLU, no bitwise) ──
+#   trainer:   mlp-flt32-trn-w1-adam.exe
+#   inference: mlp-flt32-ifc.exe
+#   model:     models/flt32-w1-h512/ (auto-trained on first `make test`)
+
+flt32: mlp-flt32-trn-w1-adam.exe mlp-flt32-ifc.exe
+
+mlp-flt32-trn-w1-adam.exe: mlp-flt32-trn-w1-adam.c ki-common.h
+	$(CC) $(CFLAGS) -o $@ $< $(LDLIBS)
+
+mlp-flt32-ifc.exe: mlp-flt32-ifc.c ki-common.h
+	$(CC) $(CFLAGS) -o $@ $< $(LDLIBS)
+
+# Auto-train float32 H=512 model if missing (~9s at 10 epochs, same bit-mass as Otto Score H=512)
+models/flt32-w1-h512/weights.meta: mlp-flt32-trn-w1-adam.exe
+	@echo "  Training float32 H=512 model (10 epochs)..."
+	@mkdir -p models/flt32-w1-h512
+	@./mlp-flt32-trn-w1-adam.exe --hiddenN 512 --epochsN 10 --out models/flt32-w1-h512 2>&1 | tail -1
 
 clean:
 	rm -f *.exe

@@ -2,13 +2,13 @@
  * otto-score-ifc/mlp-flt32-trn-w1-adam.c — Float32 AdamW W1-Only (W0 Frozen)
  * =========================================================================
  *
- * Eigenständiger AdamW-Trainer (kein #include "mlp.c", kein #include "args.h").
- * Forward: matmul + LReLU(0.05) | Loss: MSE ±1 (alle 10 Klassen)
+ * Self-contained AdamW trainer (no #include "mlp.c", no #include "args.h").
+ * Forward: matmul + LReLU(0.05) | Loss: MSE ±1 (all 10 classes)
  * Optimizer: AdamW(lr, wd=1e-4) | Schedule: warmup + cosine decay
  * Gradient clipping: max_norm=1.0
  * W0: kaiming_uniform init, FROZEN — W1: kaiming_uniform init, AdamW
  *
- * Interface: ki-common.h — identische CLI-Parameter wie alle Programme.
+ * Interface: ki-common.h — same CLI parameters as all programs.
  *
  * Reference implementation for 2-layer float32 baseline.
  * See: ki-w1/mlp-flt32-trn-w1-adam.c (original)
@@ -255,9 +255,9 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    /* ── Pack input: 784 px → 196 packed containers (4px/cont, gemittelt) ──
-     *   Gleiche 4er-Gruppierung wie mlp-bin32-trn-w1-hebbian.c.
-     *   Statt uint32 werden 4 Pixel als float [-1,+1] gemittelt.
+    /* ── Pack input: 784 px → 196 packed containers (4px/cont, averaged) ──
+     *   Same 4-pixel grouping as mlp-bin32-trn-w1-hebbian.c.
+     *   Instead of uint32, 4 pixels are averaged as float [-1,+1].
      */
     int total_train = a.trainN;
     int total_eval  = a.evalN;

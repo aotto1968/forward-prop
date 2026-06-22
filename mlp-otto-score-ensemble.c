@@ -34,10 +34,10 @@
 /* Index: [10][H][32] — klasse × neuron × bit */
 
 
-// === Zentraler Skalierungsfaktor OT_PRECISION ===
-// Alle logit/log(p)-Werte werden mit F = (1<<OT_PRECISION) skaliert
-// in int32/int64 gespeichert.  Der Korrektur-Step und die lr-Anzeige
-// leiten sich daraus ab → eine Änderung wirkt auf alle abhängigen Stellen.
+// === Central scaling factor OT_PRECISION ===
+// All logit/log(p) values are scaled by F = (1<<OT_PRECISION),
+// stored as int32/int64. The correction step and lr display derive
+// from F — changing it affects all dependent components.
 #define STRINGIFY(x) #x
 #define TOSTRING(x) STRINGIFY(x)
 
@@ -116,7 +116,7 @@ static int32_t *build_target(const uint32_t *X, const uint8_t *Y, int N,
  *   target[k][h][b] = round( ln((t+1)/(N_k-t+1)) × F )
  *   mit F = (1<<OT_PRECISION) (default 10 → F=1024)
  *
- * Abhängigkeit: ot_precision() definiert die int32-Skalierung.
+ *   Dependency: ot_precision() defines the int32 scaling.
  */
 static void logit_convert(int32_t *target, int H, const int class_counts[10]) {
     for (int k = 0; k < 10; k++) {
@@ -137,8 +137,8 @@ static void logit_convert(int32_t *target, int H, const int class_counts[10]) {
 /* ═══════════════════════════════════════════════════════════════════
  * CLASS OFFSET — Σ log(1-P_k) × F  (F = 1<<OT_PRECISION)
  * ═══════════════════════════════════════════════════════════════════
- * Muss VOR logit_convert berechnet werden (braucht raw counts).
- * Gemeinsame Skalierung: target und offset teilen F.
+ *  Must be computed BEFORE logit_convert (needs raw counts).
+ *  Shared scaling: target and offset share F.
  *
  * Note: +-0.5 rounding removed because log(p1)*F is always negative
  * and the 0.5 correction (~0.001%) is below measurement noise (±0.3pp).
@@ -469,12 +469,12 @@ int main(int argc, char *argv[]) {
     printf("══╡ OTTO TARGET ╞═══════════════════════════════════════════════\n");
 
     /* ═══════════════════════════════════════════════════════════════
-     * ITERATIVES TARGET-TUNING (per ensemble member)
+     * ITERATIVE TARGET TUNING (per ensemble member)
      * ═══════════════════════════════════════════════════════════════
-     * step = ot_precision(lr) = round(lr * F)  mit F = (1<<OT_PRECISION).
-     * Dadurch sind Korrektur, Target und Offset in der gleichen Skala.
+     * step = ot_precision(lr) = round(lr * F) with F = (1<<OT_PRECISION).
+     * This guarantees correction, target, and offset share the same scale.
      *
-     * Bei OT_PRECISION=10 (F=1024) und lr=0.05: step = round(0.05*1024) = 51.
+     * At OT_PRECISION=10 (F=1024) and lr=0.05: step = round(0.05*1024) = 51.
      */
     int step_init = (a.lr > 0) ? (int)ot_precision(a.lr) : a.lr_step;
     int warmup = a.warmup_epochs;
@@ -573,7 +573,7 @@ int main(int argc, char *argv[]) {
         for (int m = 0; m < ensembleN; m++) {
             const uint32_t *W0_m = W0_ens + (size_t)m * (size_t)H * (size_t)NC;
 
-            /* H0 für Member m vorberechnen */
+            /* Precompute H0 for member m */
             uint32_t *h0_m = (uint32_t *)ki_xmalloc((size_t)total_train * (size_t)H * sizeof(uint32_t));
             #pragma omp parallel for schedule(static)
             for (int s = 0; s < total_train; s++) {

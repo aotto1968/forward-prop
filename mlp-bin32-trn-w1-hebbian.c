@@ -61,23 +61,23 @@
  */
 _Static_assert(
     PACKING == 8 ? (NC / 2 == 784) : (NC * 4 / PACKING == 784),
-    "NC deckt nicht alle 784 Pixel ab (NC*4/PACKING != 784)"
+    "NC does not cover all 784 pixels (NC*4/PACKING != 784)"
 );
 
-/* ── Buffer sizes (safe maximum für alle Varianten) ──────────────── */
-#define BUF_MAJ   2048       /* majority_tree interner Puffer (≥ NC=1568) */
-#define H0_BUF    4096       /* predict/MAE h0-Puffer (für H bis 4096) */
+/* ── Buffer sizes (safe maximum for all variants) ──────────────── */
+#define BUF_MAJ   2048       /* majority_tree internal buffer (>= NC=1568) */
+#define H0_BUF    4096       /* predict/MAE h0 buffer (for H up to 4096) */
 
 /* ═══════════════════════════════════════════════════════════════════════
  * H0 MODE — choose via -DH0_XOR (default: XNOR)
  * ═══════════════════════════════════════════════════════════════════════
  *   Define      | match[c]           | Effect
  *   ------------+--------------------+-------------------------------
- *   -DH0_XOR    | in[c] ^ row[c]     | Majority über Unterschied
- *   (default)   | ~(in[c] ^ row[c])  | Majority über Übereinstimmung
+ *   -DH0_XOR    | in[c] ^ row[c]     | Majority over differences
+ *   (default)   | ~(in[c] ^ row[c])  | Majority over agreements
  *
- * Hebbian kompensiert die Negation → identische Accuracy.
- * XOR spart eine ~-Operation pro Container.
+ * Hebbian compensates for the negation → identical accuracy.
+ * XOR saves one NOT operation per container.
  */
 /* MB function: XOR3 (Parity) or MAJ (Majority) */
 #ifdef H0_XOR3
@@ -106,7 +106,7 @@ _Static_assert(
 
 static inline int popcnt(uint32_t v) { return __builtin_popcount(v); }
 
-/* ── uint32_t als 32-Bit-Binärstring ausgeben ───────────────────── */
+/* ── print uint32_t as 32-bit binary string ──────────────────────── */
 static inline void print_binary(uint32_t v) {
     for (int i = 31; i >= 0; i--)
         putchar((v & (1U << (unsigned)i)) ? '1' : '0');
@@ -120,7 +120,7 @@ static inline uint32_t xor3(uint32_t a, uint32_t b, uint32_t c) {
     return a ^ b ^ c;
 }
 
-/* ── XOR3-Baum: n uint32_t → 1 (NUR ^, kein &|~) ─────────────────── */
+/* ── XOR3 tree: n uint32_t → 1 (ONLY ^, no &|~) ─────────────────── */
 #ifdef H0_XOR3
 static uint32_t xor3_tree(const uint32_t *vals, int n) {
     uint32_t buf[BUF_MAJ];
@@ -147,7 +147,7 @@ static uint32_t xor3_tree(const uint32_t *vals, int n) {
 static void compute_h0(const uint32_t *in, const uint32_t *W0,
                        int H, uint32_t *out) {
 #ifdef DIAG_MAJ3
-    /* Diagonale Version: MAJ3 über match[(h+c)%H][c] */
+    /* Diagonal version: MAJ3 over match[(h+c)%H][c] */
     for (int h = 0; h < H; h++) {
         uint32_t match[NC];
         for (int c = 0; c < NC; c++) {
@@ -269,7 +269,7 @@ static inline float accuracy(const uint32_t *X, const uint8_t *Y, int N,
 }
 
 /* ═══════════════════════════════════════════════════════════════════
- *  HEBBIAN TRAINING — identisch für alle Varianten
+ *  HEBBIAN TRAINING — identical for all variants
  * ═══════════════════════════════════════════════════════════════════ */
 static void hebbian_update(uint32_t *W1, const uint32_t *X,
                            const uint8_t *Y, int N,
@@ -360,9 +360,9 @@ static void hebbian_update(uint32_t *W1, const uint32_t *X,
     free(idx);
 }
 
-/* ── INVARIANT: Prüft dass load_input alle 784 Pixel abdeckt ─────
- *     pixels_per_container = 4 / PACKING  (für PACKING=1,2,4)
- *     pixels_per_container = 1/2          (für PACKING=8)
+/* ── INVARIANT: verify load_input covers all 784 pixels ────────────
+ *     pixels_per_container = 4 / PACKING  (for PACKING=1,2,4)
+ *     pixels_per_container = 1/2          (for PACKING=8)
  */
 static inline void validate_pixel_coverage(void) {
     int covered = (PACKING == 8) ? (NC / 2) : (NC * 4 / PACKING);
@@ -374,9 +374,9 @@ static inline void validate_pixel_coverage(void) {
 }
 
 /* ═══════════════════════════════════════════════════════════════════
- *  INPUT LOADING — PACKING-abhängiges Encoding
+ *  INPUT LOADING — PACKING-dependent encoding
  * ═══════════════════════════════════════════════════════════════════
- *  Nimmt rohe uint8_t Pixel [0,255], kein float-Roundtrip.
+ *  Takes raw uint8_t pixels [0,255], no float round-trip.
  *
  *  PACKING=1 (NC=196): 4 px/Cont im Format p0|p1<<8|p2<<16|p3<<24
  *  PACKING=2 (NC=392): 2 px/Cont, 8→16 Expansion via *0x0101
@@ -485,7 +485,7 @@ int main(int argc, char *argv[]) {
     if (a.debug_detail) {
         /* Xtrn als Byte-Array — jedes uint32 = 4 uint8_t */
         uint8_t *Xtrn8 = (uint8_t *)Xtrn;
-        /* finde ersten nicht-Null Container */
+        /* find first non-zero container */
         int first_nz = 0;
         for (int ci = 0; ci < NC; ci++)
             if (Xtrn[ci] != 0) { first_nz = ci; break; }

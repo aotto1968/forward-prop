@@ -231,20 +231,20 @@ static inline float ki_lr_schedule(int epoch, int total_epochs, int warmup,
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
- * OT_PRECISION — Skalierungshilfe: in × F + 0.5-Rounding
+ * OT_PRECISION — scaling helper: in × F + 0.5 rounding
  * ═══════════════════════════════════════════════════════════════════════
- * F = (1<<OT_PRECISION).  Alle logit/log(p)-Werte werden mit F skaliert
- * in int32/int64 gespeichert.  ot_precision() rundet kaufmännisch.
+ * F = (1<<OT_PRECISION). All logit/log(p) values are scaled by F
+ * and stored as int32/int64. ot_precision() rounds commercially.
  */
 static inline double ot_precision(double in) {
     return in * (double)(1 << OT_PRECISION) + (in >= 0 ? 0.5 : -0.5);
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
- * SETUP PRINT — gemeinsame Otto-Score-Info
+ * SETUP PRINT — shared Otto Score info
  * ═══════════════════════════════════════════════════════════════════════
- * Gibt OMP-Threads, Train/Eval, OT_PRECISION, lr/step/mode und warmup aus.
- * Jeder Trainer ruft das auf und ergänzt dann eigene Details.
+ * Prints OMP threads, Train/Eval counts, OT_PRECISION, lr/step/mode
+ * and warmup. Each trainer calls this and adds its own details.
  */
 static inline void ki_print_setup(const ki_Args *a,
                                    int total_train, int total_eval) {
@@ -263,16 +263,16 @@ static inline void ki_print_setup(const ki_Args *a,
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
- * CORRECTION — atomare Target-Updates (über alle Trainer identisch)
+ * CORRECTION — atomic target updates (same for all trainers)
  * ═══════════════════════════════════════════════════════════════════════
- * Für ein fehlklassifiziertes Sample (true_k ≠ pred):
- *   target[true_k][h][b] += step   für jedes aktive Bit
+ * For a misclassified sample (true_k ≠ pred):
+ *   target[true_k][h][b] += step   for each active bit
  *   target[pred][h][b]   -= step
  *
- * h0_s:    H0-Werte des Samples (precomputiert oder frisch berechnet)
- * target:  Zeiger auf das Target (mit Member-Offset für Ensemble)
- * H:       Anzahl Neuronen
- * step:    Korrektur-Schritt
+ * h0_s:    H0 values of the sample (precomputed or freshly computed)
+ * target:  pointer to target (with member offset for ensemble)
+ * H:       number of neurons
+ * step:    correction step
  */
 static inline void ki_correct_target(int32_t *target, const uint32_t *h0_s,
                                       int H, int true_k, int pred, int step) {
@@ -309,11 +309,11 @@ static inline void *ki_xcalloc(size_t nmemb, size_t size) {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
- * BATCH CORRECTION — parallel + deterministisch
+ * BATCH CORRECTION — parallel + deterministic
  * ═══════════════════════════════════════════════════════════════════════
  *
- * Phase 1 (parallel):  Jeder Thread schreibt in seine eigene delta_cache.
- * Phase 2 (sequential): Alle delta_caches werden summiert → target.
+ * Phase 1 (parallel):  Each thread writes to its own delta_cache.
+ * Phase 2 (sequential): All delta_caches are summed → target.
  *
  *   int nt = ki_omp_nthreads();
  *   int32_t **dc = ki_cache_alloc(nt, tgt_sz);

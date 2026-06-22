@@ -241,7 +241,7 @@ typedef struct {
     int cols;
     int pixels;        /* rows * cols */
     float *X;         /* [num_images * pixels] normalized to [-1, +1] */
-    uint8_t *X_raw;   /* [num_images * pixels] raw uint8 [0,255] (für load_input) */
+    uint8_t *X_raw;   /* [num_images * pixels] raw uint8 [0,255] (for load_input) */
     uint8_t *y;       /* [num_images] labels */
 } ki_MNISTData;
 
@@ -359,11 +359,11 @@ static __attribute__((unused)) int ki_mnist_read(ki_MNISTData *out) {
     out->rows = rows;
     out->cols = cols;
     out->pixels = pixels;
-    /* Save raw uint8 pixels (für load_input) */
+    /* Save raw uint8 pixels (for load_input) */
     size_t npix = (size_t)num_img * (size_t)pixels;
     out->X_raw = (uint8_t *)malloc(npix);
     memcpy(out->X_raw, raw + 16, npix);
-    /* Float-Version (für float32-Trainer) */
+    /* Float version (for float32 trainer) */
     out->X = (float *)malloc(npix * sizeof(float));
     for (size_t i = 0; i < npix; i++) {
         out->X[i] = ((float)raw[16 + i] / 255.0f) * 2.0f - 1.0f;
@@ -406,24 +406,24 @@ static inline void ki_mnist_free(ki_MNISTData *data) {
 
 /* ── Pack MNIST input: 784 px → 196 containers (4px/cont) ───────
  *
- * DESIGN: Nimmt den ERSTEN Pixel jeder 4er-Gruppe, behält die
- * [-1,+1] Normalisierung. Gleiche Bit-Masse wie binary Trainer
- * (nc=196), aber numerisch stabil für SGD (kaiming_init erwartet
- * Input-Varianz ≈ 1, nicht [0,255] Raw-Bytes).
+ * DESIGN: Takes the FIRST pixel of each 4-pixel group, retains [-1,+1]
+ * normalization. Same bit-mass as binary trainer (nc=196), but
+ * numerically stable for SGD (kaiming_init expects input variance ≈ 1,
+ * not [0,255] raw bytes).
  *
- * AdamW käme mit [0,255] klar (adaptive per-param LR), SGD nicht.
- * Siehe: comments in mlp-flt32-trn-w1-sgd.c
+ * AdamW could handle [0,255] (adaptive per-param LR), SGD cannot.
+ * See: comments in mlp-flt32-trn-w1-sgd.c
  *
  * nc_out = 196, in_features = nc_out.
  */
-/* ── ki_pack_packed_float: 4 Pixel mitteln → 1 float (für AdamW) ─────
+/* ── ki_pack_packed_float: average 4 pixels → 1 float (for AdamW) ──
  *
- * Nimmt rohe uint8 Pixel (aus md.X_raw), packt 4 Pixel pro Container
- * (selbe Gruppierung wie Hebbian: p0|p1<<8|p2<<16|p3<<24) und gibt
- * 196 floats [-1,+1] pro Sample zurück (Mittelwert der 4 Pixel).
+ * Takes raw uint8 pixels (from md.X_raw), packs 4 pixels per container
+ * (same grouping as Hebbian: p0|p1<<8|p2<<16|p3<<24) and returns
+ * 196 floats [-1,+1] per sample (mean of 4 pixels).
  *
- * Das ist der float-Äquivalent zum 196×uint32 packed Format.
- * Selbe Pixel-Gruppierung, selbe Dimensionalität — nur als float.
+ * This is the float equivalent of the 196×uint32 packed format.
+ * Same pixel grouping, same dimensionality — just as float.
  */
 static __attribute__((unused)) float *ki_pack_packed_float(const uint8_t *X_raw, int n_samples) {
     size_t total = (size_t)n_samples * (size_t)KI_NC;
@@ -443,7 +443,7 @@ static __attribute__((unused)) float *ki_pack_packed_float(const uint8_t *X_raw,
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
- *  INPUT LOADING — PACKING-abhängiges Encoding (unverändert)
+ *  INPUT LOADING — PACKING-dependent encoding (unchanged)
  * ═══════════════════════════════════════════════════════════════════════
  *
  *  KI_PACK=4 (KI_NC=196): 4 px/Cont, p0|p1<<8|p2<<16|p3<<24
@@ -582,7 +582,7 @@ static inline void ki_report_show(int train_ok, int train_n,
  * LR SCHEDULE — Cosine Decay + Linear Warmup
  * ═══════════════════════════════════════════════════════════════════════
  *
- * Gibt die LR für eine gegebene Epoche zurück.
+ * Returns the learning rate for a given epoch.
  * - Warmup: linear von 0 → base_lr (epoch 0..warmup-1)
  * - Cosine: base_lr → lr_min (epoch warmup..total-1)
  * - no_decay: konstant base_lr

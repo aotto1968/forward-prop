@@ -29,7 +29,7 @@
 #ifndef OT_PRECISION
 #define OT_PRECISION 10
 #endif
-#define OT_F  (1 << OT_PRECISION)   /* Skalierungsfaktor für target/offset */
+#define OT_F  (1 << OT_PRECISION)   /* Scaling factor for target/offset */
 
 /* Export file magic + version (must match trainer) */
 #define OTTO_MAGIC   0x4F54544FU   /* "OTTO" */
@@ -43,10 +43,10 @@
 
 
 /* ═══════════════════════════════════════════════════════════════════
- * MODEL — geladenes Model (single oder ensemble)
+ * MODEL — loaded model (single or ensemble)
  * ═══════════════════════════════════════════════════════════════════
- * Version 1 (single): ensemble_n=1, arrays[0] werden genutzt.
- * Version 5 (ensemble): ensemble_n=N, arrays[0..N-1] pro Member.
+ * Version 1 (single): ensemble_n=1, arrays[0] is used.
+ * Version 5 (ensemble): ensemble_n=N, arrays[0..N-1] per member.
  */
 typedef struct {
     uint32_t h0_mode;          /* 0=XNOR, 1=XOR */
@@ -74,7 +74,7 @@ typedef struct {
 
 
 /* ═══════════════════════════════════════════════════════════════════
- * MAJ3 — majority_tree aus lib/maj3.h (bereits includiert)
+ * MAJ3 — majority_tree from lib/maj3.h (already included)
  * ═══════════════════════════════════════════════════════════════════ */
 
 
@@ -145,7 +145,7 @@ static OttoModel *model_load_path(const char *path) {
     m->nc          = (int)ncc;
     m->ensemble_n  = (int)ensemble_n;
 
-    /* Precision aus Header oder Default */
+    /* Precision from header or default */
     if (version == OTTO_VERSION_ENSEMBLE_V6) {
         uint32_t prec = 0;
         if (fread(&prec, sizeof(prec), 1, f) != 1) {
@@ -163,8 +163,8 @@ static OttoModel *model_load_path(const char *path) {
         m->precision = 17;            /* v1: legacy ×100000 ≈ 1<<17 */
     }
 
-    /* Daten lesen: Datei-Format ist W0[m] + Tgt[m] + Off[m] pro Member,
-     * nicht alle W0, dann alle Tgt, dann alle Off.  Vgl. export_ensemble(). */
+    /* Data layout: file format is W0[m] + Tgt[m] + Off[m] per member,
+     * NOT all W0s, then all Tgt, then all Off. See export_ensemble(). */
     size_t w0_per_m = (size_t)H * (size_t)ncc;
     size_t tgt_per_m = (size_t)H * 10 * 32;
     size_t w0_sz   = (size_t)ensemble_n * w0_per_m;

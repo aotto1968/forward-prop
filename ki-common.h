@@ -79,6 +79,10 @@ typedef struct {
     int      warmup_epochs; /* Warmup epochs (--warmup, default: epochs/5) */
     int      no_decay;      /* --no-decay: constant LR (no cosine decay) */
 
+    /* Hebbian-specific — used by mlp-bin32-trn-w1-hebbian */
+    int    hebbian_pct;     /* --hebbian-pct: flip threshold % (default: 50) */
+    int    debug_detail;    /* --debug-detail: per-sample debug output */
+
     /* OpenMP threads */
     int    threadN;          /* OpenMP threads (--threadN, default: 2) */
 } ki_Args;
@@ -99,6 +103,8 @@ static inline ki_Args ki_args_defaults(void) {
     a.lr_min_uint   = 0;
     a.warmup_epochs = 0;
     a.no_decay      = 0;
+    a.hebbian_pct   = 50;   /* Hebbian: majority >50% flips */
+    a.debug_detail  = 0;
     a.threadN       = 8;
     return a;
 }
@@ -177,6 +183,10 @@ static inline void ki_parse_args(int argc, char *argv[], ki_Args *a) {
         } else if (strcmp(argv[i], "--out") == 0 && i + 1 < argc) {
             strncpy(a->out, argv[++i], sizeof(a->out) - 1);
             a->out[sizeof(a->out) - 1] = '\0';
+        } else if (strcmp(argv[i], "--hebbian-pct") == 0 && i + 1 < argc) {
+            a->hebbian_pct = atoi(argv[++i]);
+        } else if (strcmp(argv[i], "--debug-detail") == 0) {
+            a->debug_detail = 1;
         } else {
             fprintf(stderr, "[ERROR] Unknown argument: %s\nTry --help\n", argv[i]);
             exit(1);

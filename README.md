@@ -14,10 +14,6 @@
 This is a **self-contained demo** that classifies handwritten digits using
 only bit-logic operations. No GPU, no PyTorch, no training, no floating point.
 
----
-
-## 🚀 First Run (5 minutes)
-
 ```bash
 # Step 1: Build the executables
 make all
@@ -51,11 +47,15 @@ make test
 === Float32 AdamW (H=512, same bit-mass, --evalN 10000) ===
   Eval:    92.6%  (9260/10000)
   Time:    50ms  (5.0 µs/sample)
+
+=== Bin32 Hebbian (H=512, --evalN 10000) ===
+  Eval:    82.9%  (8290/10000)
+  Time:    60ms  (6.0 µs/sample)
 ```
 
-The Otto Score (bitwise) outperforms the AdamW float32 baseline at **equal bit-mass** (H=512) while using **zero multiplication** and **zero floating point** during inference.
+The Otto Score (bitwise) outperforms both the AdamW float32 baseline and the Hebbian baseline at **equal bit-mass** (H=512) while using **zero multiplication** and **zero floating point** during inference.
 
-The first `make test` run will auto-train the float32 model (~9 seconds). Subsequent runs use the cached model in `models/flt32-w1-h512/`.
+The first `make test` run will auto-train the float32 model (~9s) and the Hebbian model (~2s). Subsequent runs use the cached models.
 
 That's it. You just classified handwritten digits with 96% accuracy
 using only `&`, `|`, `~` — no multiply, no float, no training.
@@ -66,27 +66,41 @@ using only `&`, `|`, `~` — no multiply, no float, no training.
 
 | You typed…   | What happened                                                |
 | ------------ | ------------------------------------------------------------ |
-| `make all`   | Compiled the C inference code → two executables              |
+| `make all`   | Compiled all inference + reference executables (10 total)    |
 | `make setup` | Downloaded 60000 MNIST training + 10000 test digits          |
-| `make test`  | Loaded a pre-trained model (v1 single), ran 2000 test digits |
+| `make test`  | Evaluates all pre-trained models (Otto Score + float32)     |
 
-The two executables are:
+### Available executables
 
-| File                          | What it does                        |
-| ----------------------------- | ----------------------------------- |
-| `mlp-otto-score-ifc-xnor.exe` | XNOR mode (default, model included) |
-| `mlp-otto-score-ifc-xor.exe`  | XOR mode (model included)           |
+**Otto Score (bitwise MAJ3 + Bayes log-score):**
 
-Both auto-detect single (v1) and ensemble (v5) model formats.
-All values are scaled by `F = (1<<OT_PRECISION)` — default F=1024 for v5,
-F=131072 for legacy v1 models. Display divides by the correct F.
+| File                                    | What it does                              |
+| --------------------------------------- | ----------------------------------------- |
+| `mlp-otto-score-ifc-xnor.exe`           | Inference (XNOR, reads .otto models)      |
+| `mlp-otto-score-ifc-xor.exe`            | Inference (XOR, reads .otto models)       |
+| `mlp-otto-score-ensemble-xnor.exe`      | Ensemble trainer (iterative correction)   |
+| `mlp-otto-score-ensemble-xor.exe`       | Ensemble trainer (XOR mode)               |
 
-**Float32 reference executables (build separately with `make flt32`):**
+Both inference binaries auto-detect single (v1) and ensemble (v5/v6) model formats.
+All log-odds values are scaled by `F = (1<<OT_PRECISION)` — default F=1024.
+
+**Float32 reference executables (matmul + LReLU + AdamW):**
 
 | File                          | What it does                        |
 | ----------------------------- | ----------------------------------- |
 | `mlp-flt32-trn-w1-adam.exe`   | 2-layer AdamW trainer (float32)     |
 | `mlp-flt32-ifc.exe`           | 2-layer inference (float32)         |
+
+**Hebbian reference executables (XNOR + MAJ3 + popcnt, ~78%):**
+
+| File                                    | What it does                              |
+| --------------------------------------- | ----------------------------------------- |
+| `mlp-bin32-trn-w1-hebbian-xnor.exe`     | Bitwise Hebbian trainer (XNOR)            |
+| `mlp-bin32-trn-w1-hebbian-xor.exe`      | Bitwise Hebbian trainer (XOR)             |
+| `mlp-bin32-ifc-xnor.exe`                | Bin32 inference (XNOR + popcnt, no float) |
+| `mlp-bin32-ifc-xor.exe`                 | Bin32 inference (XOR + popcnt, no float)  |
+
+Note: Hebbian oscillates at ~78-82% — does **not** converge like Otto Score. See comparison table.
 
 See "Float32 2-Layer Reference" section below.
 
@@ -189,9 +203,18 @@ thread scheduling. This is normal — the model itself is deterministic.
 ├── convert_to_pgm.sh                ← image → MNIST PGM converter
 ├── convert_to_raw.sh                ← image → raw 784-byte converter
 ├── mlp-otto-score-ifc.c             ← Otto Score inference (~440 lines)
+├── mlp-otto-score-ensemble.c        ← Otto Score ensemble trainer (~660 lines)
 ├── mlp-flt32-trn-w1-adam.c          ← Float32 AdamW trainer (~440 lines)
 ├── mlp-flt32-ifc.c                  ← Float32 2-layer inference (~300 lines)
-├── ki-common.h                      ← Shared infrastructure (MNIST, matmul, AdamW helpers)
+├── mlp-bin32-trn-w1-hebbian.c       ← Bitwise Hebbian trainer (~570 lines, ~78%)
+├── mlp-bin32-ifc.c                  ← Bin32 inference (~330 lines, XNOR+popcnt)
+├── ki-common.h                      ← float32/matmul/AdamW helpers (shared)
+├── ki-otto-common.h                 ← Otto Score specific (batch correction, precision)
+├── docs/
+│   ├── README.md                    ← Technical docs overview
+│   ├── otto-score.md                ← Otto Score explained
+│   ├── adamw.md                     ← Float32 AdamW reference explained
+│   └── hebbian.md                   ← Hebbian reference explained
 ├── lib/
 │   ├── maj3.h                       ← MAJ3 majority_tree algorithm
 │   └── w0_random.h                  ← splitmix64 random number generator
@@ -304,21 +327,25 @@ make flt32
 
 ### Key differences vs Otto Score
 
-| Aspect            | Otto Score (bitwise)          | Float32 Reference            |
-| ----------------- | ----------------------------- | ---------------------------- |
-| Forward           | XNOR + MAJ3 + Bayes log-score | matmul + LReLU               |
-| Training          | Iterative correction          | AdamW (backprop)             |
-| Hardware target   | DRAM (bit-logic)              | CPU/GPU (matmul)             |
-| No. of formats    | int32 Target + Offset         | float32 W0 + W1              |
-| Best eval (H=512) | 96.3%                         | 95.3%                        |
+| Aspect            | Otto Score (bitwise)          | Float32 Reference            | Hebbian (bitwise)            |
+| ----------------- | ----------------------------- | ---------------------------- | ---------------------------- |
+| Forward           | XNOR + MAJ3 + Bayes log-score | matmul + LReLU               | XNOR + MAJ3 + popcount       |
+| Training          | Iterative correction          | AdamW (backprop)             | Batch-Hebbian (co-occurrence)|
+| Convergence       | ✅ 96%+                       | ✅ 93%+                      | ❌ ~82%, oscillates          |
+| Hardware target   | DRAM (bit-logic)              | CPU/GPU (matmul)             | DRAM (bit-logic)             |
+| Best eval (H=512) | 96.3%                         | 92.6%                        | ~82%                         |
 
-The Otto Score outperforms the AdamW baseline on MNIST at equal H,
+The Otto Score outperforms both the AdamW and Hebbian baselines,
 while using **zero floating point** and **zero multiplication** during inference.
+
+The Hebbian trainer is included as a **negative reference** — it uses pure bit-logic
+but fails to converge beyond ~82% due to its local co-occurrence update rule.
 
 ---
 
 ## 📖 Deeper reading
 
+- **Technical docs**: [docs/](docs/README.md) — Otto Score, AdamW, and Hebbian explained
 - **Research results**: [forward-prop.nhi1.de](https://forward-prop.nhi1.de/)
 - **The vision**: [forward-prop.nhi1.de/papers/vision.html](https://forward-prop.nhi1.de/papers/vision.html)
 - **Full source**: [github.com/aotto1968/forward-prop](https://github.com/aotto1968/forward-prop)

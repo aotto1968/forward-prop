@@ -19,23 +19,23 @@ setup-cifar: ; @bash fetch_cifar10.sh
 setup: setup-mnist setup-cifar
 
 # ── Models (cached: only rebuild when trainer binary changes) ──
-MODEL      = models/mnist-otto-h512/model.otto
-ADAM_MODEL = models/mnist-adam-h512/weights.meta
-HEBB_MODEL = models/mnist-hebbian-h512/weights.meta
+OTTO_MODEL  = models/mnist-otto-h512/model.otto
+ADAM_MODEL  = models/mnist-adam-h512/weights.meta
+HEBB_MODEL  = models/mnist-hebbian-h512/weights.meta
 CIFAR_MODEL = models/cifar-otto-h256/model.otto
-CIFAR_ADAM = models/cifar-adam-h256/weights.meta
+CIFAR_ADAM  = models/cifar-adam-h256/weights.meta
 
-$(MODEL): mnist/mnist-mlp-otto-score-trn-xnor.exe
+$(OTTO_MODEL): mnist/mnist-mlp-otto-score-trn-xnor.exe
 	@mkdir -p models/mnist-otto-h512
 	@cd mnist && ./mnist-mlp-otto-score-trn-xnor.exe --hiddenN 512 --epochsN 10 --encoding exp --out ../models/mnist-otto-h512 2>&1 | tail -1
 
-$(ADAM_MODEL): reference/mnist-mlp-flt32-trn-w1-adam.exe reference/mnist-mlp-flt32-ifc.exe
+$(ADAM_MODEL): reference/mnist-flt32-adam-trn.exe reference/mnist-flt32-adam-ifc.c.exe
 	@mkdir -p models/mnist-adam-h512
-	@./reference/mnist-mlp-flt32-trn-w1-adam.exe --hiddenN 512 --epochsN 10 --out models/mnist-adam-h512 2>&1 | tail -1
+	@./reference/mnist-flt32-adam-trn.exe --hiddenN 512 --epochsN 10 --out models/mnist-adam-h512 2>&1 | tail -1
 
-$(HEBB_MODEL): reference/mnist-mlp-bin32-trn-w1-hebbian-xnor.exe reference/mnist-mlp-bin32-ifc-xnor.exe
+$(HEBB_MODEL): reference/mnist-bin32-hebbian-trn-xnor.exe reference/mnist-bin32-hebbian-ifc-xnor.exe
 	@mkdir -p models/mnist-hebbian-h512
-	@./reference/mnist-mlp-bin32-trn-w1-hebbian-xnor.exe --hiddenN 512 --epochsN 10 --out models/mnist-hebbian-h512 2>&1 | tail -1
+	@./reference/mnist-bin32-hebbian-trn-xnor.exe --hiddenN 512 --epochsN 10 --out models/mnist-hebbian-h512 2>&1 | tail -1
 
 $(CIFAR_MODEL): cifar/cifar-mlp-otto-score-trn-xnor.exe
 	@mkdir -p models/cifar-otto-h256
@@ -46,46 +46,46 @@ $(CIFAR_ADAM): ../cifar-1/cifar-mlp-flt32-trn-adam1.exe
 	@cd ../cifar-1 && ./cifar-mlp-flt32-trn-adam1.exe --hiddenN 256 --epochsN 3 --evalN 10000 --out ../otto-score-ifc/models/cifar-adam-h256 2>&1 | tail -1
 
 # ── Test (evaluates cached models, fast on repeat) ─────────────
-test: cifar mnist $(MODEL) $(ADAM_MODEL) $(HEBB_MODEL) $(CIFAR_MODEL) $(CIFAR_ADAM)
+test: cifar mnist $(OTTO_MODEL) $(ADAM_MODEL) $(HEBB_MODEL) $(CIFAR_MODEL) $(CIFAR_ADAM)
 	@echo "=== Otto Score MNIST (H=512, 10 ep, exp8) ==="
-	@./mnist/mnist-mlp-otto-score-trn-xnor.exe --model $(MODEL) --evalN 10000 --encoding exp 2>&1 | grep '^REPORT'
+	@echo -n "start..." && ./mnist/mnist-mlp-otto-score-trn-xnor.exe --model $(OTTO_MODEL) --evalN 10000 --encoding exp 2>&1 | grep '^REPORT'
 	@echo "=== Float32 AdamW MNIST (H=512, 10 ep) ==="
-	@./reference/mnist-mlp-flt32-ifc.exe --model models/mnist-adam-h512 --evalN 10000 2>&1 | grep '^REPORT'
+	@echo -n "start..." && ./reference/mnist-flt32-adam-ifc.c.exe --model models/mnist-adam-h512 --evalN 10000 2>&1 | grep '^REPORT'
 	@echo "=== Bin32 Hebbian MNIST (H=512, 10 ep) ==="
-	@./reference/mnist-mlp-bin32-ifc-xnor.exe --model models/mnist-hebbian-h512 --evalN 10000 2>&1 | grep '^REPORT'
-	@echo "=== Otto Score CIFAR-10 (H=256, 5 ep, latest) ==="
-	@cd cifar && ./cifar-mlp-otto-score-trn-xnor.exe --hiddenN 256 --epochsN 5 --encoding latest --evalN 10000 2>&1 | grep '^REPORT'
-	@echo "=== Float32 AdamW CIFAR-10 (H=256, 3 ep) ==="
-	@cd ../cifar-1 && ./cifar-mlp-flt32-trn-adam1.exe --hiddenN 256 --epochsN 3 --evalN 10000 2>&1 | grep '^REPORT'
+	@echo -n "start..." && ./reference/mnist-bin32-hebbian-ifc-xnor.exe --model models/mnist-hebbian-h512 --evalN 10000 2>&1 | grep '^REPORT'
+	@echo "=== Otto Score CIFAR-10 (H=256, 7 ep, latest) ==="
+	@echo -n "start..." && cd cifar && ./cifar-mlp-otto-score-trn-xnor.exe --hiddenN 256 --epochsN 7 --encoding latest --evalN 10000 2>&1 | grep '^REPORT'
+	@echo "=== Float32 AdamW CIFAR-10 (H=256, 7 ep) ==="
+	@echo -n "start..." && cd ../cifar-1 && ./cifar-mlp-flt32-trn-adam1.exe --hiddenN 256 --epochsN 7 --evalN 10000 2>&1 | grep '^REPORT'
 
 # ── Single Image Test ─────────────────────────────────────────
-test-image: mnist $(MODEL)
-	@./mnist/mlp-otto-score-ifc-xnor.exe --model $(MODEL) --image tests/digit5.pgm 2>&1 | grep 'Predicted'
-	@./mnist/mlp-otto-score-ifc-xnor.exe --model $(MODEL) --image tests/digit9.pgm 2>&1 | grep 'Predicted'
-	@./mnist/mlp-otto-score-ifc-xnor.exe --model $(MODEL) --image tests/shoe.pgm 2>&1 | grep 'Predicted'
+test-image: mnist $(OTTO_MODEL)
+	@./mnist/mlp-otto-score-ifc-xnor.exe --model $(OTTO_MODEL) --image tests/digit5.pgm 2>&1 | grep 'Predicted'
+	@./mnist/mlp-otto-score-ifc-xnor.exe --model $(OTTO_MODEL) --image tests/digit9.pgm 2>&1 | grep 'Predicted'
+	@./mnist/mlp-otto-score-ifc-xnor.exe --model $(OTTO_MODEL) --image tests/shoe.pgm 2>&1 | grep 'Predicted'
 
 # ── Hebbian Reference (bitwise, no convergence) ───────────────
 hebbian: \
-  reference/mnist-mlp-bin32-trn-w1-hebbian-xnor.exe \
-  reference/mnist-mlp-bin32-trn-w1-hebbian-xor.exe \
-  reference/mnist-mlp-bin32-ifc-xnor.exe \
-  reference/mnist-mlp-bin32-ifc-xor.exe
-reference/mnist-mlp-bin32-trn-w1-hebbian-xnor.exe: reference/mnist-mlp-bin32-trn-w1-hebbian.c
+  reference/mnist-bin32-hebbian-trn-xnor.exe \
+  reference/mnist-bin32-hebbian-trn-xor.exe \
+  reference/mnist-bin32-hebbian-ifc-xnor.exe \
+  reference/mnist-bin32-hebbian-ifc-xor.exe
+reference/mnist-bin32-hebbian-trn-xnor.exe: reference/mnist-bin32-hebbian-trn.c
 	$(CC) $(REF_CFLAGS) -DPACKING=1 -o $@ $< $(LDLIBS)
-reference/mnist-mlp-bin32-trn-w1-hebbian-xor.exe: reference/mnist-mlp-bin32-trn-w1-hebbian.c
+reference/mnist-bin32-hebbian-trn-xor.exe: reference/mnist-bin32-hebbian-trn.c
 	$(CC) $(REF_CFLAGS) -DPACKING=1 -DH0_XOR -o $@ $< $(LDLIBS)
-reference/mnist-mlp-bin32-ifc-xnor.exe: reference/mnist-mlp-bin32-ifc.c
+reference/mnist-bin32-hebbian-ifc-xnor.exe: reference/mnist-bin32-hebbian-ifc.c
 	$(CC) $(REF_CFLAGS) -o $@ $< $(LDLIBS)
-reference/mnist-mlp-bin32-ifc-xor.exe: reference/mnist-mlp-bin32-ifc.c
+reference/mnist-bin32-hebbian-ifc-xor.exe: reference/mnist-bin32-hebbian-ifc.c
 	$(CC) $(REF_CFLAGS) -DH0_XOR -o $@ $< $(LDLIBS)
 
 # ── Float32 AdamW Reference ───────────────────────────────────
 flt32: \
-  reference/mnist-mlp-flt32-trn-w1-adam.exe \
-  reference/mnist-mlp-flt32-ifc.exe
-reference/mnist-mlp-flt32-trn-w1-adam.exe: reference/mnist-mlp-flt32-trn-w1-adam.c
+  reference/mnist-flt32-adam-trn.exe \
+  reference/mnist-flt32-adam-ifc.c.exe
+reference/mnist-flt32-adam-trn.exe: reference/mnist-flt32-adam-trn.c
 	$(CC) $(REF_CFLAGS) -o $@ $< $(LDLIBS)
-reference/mnist-mlp-flt32-ifc.exe: reference/mnist-mlp-flt32-ifc.c
+reference/mnist-flt32-adam-ifc.c.exe: reference/mnist-flt32-adam-ifc.c
 	$(CC) $(REF_CFLAGS) -o $@ $< $(LDLIBS)
 
 # ── Clean ─────────────────────────────────────────────────────

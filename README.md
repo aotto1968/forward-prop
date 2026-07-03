@@ -21,28 +21,28 @@ make test
 **Expected output (second run — cached models, <1s total):**
 
 ```
-=== Otto Score MNIST (H=512, 10 ep) ===          eval=97.0%
-=== Float32 AdamW MNIST (H=512, 10 ep) ===       eval=92.6%
-=== Bin32 Hebbian MNIST (H=512, 10 ep) ===        eval=82.9%
-=== Otto Score CIFAR-10 (H=256, 5 ep) ===         eval=55.0%
-=== Float32 AdamW CIFAR-10 (H=256, 3 ep) ===      eval=39.4%
-=== Bin32 Hebbian CIFAR-10 (H=256, 3 ep) ===      eval=10.0%
+=== Otto Score MNIST (H=512, 10 ep)       ===      eval=97.0%
+=== Float32 AdamW MNIST (H=512, 10 ep)    ===      eval=92.6%
+=== Bin32 Hebbian MNIST (H=512, 10 ep)    ===      eval=82.9%
+=== Otto Score CIFAR-10 (H=256, 5 ep)     ===      eval=55.0%
+=== Float32 AdamW CIFAR-10 (H=256, 3 ep)  ===      eval=39.4%
+=== Bin32 Hebbian CIFAR-10 (H=256, 3 ep)  ===      eval=10.0%
 ```
 
 ---
 
 ## 🎯 Test Targets (fast — <1s with cached models)
 
-| Command | What it tests |
-|---------|---------------|
-| `make test-mnist` | All 3 MNIST approaches (Otto + Adam + Hebbian) |
-| `make test-mnist-otto` | Otto Score MNIST only |
-| `make test-mnist-adam` | Float32 AdamW MNIST only |
-| `make test-mnist-hebbian` | Bin32 Hebbian MNIST only |
-| `make test-cifar` | All 3 CIFAR-10 approaches |
-| `make test-cifar-otto` | Otto Score CIFAR-10 only |
-| `make test-cifar-adam` | Float32 AdamW CIFAR-10 only |
-| `make test-cifar-hebbian` | Bin32 Hebbian CIFAR-10 only |
+| Command                   | What it tests                                  |
+| ------------------------- | ---------------------------------------------- |
+| `make test-mnist`         | All 3 MNIST approaches (Otto + Adam + Hebbian) |
+| `make test-mnist-otto`    | Otto Score MNIST only                          |
+| `make test-mnist-adam`    | Float32 AdamW MNIST only                       |
+| `make test-mnist-hebbian` | Bin32 Hebbian MNIST only                       |
+| `make test-cifar`         | All 3 CIFAR-10 approaches                      |
+| `make test-cifar-otto`    | Otto Score CIFAR-10 only                       |
+| `make test-cifar-adam`    | Float32 AdamW CIFAR-10 only                    |
+| `make test-cifar-hebbian` | Bin32 Hebbian CIFAR-10 only                    |
 
 First run trains models (~2-5 min depending on CPU). Subsequent runs use cached models.
 
@@ -76,13 +76,13 @@ otto-score-ifc/
 
 ## Build Targets
 
-| Command | Builds |
-|---------|--------|
+| Command              | Builds                                                     |
+| -------------------- | ---------------------------------------------------------- |
 | `make` or `make all` | All 14 binaries (MNIST Otto + CIFAR Otto + all references) |
-| `make otto` | Otto Score only (mnist/ + cifar/) |
-| `make flt32` | Float32 AdamW references (reference/) |
-| `make hebbian` | Bin32 Hebbian references (reference/) |
-| `make clean` | Removes all executables + cached models |
+| `make otto`          | Otto Score only (mnist/ + cifar/)                          |
+| `make adam`          | Float32 AdamW references (reference/)                      |
+| `make hebbian`       | Bin32 Hebbian references (reference/)                      |
+| `make clean`         | Removes all executables + cached models                    |
 
 ## How Inference Works
 
@@ -108,17 +108,17 @@ There are **no separate IFC source files** for Otto Score — the trainer binary
 
 All binaries follow: `(dataset)-mlp-(bit|flt)(32)-(otto|adam|hebbian)-(trn|ifc)(-xnor|-xor)?.exe`
 
-| Part | Meaning |
-|------|---------|
-| `mnist-` / `cifar-` | Dataset prefix |
-| `mlp` | Multilayer perceptron |
-| `bin32` / `flt32` | uint32 containers / float weights |
-| `otto` | Otto Score (MAJ3 + Bayes) |
-| `adam` | Float32 AdamW backprop |
-| `hebbian` | Bitwise Hebbian (no backprop) |
-| `trn` | Trainer (also IFC via `--model`) |
-| `ifc` | Inference-only (reference binaries) |
-| `-xnor` / `-xor` | H0 mode |
+| Part                | Meaning                             |
+| ------------------- | ----------------------------------- |
+| `mnist-` / `cifar-` | Dataset prefix                      |
+| `mlp`               | Multilayer perceptron               |
+| `bin32` / `flt32`   | uint32 containers / float weights   |
+| `otto`              | Otto Score (MAJ3 + Bayes)           |
+| `adam`              | Float32 AdamW backprop              |
+| `hebbian`           | Bitwise Hebbian (no backprop)       |
+| `trn`               | Trainer (also IFC via `--model`)    |
+| `ifc`               | Inference-only (reference binaries) |
+| `-xnor` / `-xor`    | H0 mode                             |
 
 ## Dataset Setup
 
@@ -161,11 +161,11 @@ Data is stored in `www/data/mnist/` and `www/data/cifar-10/` (project root).
 
 ## Results Summary
 
-| Approach | MNIST | CIFAR-10 | Hardware Target |
-|----------|-------|----------|-----------------|
-| Otto Score (bitwise) | **97.0%** | **55.0%** | DRAM (bit-logic) |
-| Float32 AdamW (matmul) | 92.6% | 39.4% | CPU/GPU |
-| Bin32 Hebbian (bitwise) | 82.9% | 10.0% | DRAM (bit-logic) |
+| Approach                | MNIST     | CIFAR-10  | Hardware Target  |
+| ----------------------- | --------- | --------- | ---------------- |
+| Otto Score (bitwise)    | **97.0%** | **55.0%** | DRAM (bit-logic) |
+| Float32 AdamW (matmul)  | 92.6%     | 39.4%     | CPU/GPU          |
+| Bin32 Hebbian (bitwise) | 82.9%     | 10.0%     | DRAM (bit-logic) |
 
 ## License
 

@@ -1,1 +1,1 @@
-../../mnist-1/ki-common.h
+../mnist/ki-common.h

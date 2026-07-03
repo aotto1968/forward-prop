@@ -1,12 +1,10 @@
 /*
- * mnist/ki-local.h — MNIST-specific constants + data loader
- * ==========================================================
- * For the public Otto Score distribution.
- * Derived from mnist-1/ki-local.h.
+ * mnist-1/ki-local.h — MNIST-specific constants + data loader
+ * ===========================================================
  *
- * API:
- *   int ki_dataset_read(ki_Dataset *out);   // 0 on success
- *   void ki_dataset_free(ki_Dataset *data);
+ * Included by ki-common.h (shared between mnist-1/ and cifar-1/).
+ * Provides dataset-specific definitions: pixel size, containers,
+ * data struct and loader.
  */
 #ifndef KI_LOCAL_H
 #define KI_LOCAL_H
@@ -18,23 +16,23 @@
 #include <zlib.h>
 
 /* ═══════════════════════════════════════════════════════════════════════
- * CONSTANTS
+ * CONSTANTS — MNIST
  * ═══════════════════════════════════════════════════════════════════════ */
 
 #define KI_PX                   784
 #define KI_NCLASSES             10
-#define KI_DEFAULT_LR           0.05f
-#define KI_DEFAULT_STEP_POWER   0.1f
+#define KI_DEFAULT_LR           0.05f   /* → step = 0.05 × 131072 = 6554 */
+#define KI_DEFAULT_STEP_POWER   0.1f    /* höher erzeugt kleiners trn */
 #define KI_DEFAULT_STEP_MODE    STEP_COS_TIME
-#define KI_DEFAULT_BATCH_N      64
-#define KI_COLORS               1
-#define KI_DEFAULT_COLOR        (1<<COLOR_MNIST)
+#define KI_DEFAULT_BATCH_N      64      /* optimum */
+#define KI_COLORS               1       /* MNIST is grayscale */
+#define KI_DEFAULT_COLOR        (1<<COLOR_MNIST)  /* MNIST: single grayscale block */
 #ifndef KI_NC
-#define KI_NC                   196
+#define KI_NC                   196     /* Packed containers per image: 784/4 */
 #endif
-#define KI_NC_TOTAL             (KI_NC * KI_COLORS)
+#define KI_NC_TOTAL             (KI_NC * KI_COLORS)  /* = 196 (same as KI_NC for grayscale) */
 #ifndef KI_PACK
-#define KI_PACK                 (784 / KI_NC)
+#define KI_PACK                 (784 / KI_NC)  /* Pixels per container */
 #endif
 
 #ifndef NC
@@ -54,20 +52,22 @@ typedef struct {
     int rows;
     int cols;
     int pixels;
-    float *X;
-    uint8_t *X_raw;
-    uint8_t *y;
+    float *X;         /* [num_images * pixels] normalized to [-1, +1] */
+    uint8_t *X_raw;   /* [num_images * pixels] raw uint8 [0,255] */
+    uint8_t *y;       /* [num_images] labels */
 } ki_MNISTData;
 
+/* Generic dataset aliases (used by ki-common.h) */
 typedef ki_MNISTData ki_Dataset;
 
-/* ── GZIP decompression helper ─────────────────────────── */
+/* ── GZIP decompression ────────────────────────────────────────── */
 static int ki_decompress_gz(const char *path, uint8_t **out_data, size_t *out_size) {
     FILE *f = fopen(path, "rb");
     if (!f) return -1;
     fseek(f, 0, SEEK_END);
     long gz_len = ftell(f);
     fseek(f, 0, SEEK_SET);
+
     uint8_t *gz_buf = (uint8_t *)malloc((size_t)gz_len);
     if (!gz_buf) { fclose(f); return -1; }
     if (fread(gz_buf, 1, (size_t)gz_len, f) != (size_t)gz_len) {
@@ -79,10 +79,15 @@ static int ki_decompress_gz(const char *path, uint8_t **out_data, size_t *out_si
     memset(&strm, 0, sizeof(strm));
     strm.avail_in = (uInt)gz_len;
     strm.next_in = gz_buf;
-    if (inflateInit2(&strm, 16 + MAX_WBITS) != Z_OK) { free(gz_buf); return -1; }
 
-    size_t buf_cap = 65536, buf_used = 0;
+    if (inflateInit2(&strm, 16 + MAX_WBITS) != Z_OK) {
+        free(gz_buf); return -1;
+    }
+
+    size_t buf_cap = 65536;
+    size_t buf_used = 0;
     uint8_t *buf = (uint8_t *)malloc(buf_cap);
+
     do {
         if (buf_used + 65536 > buf_cap) {
             buf_cap *= 2;
@@ -95,7 +100,9 @@ static int ki_decompress_gz(const char *path, uint8_t **out_data, size_t *out_si
         int ret = inflate(&strm, Z_NO_FLUSH);
         buf_used = buf_cap - strm.avail_out;
         if (ret == Z_STREAM_END) break;
-        if (ret != Z_OK) { inflateEnd(&strm); free(gz_buf); free(buf); return -1; }
+        if (ret != Z_OK) {
+            inflateEnd(&strm); free(gz_buf); free(buf); return -1;
+        }
     } while (strm.avail_out == 0);
 
     inflateEnd(&strm);
@@ -105,12 +112,12 @@ static int ki_decompress_gz(const char *path, uint8_t **out_data, size_t *out_si
     return 0;
 }
 
-/* ── MNIST read ─────────────────────────────────────────── */
+/* ── MNIST read ──────────────────────────────────────────────────── */
 static int ki_mnist_read(ki_MNISTData *out) {
     const char *candidates[] = {
         "data/mnist",
         "../data/mnist",
-        "../../data/mnist",
+        "www/data/mnist",
         NULL
     };
     const char *data_dir = NULL;
@@ -132,41 +139,58 @@ static int ki_mnist_read(ki_MNISTData *out) {
     size_t raw_size = 0;
     char path[512];
 
+    /* Read images */
     snprintf(path, sizeof(path), "%s/train-images-idx3-ubyte.gz", data_dir);
     if (ki_decompress_gz(path, &raw, &raw_size) != 0) return -1;
 
-    int num_img = (raw[4] << 24) | (raw[5] << 16) | (raw[6] << 8) | raw[7];
-    int rows    = (raw[8] << 24) | (raw[9] << 16) | (raw[10] << 8) | raw[11];
-    int cols    = (raw[12] << 24) | (raw[13] << 16) | (raw[14] << 8) | raw[15];
-    int pixels  = rows * cols;
+    int magic    = (raw[0] << 24) | (raw[1] << 16) | (raw[2] << 8) | raw[3];
+    int num_img  = (raw[4] << 24) | (raw[5] << 16) | (raw[6] << 8) | raw[7];
+    int rows     = (raw[8] << 24) | (raw[9] << 16) | (raw[10] << 8) | raw[11];
+    int cols     = (raw[12] << 24) | (raw[13] << 16) | (raw[14] << 8) | raw[15];
+    int pixels   = rows * cols;
 
-    printf("  [MNIST] images: %d x %d px=%d\n", rows, cols, pixels);
+    printf("  [MNIST] images: magic=0x%08X %d x %d px=%d\n",
+           magic, rows, cols, pixels);
+
+    if (magic != 0x00000803) {
+        fprintf(stderr, "[FATAL] Not MNIST image file (magic=0x%08X)\n", magic);
+        free(raw); return -1;
+    }
 
     out->num_images = num_img;
     out->rows = rows;
     out->cols = cols;
     out->pixels = pixels;
-    {   size_t npix = (size_t)num_img * (size_t)pixels;
-        out->X_raw = (uint8_t *)malloc(npix);
-        memcpy(out->X_raw, raw + 16, npix);
-        out->X = (float *)malloc(npix * sizeof(float));
-        for (size_t i = 0; i < npix; i++)
-            out->X[i] = ((float)raw[16 + i] / 255.0f) * 2.0f - 1.0f;
-    }
+    size_t npix = (size_t)num_img * (size_t)pixels;
+    out->X_raw = (uint8_t *)malloc(npix);
+    memcpy(out->X_raw, raw + 16, npix);
+    out->X = (float *)malloc(npix * sizeof(float));
+    for (size_t i = 0; i < npix; i++)
+        out->X[i] = ((float)raw[16 + i] / 255.0f) * 2.0f - 1.0f;
     free(raw);
 
+    /* Read labels */
     snprintf(path, sizeof(path), "%s/train-labels-idx1-ubyte.gz", data_dir);
-    if (ki_decompress_gz(path, &raw, &raw_size) != 0) { free(out->X); free(out->X_raw); return -1; }
+    if (ki_decompress_gz(path, &raw, &raw_size) != 0) { free(out->X); return -1; }
 
-    out->y = (uint8_t *)malloc((size_t)num_img);
-    memcpy(out->y, raw + 8, (size_t)num_img);
+    int lbl_magic = (raw[0] << 24) | (raw[1] << 16) | (raw[2] << 8) | raw[3];
+    int lbl_count = (raw[4] << 24) | (raw[5] << 16) | (raw[6] << 8) | raw[7];
+
+    printf("  [MNIST] labels: magic=0x%08X count=%d\n", lbl_magic, lbl_count);
+
+    if (lbl_magic != 0x00000801) {
+        fprintf(stderr, "[FATAL] Not MNIST label file (magic=0x%08X)\n", lbl_magic);
+        free(raw); free(out->X); return -1;
+    }
+
+    out->y = (uint8_t *)malloc((size_t)lbl_count);
+    memcpy(out->y, raw + 8, (size_t)lbl_count);
     free(raw);
 
     printf("  [MNIST] Loaded %d samples (%d px)\n", out->num_images, out->pixels);
     return 0;
 }
 
-/* ── Free ───────────────────────────────────────────────── */
 static inline void ki_mnist_free(ki_MNISTData *data) {
     free(data->X);
     free(data->X_raw);
@@ -174,7 +198,7 @@ static inline void ki_mnist_free(ki_MNISTData *data) {
     memset(data, 0, sizeof(*data));
 }
 
-/* ── Generic aliases ────────────────────────────────────── */
+/* Dataset function aliases */
 #define ki_dataset_read ki_mnist_read
 #define ki_dataset_free ki_mnist_free
 

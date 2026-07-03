@@ -1,357 +1,172 @@
-# Otto Score Inference — DRAM-Native MNIST Classifier (+ Float32 Reference)
+# Otto Score — DRAM-Native MLP Classifier
 
-**95.6% MNIST (full 10000-test evaluation). Zero floating point. Zero training. Only `&|~` + int32.**
-
-**Also includes a 2-layer float32 AdamW baseline for comparison: `mlp-flt32-w1-adam-trn` + `mlp-flt32-adam-ifc`.**
-
-**Supports single (v1) and ensemble (v5) models — auto-detected on load.**
-**Precision scaling via OT_PRECISION — default F=1024, legacy models at F=131072.**
+**MNIST: 97.0%  |  CIFAR-10: 55.0%** — Zero floating point, zero matmul in inference.
+Only `&|~` + int32 + popcount. Also includes float32 AdamW + Hebbian baselines.
 
 ---
 
-## 🚀 First Run (5 minutes)
-
-This is a **self-contained demo** that classifies handwritten digits using
-only bit-logic operations. No GPU, no PyTorch, no training, no floating point.
+## 🚀 Quick Start
 
 ```bash
-# Step 1: Build the executables
+# Step 1: Build everything
 make all
 
-# Step 2: Download MNIST data (70000 handwritten digits)
+# Step 2: Download datasets (MNIST + CIFAR-10)
 make setup
 
-# Step 3: Run the test
+# Step 3: Run tests (trains models on first run, cached thereafter)
 make test
 ```
 
-**Expected output:**
+**Expected output (second run — cached models, <1s total):**
 
 ```
-=== XNOR v1 single (H=512, --evalN 10000) ===
-  Eval:    95.4%  (9536/10000)
-  Time:    210ms  (21.0 µs/sample)
-
-=== XOR v1 single (H=512, --evalN 10000) ===
-  Eval:    95.4%  (9536/10000)
-  Time:    210ms  (21.0 µs/sample)
-
-=== XNOR ensemble v6 (H=128x3, --evalN 10000) ===
-  Eval:    95.6%  (9555/10000)
-  Time:    163ms  (16.3 µs/sample)
-
-=== XOR ensemble v6 (H=128x3, --evalN 10000) ===
-  Eval:    95.6%  (9561/10000)
-  Time:    157ms  (15.7 µs/sample)
-
-=== Float32 AdamW (H=512, same bit-mass, --evalN 10000) ===
-  Eval:    92.6%  (9260/10000)
-  Time:    50ms  (5.0 µs/sample)
-
-=== Bin32 Hebbian (H=512, --evalN 10000) ===
-  Eval:    82.9%  (8290/10000)
-  Time:    60ms  (6.0 µs/sample)
+=== Otto Score MNIST (H=512, 10 ep) ===          eval=97.0%
+=== Float32 AdamW MNIST (H=512, 10 ep) ===       eval=92.6%
+=== Bin32 Hebbian MNIST (H=512, 10 ep) ===        eval=82.9%
+=== Otto Score CIFAR-10 (H=256, 5 ep) ===         eval=55.0%
+=== Float32 AdamW CIFAR-10 (H=256, 3 ep) ===      eval=39.4%
+=== Bin32 Hebbian CIFAR-10 (H=256, 3 ep) ===      eval=10.0%
 ```
-
-The Otto Score (bitwise) outperforms both the AdamW float32 baseline and the Hebbian baseline at **equal bit-mass** (H=512) while using **zero multiplication** and **zero floating point** during inference.
-
-The first `make test` run will auto-train the float32 model (~9s) and the Hebbian model (~2s). Subsequent runs use the cached models.
-
-That's it. You just classified handwritten digits with 96% accuracy
-using only `&`, `|`, `~` — no multiply, no float, no training.
 
 ---
 
-## ❓ What just happened?
+## 🎯 Test Targets (fast — <1s with cached models)
 
-| You typed…   | What happened                                                |
-| ------------ | ------------------------------------------------------------ |
-| `make all`   | Compiled all inference + reference executables (10 total)    |
-| `make setup` | Downloaded 60000 MNIST training + 10000 test digits          |
-| `make test`  | Evaluates all pre-trained models (Otto Score + float32)     |
+| Command | What it tests |
+|---------|---------------|
+| `make test-mnist` | All 3 MNIST approaches (Otto + Adam + Hebbian) |
+| `make test-mnist-otto` | Otto Score MNIST only |
+| `make test-mnist-adam` | Float32 AdamW MNIST only |
+| `make test-mnist-hebbian` | Bin32 Hebbian MNIST only |
+| `make test-cifar` | All 3 CIFAR-10 approaches |
+| `make test-cifar-otto` | Otto Score CIFAR-10 only |
+| `make test-cifar-adam` | Float32 AdamW CIFAR-10 only |
+| `make test-cifar-hebbian` | Bin32 Hebbian CIFAR-10 only |
 
-### Available executables
-
-**Otto Score (bitwise MAJ3 + Bayes log-score):**
-
-| File                                    | What it does                              |
-| --------------------------------------- | ----------------------------------------- |
-| `mlp-bin32-otto-ifc-xnor.exe`           | Inference (XNOR, reads .otto models)      |
-| `mlp-bin32-otto-ifc-xor.exe`            | Inference (XOR, reads .otto models)       |
-| `mnist-mlp-bin32-otto-trn-xnor.exe`      | Ensemble trainer (iterative correction)   |
-| `mnist-mlp-bin32-otto-trn-xor.exe`       | Ensemble trainer (XOR mode)               |
-
-Both inference binaries auto-detect single (v1) and ensemble (v5/v6) model formats.
-All log-odds values are scaled by `F = (1<<OT_PRECISION)` — default F=1024.
-
-**Float32 reference executables (matmul + LReLU + AdamW):**
-
-| File                          | What it does                        |
-| ----------------------------- | ----------------------------------- |
-| `mlp-flt32-w1-adam-trn.exe`   | 2-layer AdamW trainer (float32)     |
-| `mlp-flt32-adam-ifc.exe`           | 2-layer inference (float32)         |
-
-**Hebbian reference executables (XNOR + MAJ3 + popcnt, ~78%):**
-
-| File                                    | What it does                              |
-| --------------------------------------- | ----------------------------------------- |
-| `mlp-bin32-w1-hebbian-trn-xnor.exe`     | Bitwise Hebbian trainer (XNOR)            |
-| `mlp-bin32-w1-hebbian-trn-xor.exe`      | Bitwise Hebbian trainer (XOR)             |
-| `mlp-bin32-hebbian-ifc-xnor.exe`                | Bin32 inference (XNOR + popcnt, no float) |
-| `mlp-bin32-hebbian-ifc-xor.exe`                 | Bin32 inference (XOR + popcnt, no float)  |
-
-Note: Hebbian oscillates at ~78-82% — does **not** converge like Otto Score. See comparison table.
-
-See "Float32 2-Layer Reference" section below.
+First run trains models (~2-5 min depending on CPU). Subsequent runs use cached models.
 
 ---
 
-## 📊 What parameters can I change?
+## 📁 Directory Structure
 
 ```
-./mlp-bin32-otto-ifc-xnor.exe --model models/model-xnor.otto --evalN 10000 --threadN 4
+otto-score-ifc/
+├── Makefile              ← orchestrates: delegates to subdirectories
+├── mnist/                ← MNIST Otto Score (trainer + inference via --model)
+│   ├── Makefile
+│   ├── mlp-bin32-otto-trn.c    ← Otto Score trainer (shared source)
+│   └── ki-common.h             ← symlink to mnist-1/ki-common.h
+├── cifar/                ← CIFAR-10 Otto Score (trainer + inference via --model)
+│   ├── Makefile
+│   ├── mlp-bin32-otto-trn.c    ← same source as mnist/ (CIFAR via ki-local.h)
+│   ├── ki-common.h             ← symlink to cifar-1/ki-common.h
+│   └── ki-local.h              ← symlink to cifar-1/ki-local.h
+├── reference/             ← Reference implementations (AdamW + Hebbian)
+│   ├── Makefile
+│   ├── cifar-include/          ← CIFAR headers for reference builds
+│   ├── mnist-mlp-*.c           ← MNIST AdamW + Hebbian (trainer + inference)
+│   └── cifar-mlp-*.c           ← CIFAR AdamW + Hebbian (trainer + inference)
+├── lib/                   ← Shared headers (maj3.h, w0_random.h, enc-lut.h)
+├── models/                ← Cached trained models
+├── fetch_mnist.sh         ← MNIST download script
+├── fetch_cifar10.sh       ← CIFAR-10 download script
+└── tests/                 ← Test images (single-image classification)
 ```
 
-| Flag           | What it does                                   | Default  |
-| -------------- | ---------------------------------------------- | -------- |
-| `--model PATH` | Which `.otto` model file to load (v1 or v5)    | required |
-| `--evalN N`    | How many digits to classify                    | 10000    |
-| `--image FILE` | Classify a single image (raw 28x28, 784 bytes) | off      |
-| `--threadN N`  | CPU threads for parallel processing            | 8        |
+## Build Targets
 
-**Try these experiments:**
+| Command | Builds |
+|---------|--------|
+| `make` or `make all` | All 14 binaries (MNIST Otto + CIFAR Otto + all references) |
+| `make otto` | Otto Score only (mnist/ + cifar/) |
+| `make flt32` | Float32 AdamW references (reference/) |
+| `make hebbian` | Bin32 Hebbian references (reference/) |
+| `make clean` | Removes all executables + cached models |
+
+## How Inference Works
+
+Every trainer binary doubles as IFC via `--model`:
 
 ```bash
-# Full evaluation on all 10000 test digits
-./mlp-bin32-otto-ifc-xnor.exe --model models/model-xnor.otto --evalN 10000
-# Expected: ~86% (1-pass model, not iteratively trained)
+# MNIST: load cached model and evaluate
+./mnist/mnist-mlp-bin32-otto-trn-xnor.exe \
+  --model models/mnist-otto-h512/model.otto --evalN 10000 --encoding exp
 
-# Fewer threads (slower, but works on any machine)
-./mlp-bin32-otto-ifc-xnor.exe --model models/model-xnor.otto --evalN 10000 --threadN 2
+# CIFAR-10: same pattern (--encoding latest for best accuracy)
+./cifar/cifar-mlp-bin32-otto-trn-xnor.exe \
+  --model models/cifar-otto-h256/model.otto --evalN 10000 --encoding latest
 
-# Quick check with only 100 digits
-./mlp-bin32-otto-ifc-xnor.exe --model models/model-xnor.otto --evalN 100
+# Reference inference uses separate IFC binaries:
+./reference/mnist-mlp-flt32-adam-ifc.exe \
+  --model models/mnist-adam-h512 --evalN 10000
 ```
 
-## 🖼️ Classify your own handwritten digit
+There are **no separate IFC source files** for Otto Score — the trainer binary IS the inference binary. This guarantees zero code drift between training and evaluation.
 
-Take a photo, convert it, classify it:
+## Naming Convention
+
+All binaries follow: `(dataset)-mlp-(bit|flt)(32)-(otto|adam|hebbian)-(trn|ifc)(-xnor|-xor)?.exe`
+
+| Part | Meaning |
+|------|---------|
+| `mnist-` / `cifar-` | Dataset prefix |
+| `mlp` | Multilayer perceptron |
+| `bin32` / `flt32` | uint32 containers / float weights |
+| `otto` | Otto Score (MAJ3 + Bayes) |
+| `adam` | Float32 AdamW backprop |
+| `hebbian` | Bitwise Hebbian (no backprop) |
+| `trn` | Trainer (also IFC via `--model`) |
+| `ifc` | Inference-only (reference binaries) |
+| `-xnor` / `-xor` | H0 mode |
+
+## Dataset Setup
 
 ```bash
-# Convert to PGM (Portable GrayMap — standard image format)
-convert mydigit.jpg -resize 28x28! -negate -depth 8 pgm:- > digit.pgm
-
-# Classify it!
-./mlp-bin32-otto-ifc-xnor.exe --model models/model-xnor.otto --image digit.pgm
+make setup-mnist    # Download MNIST (60000 train + 10000 test)
+make setup-cifar   # Download CIFAR-10 (50000 train + 10000 test)
+make setup         # Both
 ```
 
-The classifier accepts **PGM (P5)** images or raw 784-byte files.
-PGM is a standard format — every image viewer can open it.
+Data is stored in `www/data/mnist/` and `www/data/cifar-10/` (project root).
 
-**Expected output:**
-
-```
-══╡ SINGLE IMAGE ╞════════════════════════════════════════════════
-  File:  digit.pgm
-  Pixel mean: 35.1  (0=white, 255=black, 28x28)
-
-  Scores:
-    0: -5577.13
-    5: -5230.35  ← PREDICTED
-    ...
-
-  >>> Predicted digit: 5 <<<
-```
-
-### ⚠️ The classifier has no "reject" class
-
-It only knows digits 0-9. Feed it a shoe, a cat, or random noise — it will always predict one of the 10 digits:
-
-```bash
-make test-image
-```
+## Architecture Overview
 
 ```
-  tests/shoe.pgm (Fashion-MNIST ankle boot — should NOT be a digit)
-  >>> Predicted digit: 2 <<<
-```
-
-The shoe is classified as "2" because the model has never seen
-a shoe in training. There is no "unknown" / "none of the above" class.
-
-## 🤔 What should I expect to see?
-
-Each run prints:
-
-```
-Model:   H=512  XNOR          ← model architecture
-Eval:    96.3%  (1927/2000)   ← accuracy (correct / total)
-Time:    43ms  (21.5 µs/sample)  ← speed
-```
-
-The accuracy varies slightly between runs (±0.1pp) due to OpenMP
-thread scheduling. This is normal — the model itself is deterministic.
-
----
-
-## 📁 What's in this directory?
-
-```
-├── README.md                        ← this file
-├── Makefile                         ← build: make all / make test / make setup
-├── fetch_mnist.sh                   ← MNIST download script
-├── convert_to_pgm.sh                ← image → MNIST PGM converter
-├── convert_to_raw.sh                ← image → raw 784-byte converter
-├── mlp-bin32-otto-ifc.c             ← Otto Score inference (~440 lines)
-├── mlp-bin32-otto-trn.c        ← Otto Score ensemble trainer (~660 lines)
-├── mlp-flt32-w1-adam-trn.c          ← Float32 AdamW trainer (~440 lines)
-├── mlp-flt32-adam-ifc.c                  ← Float32 2-layer inference (~300 lines)
-├── mlp-bin32-w1-hebbian-trn.c       ← Bitwise Hebbian trainer (~570 lines, ~78%)
-├── mlp-bin32-hebbian-ifc.c                  ← Bin32 inference (~330 lines, XNOR+popcnt)
-├── ki-common.h                      ← float32/matmul/AdamW helpers (shared)
-├── ki-otto-common.h                 ← Otto Score specific (batch correction, precision)
-├── docs/
-│   ├── README.md                    ← Technical docs overview
-│   ├── otto-score.md                ← Otto Score explained
-│   ├── adamw.md                     ← Float32 AdamW reference explained
-│   └── hebbian.md                   ← Hebbian reference explained
-├── lib/
-│   ├── maj3.h                       ← MAJ3 majority_tree algorithm
-│   └── w0_random.h                  ← splitmix64 random number generator
-├── models/
-│   ├── model-xnor.otto             ← pre-trained XNOR model (v1 single, H=512)
-│   ├── model-xor.otto              ← pre-trained XOR model (v1 single, H=512)
-│   ├── model-ensemble-xnor.otto    ← ensemble XNOR model (v5, H=128×N=3)
-│   └── model-ensemble-xor.otto     ← ensemble XOR model (v5, H=128×N=3)
-├── tests/
-│   ├── digit5.pgm                  ← MNIST test image (label=5, viewable!)
-│   ├── digit9.pgm                  ← MNIST test image (label=9, viewable!)
-│   └── shoe.pgm                    ← Fashion-MNIST boot (NOT a digit!)
-└── .gitignore
-```
-
----
-
-## 🧠 How does it actually work? (simplified)
-
-```
-  Your digit (28×28 pixels)
+  Input pixels (784 / 3072)
         │
         ▼
-  Pack 4 pixels → 1 uint32  (784 px → 196 numbers)
+  Pack → uint32 containers (196 / 768)
         │
         ▼
-  For each of 512 neurons:
-    XNOR with random W0  →  32-bit pattern
+  MAJ3 (XNOR/XOR) + popcount → 32-bit H0
         │
         ▼
-  Bayes log-score: sum up evidence for each digit class
+  Bayes log-score → 10 class scores
         │
         ▼
-  Pick the class with the highest score
+  argmax → predicted class
 ```
 
-**Key insight:** The random projection W0 is **never trained**.
-It's initialized once with random numbers and stays frozen.
-The model only learns which bit patterns correlate with which digit —
-by counting, not by gradient descent.
+- **W0**: Frozen random projection (never trained)
+- **W1**: Trained via iterative correction (Otto Score) or AdamW (float32 ref)
+- **No floating point** in Otto Score inference — only `&|~` + popcount + int32 add
 
-For ensemble models (v5), all members are evaluated independently and
-their scores are summed before argmax:
-```
-score[k] = Σ_m offset_m[k] + Σ_m Σ_h Σ_b y_m[h][b] × target_m[k][h][b]
-```
+## References
 
-## 🤝 Ensemble Voting (v5 format)
+- **Float32 AdamW**: 2-layer MLP with LeakyReLU(0.05), MSE loss, AdamW optimizer.
+  Achieves 92.6% on MNIST, 39.4% on CIFAR-10 (H=256, 3 epochs).
+- **Bin32 Hebbian**: Bitwise co-occurrence learning with sign flips.
+  Achieves 82.9% on MNIST, 10.0% on CIFAR-10 (random baseline — does not converge).
 
-Training multiple independent W0s and summing their scores (product of experts)
-reduces the error rate significantly. The ifc **auto-detects** ensemble models
-on load — no extra flags needed.
+## Results Summary
 
-```bash
-# Train an ensemble (from mnist-1 directory)
-cd ../mnist-1
-./mnist-mlp-bin32-otto-trn-xnor.exe --hiddenN 128 --ensembleN 3 --epochsN 20 --out out/otto-h128-e3-xnor
+| Approach | MNIST | CIFAR-10 | Hardware Target |
+|----------|-------|----------|-----------------|
+| Otto Score (bitwise) | **97.0%** | **55.0%** | DRAM (bit-logic) |
+| Float32 AdamW (matmul) | 92.6% | 39.4% | CPU/GPU |
+| Bin32 Hebbian (bitwise) | 82.9% | 10.0% | DRAM (bit-logic) |
 
-# Evaluate with inference (auto-detects v5 ensemble format)
-cd ../otto-score-ifc
-./mlp-bin32-otto-ifc-xnor.exe --model ../mnist-1/out/otto-h128-e3-xnor/model.otto --evalN 10000
-# → 95.5%
-```
+## License
 
-The ensemble is stored as a **single file** containing all members' W0, targets,
-and offsets. Inference iterates over all members and sums the scores:
-
-```
-score[k] = Σ_m score_m[k]    (member m, class k)
-```
-
-| Configuration                   | Eval      | Notes                      |
-| ------------------------------- | --------- | -------------------------- |
-| H=512, N=1, ep=20 (bundled v1)  | 96.3%     | Legacy single model        |
-| H=128, N=3, ep=20 (v5 ensemble) | **95.5%** | 3× smaller, ~3× faster     |
-| H=64, N=17, ep=20 (v5 ensemble) | **96.4%** | Same accuracy, 32× less W0 |
-
----
-
-## 🧪 Float32 2-Layer Reference (Baseline)
-
-This directory also includes a **2-layer float32 AdamW baseline** for comparison.
-It uses standard matmul + Leaky ReLU + AdamW — **no bitwise ops, no MAJ3**.
-
-```
-Architecture:  W0 (float, random frozen) → LReLU(0.05) → W1 (float, AdamW)
-Training:      MSE(±1 targets), AdamW(lr=0.002, wd=1e-4), warmup + cosine decay
-Inference:     matmul(W0, x) → LReLU → matmul(W1, h0) → argmax
-
-Typical:       H=512 → 95%+ eval (MNIST, 10 epochs)
-```
-
-### Build & Train (reference)
-
-```bash
-make flt32
-./mlp-flt32-w1-adam-trn.exe --hiddenN 512 --epochsN 10 --out out/flt32-ref
-# → Evaluates on 10000 test digits, exports weights to out/flt32-ref/
-```
-
-### Run inference on exported model
-
-```bash
-# Evaluate MNIST test set
-./mlp-flt32-adam-ifc.exe --model out/flt32-ref --evalN 10000
-
-# Classify a single image (PGM or raw 784 bytes)
-./mlp-flt32-adam-ifc.exe --model out/flt32-ref --image tests/digit5.pgm
-```
-
-### Key differences vs Otto Score
-
-| Aspect            | Otto Score (bitwise)          | Float32 Reference            | Hebbian (bitwise)            |
-| ----------------- | ----------------------------- | ---------------------------- | ---------------------------- |
-| Forward           | XNOR + MAJ3 + Bayes log-score | matmul + LReLU               | XNOR + MAJ3 + popcount       |
-| Training          | Iterative correction          | AdamW (backprop)             | Batch-Hebbian (co-occurrence)|
-| Convergence       | ✅ 96%+                       | ✅ 93%+                      | ❌ ~82%, oscillates          |
-| Hardware target   | DRAM (bit-logic)              | CPU/GPU (matmul)             | DRAM (bit-logic)             |
-| Best eval (H=512) | 96.3%                         | 92.6%                        | ~82%                         |
-
-The Otto Score outperforms both the AdamW and Hebbian baselines,
-while using **zero floating point** and **zero multiplication** during inference.
-
-The Hebbian trainer is included as a **negative reference** — it uses pure bit-logic
-but fails to converge beyond ~82% due to its local co-occurrence update rule.
-
----
-
-## 📖 Deeper reading
-
-- **Technical docs**: [docs/](docs/README.md) — Otto Score, AdamW, and Hebbian explained
-- **Research results**: [forward-prop.nhi1.de](https://forward-prop.nhi1.de/)
-- **The vision**: [forward-prop.nhi1.de/papers/vision.html](https://forward-prop.nhi1.de/papers/vision.html)
-- **Full source**: [github.com/aotto1968/forward-prop](https://github.com/aotto1968/forward-prop)
-
----
-
-## 📝 License
-
-Public domain. This is research code — use at your own risk.
+Public domain. Research code — use at your own risk.

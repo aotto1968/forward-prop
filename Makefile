@@ -1,121 +1,104 @@
-# Makefile - Otto Score + Reference Implementations (public demo)
+# Makefile — Otto Score + Reference Implementations (public demo)
 # ==============================================================
-CC       = gcc
-CFLAGS   = -O3 -march=native -fopenmp -Wall -Wextra -Werror \
-           -Wconversion -Wsign-conversion -Wfloat-equal -Wundef -Wshadow -Wunused \
-           -I. -Ilib -I..
-REF_CFLAGS = -O3 -march=native -fopenmp -Ireference -Ilib
-LDLIBS   = -lm -lz
+# All build work is delegated to subdirectory Makefiles.
+# This Makefile only orchestrates top-level targets.
+# ==============================================================
 
-.PHONY: all otto mnist cifar flt32 hebbian setup clean test test-image push
+.PHONY: all otto adam hebbian setup clean \
+        test test-mnist test-cifar \
+        test-mnist-otto test-mnist-adam test-mnist-hebbian \
+        test-cifar-otto test-cifar-adam test-cifar-hebbian \
+        setup-mnist setup-cifar
 
-all: otto flt32 hebbian
+# ═══════════════════════════════════════════════════════════════
+# Build
+# ═══════════════════════════════════════════════════════════════
+all:
+	$(MAKE) -C mnist all
+	$(MAKE) -C cifar all
+	$(MAKE) -C reference all
 
 otto: mnist cifar
 mnist: ; $(MAKE) -C mnist all
 cifar: ; $(MAKE) -C cifar all
+adam: ; $(MAKE) -C reference mnist cifar
+hebbian: ; $(MAKE) -C reference mnist cifar
+
+# ═══════════════════════════════════════════════════════════════
+# Dataset setup
+# ═══════════════════════════════════════════════════════════════
 setup-mnist: ; @bash fetch_mnist.sh
 setup-cifar: ; @bash fetch_cifar10.sh
 setup: setup-mnist setup-cifar
 
-# ── Models (cached: only rebuild when trainer binary changes) ──
-OTTO_MODEL  = models/mnist-otto-h512/model.otto
-ADAM_MODEL  = models/mnist-adam-h512/weights.meta
-HEBB_MODEL  = models/mnist-hebbian-h512/weights.meta
-CIFAR_MODEL = models/cifar-otto-h256/model.otto
-CIFAR_ADAM  = models/cifar-adam-h256/weights.meta
-CIFAR_HEBB  = models/cifar-hebbian-h256/weights.meta
+# ═══════════════════════════════════════════════════════════════
+# Trained model cache (train if missing, then fast eval)
+# ═══════════════════════════════════════════════════════════════
+model-otto-mnist:   ; $(MAKE) -C mnist     model-otto
+model-otto-cifar:   ; $(MAKE) -C cifar     model-otto
+model-adam-mnist:   ; $(MAKE) -C reference model-adam-mnist
+model-hebb-mnist:   ; $(MAKE) -C reference model-hebb-mnist
+model-adam-cifar:   ; $(MAKE) -C reference model-adam-cifar
+model-hebb-cifar:   ; $(MAKE) -C reference model-hebb-cifar
 
-$(OTTO_MODEL): mnist/mnist-mlp-bin32-otto-trn-xnor.exe
-	@mkdir -p models/mnist-otto-h512
-	@cd mnist && ./mnist-mlp-bin32-otto-trn-xnor.exe --hiddenN 512 --epochsN 10 --encoding exp --out ../models/mnist-otto-h512 2>&1 | tail -1
+# ═══════════════════════════════════════════════════════════════
+# Test — baut nur fehlende Modelle, dann eval via IFC
+# ═══════════════════════════════════════════════════════════════
+test: all
+	$(MAKE) test-mnist
+	$(MAKE) test-cifar
 
-$(ADAM_MODEL): reference/mnist-mlp-flt32-adam-trn.exe reference/mnist-mlp-flt32-adam-ifc.c.exe
-	@mkdir -p models/mnist-adam-h512
-	@./reference/mnist-mlp-flt32-adam-trn.exe --hiddenN 512 --epochsN 10 --out models/mnist-adam-h512 2>&1 | tail -1
+# ═══════════════════════════════════════════════════════════════
+# Fast single tests (use cached model if available, train if missing)
+# ═══════════════════════════════════════════════════════════════
 
-$(HEBB_MODEL): reference/mnist-mlp-bin32-hebbian-trn-xnor.exe reference/mnist-mlp-bin32-hebbian-ifc-xnor.exe
-	@mkdir -p models/mnist-hebbian-h512
-	@./reference/mnist-mlp-bin32-hebbian-trn-xnor.exe --hiddenN 512 --epochsN 10 --out models/mnist-hebbian-h512 2>&1 | tail -1
-
-$(CIFAR_MODEL): cifar/cifar-mlp-bin32-otto-trn-xnor.exe
-	@mkdir -p models/cifar-otto-h256
-	@cd cifar && ./cifar-mlp-bin32-otto-trn-xnor.exe --hiddenN 256 --epochsN 5 --out ../models/cifar-otto-h256 2>&1 | tail -1
-
-$(CIFAR_ADAM): reference/cifar-mlp-flt32-w1-adam-trn.exe
-	@mkdir -p models/cifar-adam-h256
-	@./reference/cifar-mlp-flt32-w1-adam-trn.exe --hiddenN 256 --epochsN 3 --evalN 10000 --out models/cifar-adam-h256 2>&1 | tail -1
-
-$(CIFAR_HEBB): reference/cifar-mlp-bin32-w1-hebbian-trn-xnor.exe
-	@mkdir -p models/cifar-hebbian-h256
-	@./reference/cifar-mlp-bin32-w1-hebbian-trn-xnor.exe --hiddenN 256 --epochsN 3 --evalN 10000 --out models/cifar-hebbian-h256 2>&1 | tail -1
-
-# ── Test (evaluates cached models, fast on repeat) ─────────────
-test: cifar mnist $(OTTO_MODEL) $(ADAM_MODEL) $(HEBB_MODEL) $(CIFAR_MODEL) $(CIFAR_ADAM) $(CIFAR_HEBB)
+# ── MNIST ──────────────────────────────────────────────────
+test-mnist-otto: mnist
+	@test -f models/mnist-otto-h512/model.otto || $(MAKE) model-otto-mnist
 	@echo "=== Otto Score MNIST (H=512, 10 ep, exp8) ==="
-	@echo -n "start..." && ./mnist/mnist-mlp-bin32-otto-trn-xnor.exe --model $(OTTO_MODEL) --evalN 10000 --encoding exp 2>&1 | grep '^REPORT'
+	@echo -n "start..." && ./mnist/mnist-mlp-bin32-otto-trn-xnor.exe \
+	  --model models/mnist-otto-h512/model.otto --evalN 10000 --encoding exp 2>&1 | grep '^REPORT'
+
+test-mnist-adam: reference
+	@test -f models/mnist-adam-h512/weights.meta || $(MAKE) model-adam-mnist
 	@echo "=== Float32 AdamW MNIST (H=512, 10 ep) ==="
-	@echo -n "start..." && ./reference/mnist-mlp-flt32-adam-ifc.c.exe --model models/mnist-adam-h512 --evalN 10000 2>&1 | grep '^REPORT'
+	@echo -n "start..." && ./reference/mnist-mlp-flt32-adam-ifc.exe \
+	  --model models/mnist-adam-h512 --evalN 10000 2>&1 | grep '^REPORT'
+
+test-mnist-hebbian: reference
+	@test -f models/mnist-hebbian-h512/weights.meta || $(MAKE) model-hebb-mnist
 	@echo "=== Bin32 Hebbian MNIST (H=512, 10 ep) ==="
-	@echo -n "start..." && ./reference/mnist-mlp-bin32-hebbian-ifc-xnor.exe --model models/mnist-hebbian-h512 --evalN 10000 2>&1 | grep '^REPORT'
-	@echo "=== Otto Score CIFAR-10 (H=256, 7 ep, latest) ==="
-	@echo -n "start..." && cd cifar && ./cifar-mlp-bin32-otto-trn-xnor.exe --hiddenN 256 --epochsN 7 --encoding latest --evalN 10000 2>&1 | grep '^REPORT'
+	@echo -n "start..." && ./reference/mnist-mlp-bin32-hebbian-ifc-xnor.exe \
+	  --model models/mnist-hebbian-h512 --evalN 10000 2>&1 | grep '^REPORT'
+
+test-mnist: test-mnist-otto test-mnist-adam test-mnist-hebbian
+
+# ── CIFAR-10 ───────────────────────────────────────────────
+test-cifar-otto: cifar
+	@test -f models/cifar-otto-h256/model.otto || $(MAKE) model-otto-cifar
+	@echo "=== Otto Score CIFAR-10 (H=256, 5 ep) ==="
+	@./cifar/cifar-mlp-bin32-otto-trn-xnor.exe \
+	  --model models/cifar-otto-h256/model.otto --evalN 10000 --encoding latest 2>&1 | grep '^REPORT'
+
+test-cifar-adam: reference
+	@test -f models/cifar-adam-h256/weights.meta || $(MAKE) model-adam-cifar
 	@echo "=== Float32 AdamW CIFAR-10 (H=256, 3 ep) ==="
-	@echo -n "start..." && ./reference/cifar-mlp-flt32-w1-adam-trn.exe --hiddenN 256 --epochsN 3 --evalN 10000 2>&1 | grep '^REPORT'
+	@./reference/cifar-mlp-flt32-adam-ifc.exe \
+	  --model models/cifar-adam-h256 --evalN 10000 2>&1 | grep '^REPORT'
+
+test-cifar-hebbian: reference
+	@test -f models/cifar-hebbian-h256/weights.meta || $(MAKE) model-hebb-cifar
 	@echo "=== Bin32 Hebbian CIFAR-10 (H=256, 3 ep) ==="
-	@echo -n "start..." && ./reference/cifar-mlp-bin32-w1-hebbian-trn-xnor.exe --hiddenN 256 --epochsN 3 --evalN 10000 2>&1 | grep 'Best eval'
+	@./reference/cifar-mlp-bin32-hebbian-ifc-xnor.exe \
+	  --model models/cifar-hebbian-h256 --evalN 10000 2>&1 | grep '^REPORT'
 
-# ── Single Image Test ─────────────────────────────────────────
-test-image: mnist $(OTTO_MODEL)
-	@./mnist/mlp-bin32-otto-ifc-xnor.exe --model $(OTTO_MODEL) --image tests/digit5.pgm 2>&1 | grep 'Predicted'
-	@./mnist/mlp-bin32-otto-ifc-xnor.exe --model $(OTTO_MODEL) --image tests/digit9.pgm 2>&1 | grep 'Predicted'
-	@./mnist/mlp-bin32-otto-ifc-xnor.exe --model $(OTTO_MODEL) --image tests/shoe.pgm 2>&1 | grep 'Predicted'
+test-cifar: test-cifar-otto test-cifar-adam test-cifar-hebbian
 
-# ── Hebbian Reference (bitwise, no convergence) ───────────────
-hebbian: \
-  reference/mnist-mlp-bin32-hebbian-trn-xnor.exe \
-  reference/mnist-mlp-bin32-hebbian-trn-xor.exe \
-  reference/mnist-mlp-bin32-hebbian-ifc-xnor.exe \
-  reference/mnist-mlp-bin32-hebbian-ifc-xor.exe \
-  reference/cifar-mlp-bin32-w1-hebbian-trn-xnor.exe \
-  reference/cifar-mlp-bin32-w1-hebbian-trn-xor.exe \
-  reference/cifar-mlp-bin32-hebbian-ifc-xnor.exe \
-  reference/cifar-mlp-bin32-hebbian-ifc-xor.exe
-reference/mnist-mlp-bin32-hebbian-trn-xnor.exe: reference/mnist-mlp-bin32-hebbian-trn.c
-	$(CC) $(REF_CFLAGS) -DPACKING=1 -o $@ $< $(LDLIBS)
-reference/mnist-mlp-bin32-hebbian-trn-xor.exe: reference/mnist-mlp-bin32-hebbian-trn.c
-	$(CC) $(REF_CFLAGS) -DPACKING=1 -DH0_XOR -o $@ $< $(LDLIBS)
-reference/mnist-mlp-bin32-hebbian-ifc-xnor.exe: reference/mnist-mlp-bin32-hebbian-ifc.c
-	$(CC) $(REF_CFLAGS) -o $@ $< $(LDLIBS)
-reference/mnist-mlp-bin32-hebbian-ifc-xor.exe: reference/mnist-mlp-bin32-hebbian-ifc.c
-	$(CC) $(REF_CFLAGS) -DH0_XOR -o $@ $< $(LDLIBS)
-reference/cifar-mlp-bin32-w1-hebbian-trn-xnor.exe: reference/cifar-mlp-bin32-w1-hebbian-trn.c
-	$(CC) -Ireference/cifar-include $(REF_CFLAGS) -DPACKING=1 -o $@ $< $(LDLIBS)
-reference/cifar-mlp-bin32-w1-hebbian-trn-xor.exe: reference/cifar-mlp-bin32-w1-hebbian-trn.c
-	$(CC) -Ireference/cifar-include $(REF_CFLAGS) -DPACKING=1 -DH0_XOR -o $@ $< $(LDLIBS)
-reference/cifar-mlp-bin32-hebbian-ifc-xnor.exe: reference/cifar-mlp-bin32-hebbian-ifc.c
-	$(CC) -Ireference/cifar-include $(REF_CFLAGS) -o $@ $< $(LDLIBS)
-reference/cifar-mlp-bin32-hebbian-ifc-xor.exe: reference/cifar-mlp-bin32-hebbian-ifc.c
-	$(CC) -Ireference/cifar-include $(REF_CFLAGS) -DH0_XOR -o $@ $< $(LDLIBS)
-
-# ── Float32 AdamW Reference ───────────────────────────────────
-flt32: \
-  reference/mnist-mlp-flt32-adam-trn.exe \
-  reference/mnist-mlp-flt32-adam-ifc.c.exe \
-  reference/cifar-mlp-flt32-w1-adam-trn.exe
-reference/mnist-mlp-flt32-adam-trn.exe: reference/mnist-mlp-flt32-adam-trn.c
-	$(CC) $(REF_CFLAGS) -o $@ $< $(LDLIBS)
-reference/mnist-mlp-flt32-adam-ifc.c.exe: reference/mnist-mlp-flt32-adam-ifc.c
-	$(CC) $(REF_CFLAGS) -o $@ $< $(LDLIBS)
-reference/cifar-mlp-flt32-w1-adam-trn.exe: reference/cifar-mlp-flt32-w1-adam-trn.c
-	$(CC) -Ireference/cifar-include $(REF_CFLAGS) -o $@ $< $(LDLIBS)
-
-# ── Clean ─────────────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════
+# Clean
+# ═══════════════════════════════════════════════════════════════
 clean:
-	$(MAKE) -C mnist clean; $(MAKE) -C cifar clean
-	rm -f **/*.exe
+	$(MAKE) -C mnist clean
+	$(MAKE) -C cifar clean
+	$(MAKE) -C reference clean
 	rm -rf models/mnist-* models/cifar-*
-
-# ── Push ──────────────────────────────────────────────────────
-push:
-	@git push -u origin master

@@ -12,7 +12,7 @@
 #define KI_ADAMW_H
 
 /* ki-common.h brings all shared infrastructure (ki_xmalloc, lr_schedule, report, etc.) */
-#include <ki-common.h>
+#include "ki-common.h"
 #include <math.h>
 
 /* ═══════════════════════════════════════════════════════════════════════

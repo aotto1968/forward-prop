@@ -8,7 +8,7 @@
  * Derived from otto-score-ifc/mlp-flt32-adam-ifc.c
  */
 /* ki-adamw.h includes the project's current ki-common.h via cifar-include/ */
-#include "ki-adamw.h"
+#include <ki-adamw.h>
 #include <inttypes.h>
 
 #define N_CLASSES KI_NCLASSES
@@ -83,28 +83,29 @@ static void model_free(Flt32Model *m) {
     free(m->W0); free(m->W1); free(m);
 }
 
-/* ── Accuracy ──────────────────────────────────────────────────── */
+/* ── Accuracy (batch-wise, same as trainer) ─────────────────── */
 static float eval_model(Flt32Model *m, const float *X, const uint8_t *Y, int N, int nc) {
     int ok = 0;
-    #pragma omp parallel reduction(+:ok)
-    {
-        float *h0 = (float *)malloc((size_t)m->H * sizeof(float));
-        float *out = (float *)malloc((size_t)N_CLASSES * sizeof(float));
-        if (!h0 || !out) { free(h0); free(out); }
-        else {
-            #pragma omp for schedule(static)
-            for (int i = 0; i < N; i++) {
-                const float *x = X + (size_t)i * (size_t)nc;
-                ki_linear_forward(&(ki_LinearLayer){m->H, nc, m->W0}, x, h0, 1);
-                ki_leaky_relu(h0, m->H);
-                ki_linear_forward(&(ki_LinearLayer){N_CLASSES, m->H, m->W1}, h0, out, 1);
-                int pred = 0;
-                for (int k = 1; k < N_CLASSES; k++)
-                    if (out[k] > out[pred]) pred = k;
-                if (pred == (int)Y[i]) ok++;
-            }
-            free(h0); free(out);
+    int batchN = 128;
+    int n_batches = (N + batchN - 1) / batchN;
+    ki_LinearLayer l0 = {.in_features=nc, .out_features=m->H, .W=m->W0};
+    ki_LinearLayer l1 = {.in_features=m->H, .out_features=N_CLASSES, .W=m->W1};
+    for (int b = 0; b < n_batches; b++) {
+        int start = b * batchN;
+        int bs = (start + batchN <= N) ? batchN : (N - start);
+        float *h0_buf = (float *)malloc((size_t)bs * (size_t)m->H * sizeof(float));
+        float *out_buf = (float *)malloc((size_t)bs * (size_t)N_CLASSES * sizeof(float));
+        if (!h0_buf || !out_buf) { free(h0_buf); free(out_buf); break; }
+        ki_linear_forward(&l0, X + (size_t)start * (size_t)nc, h0_buf, bs);
+        ki_leaky_relu(h0_buf, bs * m->H);
+        ki_linear_forward(&l1, h0_buf, out_buf, bs);
+        for (int s = 0; s < bs; s++) {
+            int pred = 0;
+            for (int k = 1; k < N_CLASSES; k++)
+                if (out_buf[s * N_CLASSES + k] > out_buf[s * N_CLASSES + pred]) pred = k;
+            if (pred == (int)Y[start + s]) ok++;
         }
+        free(h0_buf); free(out_buf);
     }
     return 100.0f * (float)ok / (float)N;
 }
@@ -169,8 +170,8 @@ int main(int argc, char *argv[]) {
     int offset = data.num_images - total_eval;
     if (offset < 0) { offset = 0; total_eval = data.num_images; }
 
-    /* Pack input */
-    int dbg_mask = (channel >= 0) ? channel : 0x07;  /* default: r+g+b */
+    /* Pack input — CIFAR default: R+G+B (KI_DEFAULT_COLOR = 0x0E) */
+    int dbg_mask = (channel >= 0) ? channel : KI_DEFAULT_COLOR;
     int dbg_packed = 1;  /* IFC knows packed from model */
     float *X_all = ki_pack_blocks_float(data.X_raw, data.num_images, dbg_mask, dbg_packed);
     float *X_te  = X_all + (size_t)offset * (size_t)nc;

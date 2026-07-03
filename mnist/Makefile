@@ -1,12 +1,11 @@
 # Makefile — Otto Score MNIST (Trainer + Inference)
 # ===================================================
-# Self-contained MNIST demo for the Otto Score public distribution.
+# Self-contained MNIST demo for the public distribution.
 #
 # Targets:
-#   make all        — trainer + inference (XNOR + XOR)
-#   make trainer    — mlp-bin32-otto-trn-xnor.exe + xor
-#   make ifc        — mlp-bin32-otto-ifc-xnor.exe + xor
-#   make clean      — remove executables
+#   make all        — trainer (XNOR + XOR)
+#   make model-otto — train MNIST Otto Score model
+#   make clean      — remove executables + models
 #   make setup      — download MNIST dataset
 # ===================================================
 
@@ -16,7 +15,9 @@ CFLAGS   = -O3 -march=native -fopenmp -Wall -Wextra -Werror \
            -I../../lib
 LDLIBS   = -lm -lz
 
-.PHONY: all trainer ifc clean setup
+MODEL_DIR = ../models
+
+.PHONY: all trainer clean setup model-otto
 
 all: trainer
 
@@ -40,10 +41,13 @@ mnist-mlp-bin32-otto-trn-xor.exe: $(TRN_SRC) ki-common.h
 	  -Wno-sign-conversion -Wno-unused-parameter -Wno-unused-function \
 	  -DH0_XOR -o $@ $< $(LDLIBS)
 
-# ── Inference via trainer's --model flag ────────────────────
-ifc:
-	@echo "  Inference via: mnist-mlp-bin32-otto-trn-xnor.exe --model <file> --encoding exp"
+# ── Trained Model (cached) ─────────────────────────────────
+model-otto: mnist-mlp-bin32-otto-trn-xnor.exe
+	@mkdir -p $(MODEL_DIR)/mnist-otto-h512
+	@./mnist-mlp-bin32-otto-trn-xnor.exe --hiddenN 512 --epochsN 10 \
+	  --encoding exp --out $(MODEL_DIR)/mnist-otto-h512 2>&1 | tail -1
 
 # ── Clean ──────────────────────────────────────────────────
 clean:
-	rm -f mnist-mlp-bin32-otto-trn-xnor.exe mnist-mlp-bin32-otto-trn-xor.exe
+	rm -f *.exe
+	rm -rf $(MODEL_DIR)/mnist-otto-h512

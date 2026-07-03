@@ -1,1 +1,1 @@
-../../../cifar-1/ki-local.h
+../../cifar/ki-local.h

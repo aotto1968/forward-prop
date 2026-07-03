@@ -10,7 +10,7 @@
  * Changes: CIFAR-10 data loader, 3072 input → 768 packed containers
  */
 /* ki-adamw.h includes the project's current ki-common.h via cifar-include/ */
-#include "ki-adamw.h"
+#include <ki-adamw.h>
 
 #define N_CLASSES KI_NCLASSES
 #define ADAM_BETA1 0.9f

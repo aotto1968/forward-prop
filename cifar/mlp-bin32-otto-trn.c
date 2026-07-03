@@ -1,1 +1,1 @@
-../../mnist-1/mlp-bin32-otto-trn.c
+../mnist/mlp-bin32-otto-trn.c

@@ -3,9 +3,8 @@
 # Self-contained CIFAR-10 demo for the public distribution.
 #
 # Targets:
-#   make all        — trainer + inference (XNOR + XOR)
-#   make trainer    — cifar-mlp-bin32-otto-trn-xnor.exe + xor
-#   make ifc        — cifar-mlp-bin32-otto-ifc-xnor.exe + xor
+#   make all        — trainer (XNOR + XOR)
+#   make model-otto — train CIFAR Otto Score model
 #   make clean      — remove executables
 #   make setup      — download CIFAR-10 dataset
 # ======================================================
@@ -16,7 +15,9 @@ CFLAGS   = -O3 -march=native -fopenmp -Wall -Wextra -Werror \
            -I../lib
 LDLIBS   = -lm -lz
 
-.PHONY: all trainer ifc clean setup
+MODEL_DIR = ../models
+
+.PHONY: all trainer clean setup model-otto
 
 all: trainer
 
@@ -41,10 +42,13 @@ cifar-mlp-bin32-otto-trn-xor.exe: $(TRN_SRC) ki-common.h
 	  -Wno-sign-conversion -Wno-unused-parameter -Wno-unused-function \
 	  -DH0_XOR -o $@ $< $(LDLIBS)
 
-# ── Inference via trainer's --model flag ────────────────────
-ifc:
-	@echo "  Inference via: cifar-mlp-bin32-otto-trn-xnor.exe --model <file>"
+# ── Trained Model (cached) ─────────────────────────────────
+model-otto: cifar-mlp-bin32-otto-trn-xnor.exe
+	@mkdir -p $(MODEL_DIR)/cifar-otto-h256
+	@./cifar-mlp-bin32-otto-trn-xnor.exe --hiddenN 256 --epochsN 5 \
+	  --encoding latest --out $(MODEL_DIR)/cifar-otto-h256 2>&1 | tail -1
 
 # ── Clean ──────────────────────────────────────────────────
 clean:
 	rm -f *.exe
+	rm -rf $(MODEL_DIR)/cifar-otto-h256

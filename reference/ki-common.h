@@ -569,12 +569,15 @@ static inline void ki_dry_run_show(const ki_SetupInfo *s) {
 
 static inline void ki_report_show(int train_ok, int train_n,
                                    int eval_ok,  int eval_n,
-                                   int elapsed_ms, int threadN) {
+                                   int elapsed_ms, int threadN,
+                                   int err, float lr) {
     float tp = (float)train_ok * 100.0f / (float)train_n;
     float ep = (float)eval_ok  * 100.0f / (float)eval_n;
+    (void)err; (void)lr;
     printf("\n============================================================\n");
-    printf("REPORT train=%.1f%% (%d) eval=%.1f%% (%d) time=%dms threads=%d\n",
-           tp, train_n, ep, eval_n, elapsed_ms, threadN);
+    printf("REPORT train=%.1f%% (%d) eval=%.1f%% (%d)"
+           " err=%d lr=%.4f time=%dms threads=%d\n",
+           tp, train_n, ep, eval_n, err, (double)lr, elapsed_ms, threadN);
     printf("============================================================\n");
 }
 

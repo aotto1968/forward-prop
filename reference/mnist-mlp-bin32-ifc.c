@@ -356,9 +356,8 @@ int main(int argc, char *argv[]) {
     printf("  Time:    %dms  (%.1f µs/sample)\n",
            elapsed, (double)elapsed * 1000.0 / (double)total_eval);
 
-    ki_report_show(0, 0,
-                   (int)(acc * (float)total_eval / 100.0f + 0.5f), total_eval,
-                   elapsed, threadN);
+    ki_report_show(0, 0, (int)(acc * (float)total_eval / 100.0f + 0.5f), total_eval,
+                   elapsed, threadN, 0, 0.0f);
 
     free(X_all);
     ki_mnist_free(&data);

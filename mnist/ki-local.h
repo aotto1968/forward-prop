@@ -1,0 +1,181 @@
+/*
+ * mnist/ki-local.h — MNIST-specific constants + data loader
+ * ==========================================================
+ * For the public Otto Score distribution.
+ * Derived from mnist-1/ki-local.h.
+ *
+ * API:
+ *   int ki_dataset_read(ki_Dataset *out);   // 0 on success
+ *   void ki_dataset_free(ki_Dataset *data);
+ */
+#ifndef KI_LOCAL_H
+#define KI_LOCAL_H
+
+#include <stdio.h>
+#include <stdint.h>
+#include <string.h>
+#include <stdlib.h>
+#include <zlib.h>
+
+/* ═══════════════════════════════════════════════════════════════════════
+ * CONSTANTS
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+#define KI_PX                   784
+#define KI_NCLASSES             10
+#define KI_DEFAULT_LR           0.05f
+#define KI_DEFAULT_STEP_POWER   0.1f
+#define KI_DEFAULT_STEP_MODE    STEP_COS_TIME
+#define KI_DEFAULT_BATCH_N      64
+#define KI_COLORS               1
+#define KI_DEFAULT_COLOR        (1<<COLOR_MNIST)
+#ifndef KI_NC
+#define KI_NC                   196
+#endif
+#define KI_NC_TOTAL             (KI_NC * KI_COLORS)
+#ifndef KI_PACK
+#define KI_PACK                 (784 / KI_NC)
+#endif
+
+#ifndef NC
+#define NC  KI_NC
+#endif
+
+#ifndef OT_PRECISION
+#define OT_PRECISION 17
+#endif
+
+/* ═══════════════════════════════════════════════════════════════════════
+ * MNIST DATA STRUCT + LOADER
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+typedef struct {
+    int num_images;
+    int rows;
+    int cols;
+    int pixels;
+    float *X;
+    uint8_t *X_raw;
+    uint8_t *y;
+} ki_MNISTData;
+
+typedef ki_MNISTData ki_Dataset;
+
+/* ── GZIP decompression helper ─────────────────────────── */
+static int ki_decompress_gz(const char *path, uint8_t **out_data, size_t *out_size) {
+    FILE *f = fopen(path, "rb");
+    if (!f) return -1;
+    fseek(f, 0, SEEK_END);
+    long gz_len = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    uint8_t *gz_buf = (uint8_t *)malloc((size_t)gz_len);
+    if (!gz_buf) { fclose(f); return -1; }
+    if (fread(gz_buf, 1, (size_t)gz_len, f) != (size_t)gz_len) {
+        free(gz_buf); fclose(f); return -1;
+    }
+    fclose(f);
+
+    z_stream strm;
+    memset(&strm, 0, sizeof(strm));
+    strm.avail_in = (uInt)gz_len;
+    strm.next_in = gz_buf;
+    if (inflateInit2(&strm, 16 + MAX_WBITS) != Z_OK) { free(gz_buf); return -1; }
+
+    size_t buf_cap = 65536, buf_used = 0;
+    uint8_t *buf = (uint8_t *)malloc(buf_cap);
+    do {
+        if (buf_used + 65536 > buf_cap) {
+            buf_cap *= 2;
+            uint8_t *newbuf = (uint8_t *)realloc(buf, buf_cap);
+            if (!newbuf) { inflateEnd(&strm); free(gz_buf); free(buf); return -1; }
+            buf = newbuf;
+        }
+        strm.avail_out = (uInt)(buf_cap - buf_used);
+        strm.next_out = buf + buf_used;
+        int ret = inflate(&strm, Z_NO_FLUSH);
+        buf_used = buf_cap - strm.avail_out;
+        if (ret == Z_STREAM_END) break;
+        if (ret != Z_OK) { inflateEnd(&strm); free(gz_buf); free(buf); return -1; }
+    } while (strm.avail_out == 0);
+
+    inflateEnd(&strm);
+    free(gz_buf);
+    *out_data = buf;
+    *out_size = buf_used;
+    return 0;
+}
+
+/* ── MNIST read ─────────────────────────────────────────── */
+static int ki_mnist_read(ki_MNISTData *out) {
+    const char *candidates[] = {
+        "data/mnist",
+        "../data/mnist",
+        "../../data/mnist",
+        NULL
+    };
+    const char *data_dir = NULL;
+    for (int i = 0; candidates[i]; i++) {
+        char test[512];
+        snprintf(test, sizeof(test), "%s/train-images-idx3-ubyte.gz", candidates[i]);
+        if (access(test, R_OK) == 0) {
+            data_dir = candidates[i];
+            break;
+        }
+    }
+    if (!data_dir) {
+        fprintf(stderr, "[FATAL] Cannot find MNIST data.\n");
+        return -1;
+    }
+
+    memset(out, 0, sizeof(*out));
+    uint8_t *raw = NULL;
+    size_t raw_size = 0;
+    char path[512];
+
+    snprintf(path, sizeof(path), "%s/train-images-idx3-ubyte.gz", data_dir);
+    if (ki_decompress_gz(path, &raw, &raw_size) != 0) return -1;
+
+    int num_img = (raw[4] << 24) | (raw[5] << 16) | (raw[6] << 8) | raw[7];
+    int rows    = (raw[8] << 24) | (raw[9] << 16) | (raw[10] << 8) | raw[11];
+    int cols    = (raw[12] << 24) | (raw[13] << 16) | (raw[14] << 8) | raw[15];
+    int pixels  = rows * cols;
+
+    printf("  [MNIST] images: %d x %d px=%d\n", rows, cols, pixels);
+
+    out->num_images = num_img;
+    out->rows = rows;
+    out->cols = cols;
+    out->pixels = pixels;
+    {   size_t npix = (size_t)num_img * (size_t)pixels;
+        out->X_raw = (uint8_t *)malloc(npix);
+        memcpy(out->X_raw, raw + 16, npix);
+        out->X = (float *)malloc(npix * sizeof(float));
+        for (size_t i = 0; i < npix; i++)
+            out->X[i] = ((float)raw[16 + i] / 255.0f) * 2.0f - 1.0f;
+    }
+    free(raw);
+
+    snprintf(path, sizeof(path), "%s/train-labels-idx1-ubyte.gz", data_dir);
+    if (ki_decompress_gz(path, &raw, &raw_size) != 0) { free(out->X); free(out->X_raw); return -1; }
+
+    out->y = (uint8_t *)malloc((size_t)num_img);
+    memcpy(out->y, raw + 8, (size_t)num_img);
+    free(raw);
+
+    printf("  [MNIST] Loaded %d samples (%d px)\n", out->num_images, out->pixels);
+    return 0;
+}
+
+/* ── Free ───────────────────────────────────────────────── */
+static inline void ki_mnist_free(ki_MNISTData *data) {
+    free(data->X);
+    free(data->X_raw);
+    free(data->y);
+    memset(data, 0, sizeof(*data));
+}
+
+/* ── Generic aliases ────────────────────────────────────── */
+#define ki_dataset_read ki_mnist_read
+#define ki_dataset_free ki_mnist_free
+
+#endif /* KI_LOCAL_H */

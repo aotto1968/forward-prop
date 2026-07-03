@@ -594,7 +594,7 @@ int main(int argc, char *argv[]) {
     float fin_evl = accuracy(Xevl, Yevl, Nevl, W0, W1, H);
     int train_ok = (int)(fin_trn * (float)Ntrn / 100.0f);
     int eval_ok  = (int)(fin_evl * (float)Nevl / 100.0f);
-    ki_report_show(train_ok, Ntrn, eval_ok, Nevl, (int)trn_ms, a.threadN);
+    ki_report_show(train_ok, Ntrn, eval_ok, Nevl, trn_ms, a.threadN, 0, 0.0f);
 
     /* ── Export best weights ─────────────────────────────────── */
     if (a.out[0] != '\0')

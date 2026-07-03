@@ -78,8 +78,8 @@ using only `&`, `|`, `~` — no multiply, no float, no training.
 | --------------------------------------- | ----------------------------------------- |
 | `mlp-otto-score-ifc-xnor.exe`           | Inference (XNOR, reads .otto models)      |
 | `mlp-otto-score-ifc-xor.exe`            | Inference (XOR, reads .otto models)       |
-| `mlp-otto-score-ensemble-xnor.exe`      | Ensemble trainer (iterative correction)   |
-| `mlp-otto-score-ensemble-xor.exe`       | Ensemble trainer (XOR mode)               |
+| `mnist-mlp-otto-score-trn-xnor.exe`      | Ensemble trainer (iterative correction)   |
+| `mnist-mlp-otto-score-trn-xor.exe`       | Ensemble trainer (XOR mode)               |
 
 Both inference binaries auto-detect single (v1) and ensemble (v5/v6) model formats.
 All log-odds values are scaled by `F = (1<<OT_PRECISION)` — default F=1024.
@@ -203,7 +203,7 @@ thread scheduling. This is normal — the model itself is deterministic.
 ├── convert_to_pgm.sh                ← image → MNIST PGM converter
 ├── convert_to_raw.sh                ← image → raw 784-byte converter
 ├── mlp-otto-score-ifc.c             ← Otto Score inference (~440 lines)
-├── mlp-otto-score-ensemble.c        ← Otto Score ensemble trainer (~660 lines)
+├── mlp-otto-score-trn.c        ← Otto Score ensemble trainer (~660 lines)
 ├── mlp-flt32-trn-w1-adam.c          ← Float32 AdamW trainer (~440 lines)
 ├── mlp-flt32-ifc.c                  ← Float32 2-layer inference (~300 lines)
 ├── mlp-bin32-trn-w1-hebbian.c       ← Bitwise Hebbian trainer (~570 lines, ~78%)
@@ -269,13 +269,13 @@ reduces the error rate significantly. The ifc **auto-detects** ensemble models
 on load — no extra flags needed.
 
 ```bash
-# Train an ensemble (from ki-w2 directory)
-cd ../ki-w2
-./mlp-otto-score-ensemble-xnor.exe --hiddenN 128 --ensembleN 3 --epochsN 20 --out out/otto-h128-e3-xnor
+# Train an ensemble (from mnist-1 directory)
+cd ../mnist-1
+./mnist-mlp-otto-score-trn-xnor.exe --hiddenN 128 --ensembleN 3 --epochsN 20 --out out/otto-h128-e3-xnor
 
 # Evaluate with inference (auto-detects v5 ensemble format)
 cd ../otto-score-ifc
-./mlp-otto-score-ifc-xnor.exe --model ../ki-w2/out/otto-h128-e3-xnor/model.otto --evalN 10000
+./mlp-otto-score-ifc-xnor.exe --model ../mnist-1/out/otto-h128-e3-xnor/model.otto --evalN 10000
 # → 95.5%
 ```
 

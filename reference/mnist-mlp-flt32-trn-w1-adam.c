@@ -436,7 +436,7 @@ int main(int argc, char *argv[]) {
     /* ── REPORT ──────────────────────────────────────────────── */
     int train_ok = (int)(best_train * (float)total_train / 100.0f + 0.5f);
     int eval_ok  = (int)(final_eval * (float)total_eval / 100.0f + 0.5f);
-    ki_report_show(train_ok, total_train, eval_ok, total_eval, elapsed_ms, a.threadN);
+    ki_report_show(train_ok, total_train, eval_ok, total_eval, elapsed_ms, a.threadN, 0, 0.0f);
 
     /* ── Cleanup ─────────────────────────────────────────────── */
     ki_adamw_free(&adamw);

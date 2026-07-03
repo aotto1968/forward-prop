@@ -1,0 +1,1 @@
+../../mnist-1/mlp-otto-score-trn.c

@@ -4,7 +4,8 @@
 # macOS
 .DS_Store
 
-logs/
+logs/*
+models/*
 tags
 *.sw*
 *.bak

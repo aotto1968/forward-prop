@@ -41,6 +41,8 @@
 #define W0_RANDOM_H
 
 #include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
 
 /**
  * Internal splitmix64 state (one per translation unit).
@@ -49,28 +51,59 @@
 static uint64_t w0_splitmix64_state;
 
 /**
- * w0_srandom() — Seed the splitmix64 generator.
+ * Optional random file handle.  If set, w0_random() reads from this
+ * file instead of splitmix64.  The file cursor advances sequentially;
+ * w0_srandom() is a no-op when a file is active.
+ */
+static FILE *w0_rf = NULL;
+
+/**
+ * w0_rand_set_file() — Switch w0_random() to read from a binary file.
  *
+ * Each call to w0_random() reads the next uint32 from the file.
+ * The file must contain at least as many uint32 as w0_random() calls.
+ * Pass NULL or empty string to revert to splitmix64 PRNG.
+ */
+static inline void w0_rand_set_file(const char *path) {
+    if (w0_rf) { fclose(w0_rf); w0_rf = NULL; }
+    if (path && path[0]) {
+        w0_rf = fopen(path, "rb");
+        if (!w0_rf) {
+            fprintf(stderr, "[FATAL] Cannot open random file: %s\n", path);
+            exit(1);
+        }
+    }
+}
+
+/**
+ * w0_srandom() — Seed the splitmix64 generator (or no-op in file mode).
+ *
+ * In PRNG mode: sets the splitmix64 state, call ONCE before w0_random().
+ * In file mode: has no effect (file cursor is independent).
  * Any 64-bit value is valid (including 0 — splitmix64 handles it).
- * Call ONCE before the first w0_random() call.
  */
 static inline void w0_srandom(uint64_t seed) {
     w0_splitmix64_state = seed;
 }
 
 /**
- * w0_random() — Generate a full 32-bit random value via splitmix64.
+ * w0_random() — Generate a 32-bit random value.
  *
- * splitmix64 is a fixed-increment version of Java 8's SplittableRandom.
- * Passes BigCrush with no systematic failures.
+ * FILE MODE (after w0_rand_set_file()):
+ *   Reads next uint32 from the file.  Fast, no computation.
  *
- * Returns the upper 32 bits of the 64-bit output for best randomness
- * (the lower bits of splitmix64 are also excellent, but upper bits
- *  are conventionally preferred).
+ * PRNG MODE (default):
+ *   Returns upper 32 bits of splitmix64 — passes BigCrush.
  *
  * @return uint32_t — 32-bit random value (0x00000000 .. 0xFFFFFFFF)
  */
 static inline uint32_t w0_random(void) {
+    if (w0_rf) {
+        uint32_t v;
+        if (fread(&v, sizeof(v), 1, w0_rf) == 1) return v;
+        fprintf(stderr, "[FATAL] Random file EOF (need more uint32)\n");
+        exit(1);
+    }
     uint64_t z = (w0_splitmix64_state += UINT64_C(0x9e3779b97f4a7c15));
     z = (z ^ (z >> 30)) * UINT64_C(0xbf58476d1ce4e5b9);
     z = (z ^ (z >> 27)) * UINT64_C(0x94d049bb133111eb);

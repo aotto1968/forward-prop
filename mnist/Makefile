@@ -33,21 +33,21 @@ trainer: mnist-mlp-bin32-otto-trn-xnor.exe mnist-mlp-bin32-otto-trn-xor.exe
 
 mnist-mlp-bin32-otto-trn-xnor.exe: $(TRN_SRC) ki-common.h
 	$(CC) $(CFLAGS) \
-	  -Wno-sign-conversion -Wno-unused-parameter -Wno-unused-function \
+	  -Wno-sign-conversion -Wno-unused-parameter -Wno-unused-function -Wno-unused-variable \
 	  -o $@ $< $(LDLIBS)
 
 mnist-mlp-bin32-otto-trn-xor.exe: $(TRN_SRC) ki-common.h
 	$(CC) $(CFLAGS) \
-	  -Wno-sign-conversion -Wno-unused-parameter -Wno-unused-function \
+	  -Wno-sign-conversion -Wno-unused-parameter -Wno-unused-function -Wno-unused-variable \
 	  -DH0_XOR -o $@ $< $(LDLIBS)
 
 # ── Trained Model (cached) ─────────────────────────────────
 model-otto: mnist-mlp-bin32-otto-trn-xnor.exe
-	@mkdir -p $(MODEL_DIR)/mnist-otto-h512
-	@./mnist-mlp-bin32-otto-trn-xnor.exe --hiddenN 512 --epochsN 10 \
-	  --encoding exp --out $(MODEL_DIR)/mnist-otto-h512 2>&1 | tail -1
+	@mkdir -p $(MODEL_DIR)/mnist-otto-h512-e10
+	@echo -n "start..." && ./mnist-mlp-bin32-otto-trn-xnor.exe --hiddenN 512 --epochsN 10 \
+	  --encoding exp --out $(MODEL_DIR)/mnist-otto-h512-e10 2>&1 | grep '^REPORT'
 
 # ── Clean ──────────────────────────────────────────────────
 clean:
 	rm -f *.exe
-	rm -rf $(MODEL_DIR)/mnist-otto-h512
+	rm -rf $(MODEL_DIR)/mnist-otto-h512-e10

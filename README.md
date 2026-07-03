@@ -91,15 +91,15 @@ Every trainer binary doubles as IFC via `--model`:
 ```bash
 # MNIST: load cached model and evaluate
 ./mnist/mnist-mlp-bin32-otto-trn-xnor.exe \
-  --model models/mnist-otto-h512/model.otto --evalN 10000 --encoding exp
+  --model models/mnist-otto-h512-e10/model.otto --evalN 10000 --encoding exp
 
 # CIFAR-10: same pattern (--encoding latest for best accuracy)
 ./cifar/cifar-mlp-bin32-otto-trn-xnor.exe \
-  --model models/cifar-otto-h256/model.otto --evalN 10000 --encoding latest
+  --model models/cifar-otto-h256-e10/model.otto --evalN 10000 --encoding latest
 
 # Reference inference uses separate IFC binaries:
 ./reference/mnist-mlp-flt32-adam-ifc.exe \
-  --model models/mnist-adam-h512 --evalN 10000
+  --model models/mnist-adam-h512-e10 --evalN 10000
 ```
 
 There are **no separate IFC source files** for Otto Score — the trainer binary IS the inference binary. This guarantees zero code drift between training and evaluation.

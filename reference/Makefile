@@ -88,20 +88,20 @@ $(CIFAR_ADAM_IFC): cifar-mlp-flt32-adam-ifc.c
 MODEL_DIR = ../models
 
 model-adam-mnist: $(MNIST_ADAM_TRN)
-	@mkdir -p $(MODEL_DIR)/mnist-adam-h512
-	@./$(MNIST_ADAM_TRN) --hiddenN 512 --epochsN 10 --out $(MODEL_DIR)/mnist-adam-h512 2>&1 | tail -1
+	@mkdir -p $(MODEL_DIR)/mnist-adam-h512-e10
+	@echo -n "start..." && ./$(MNIST_ADAM_TRN) --hiddenN 512 --epochsN 10 --out $(MODEL_DIR)/mnist-adam-h512-e10 2>&1 | grep '^REPORT'
 
 model-hebb-mnist: $(MNIST_HEBB_TRN_XNOR) $(MNIST_HEBB_IFC_XNOR)
-	@mkdir -p $(MODEL_DIR)/mnist-hebbian-h512
-	@./$(MNIST_HEBB_TRN_XNOR) --hiddenN 512 --epochsN 10 --out $(MODEL_DIR)/mnist-hebbian-h512 2>&1 | tail -1
+	@mkdir -p $(MODEL_DIR)/mnist-hebbian-h512-e10
+	@echo -n "start..." && ./$(MNIST_HEBB_TRN_XNOR) --hiddenN 512 --epochsN 10 --out $(MODEL_DIR)/mnist-hebbian-h512-e10 2>&1 | grep '^REPORT'
 
 model-adam-cifar: $(CIFAR_ADAM_TRN)
-	@mkdir -p $(MODEL_DIR)/cifar-adam-h256
-	@./$(CIFAR_ADAM_TRN) --hiddenN 256 --epochsN 3 --evalN 10000 --out $(MODEL_DIR)/cifar-adam-h256 2>&1 | tail -1
+	@mkdir -p $(MODEL_DIR)/cifar-adam-h256-e10
+	@echo -n "start..." && ./$(CIFAR_ADAM_TRN) --hiddenN 256 --epochsN 10 --evalN 10000 --out $(MODEL_DIR)/cifar-adam-h256-e10 2>&1 | grep '^REPORT'
 
 model-hebb-cifar: $(CIFAR_HEBB_TRN_XNOR)
-	@mkdir -p $(MODEL_DIR)/cifar-hebbian-h256
-	@./$(CIFAR_HEBB_TRN_XNOR) --hiddenN 256 --epochsN 3 --evalN 10000 --out $(MODEL_DIR)/cifar-hebbian-h256 2>&1 | tail -1
+	@mkdir -p $(MODEL_DIR)/cifar-hebbian-h256-e10
+	@echo -n "start..." && ./$(CIFAR_HEBB_TRN_XNOR) --hiddenN 256 --epochsN 10 --evalN 10000 --out $(MODEL_DIR)/cifar-hebbian-h256-e10 2>&1 | grep Exported
 
 # ═══════════════════════════════════════════════════════════════
 # Clean

@@ -34,21 +34,21 @@ trainer: cifar-mlp-bin32-otto-trn-xnor.exe cifar-mlp-bin32-otto-trn-xor.exe
 
 cifar-mlp-bin32-otto-trn-xnor.exe: $(TRN_SRC) ki-common.h
 	$(CC) $(CFLAGS) \
-	  -Wno-sign-conversion -Wno-unused-parameter -Wno-unused-function \
+	  -Wno-sign-conversion -Wno-unused-parameter -Wno-unused-function -Wno-unused-variable \
 	  -o $@ $< $(LDLIBS)
 
 cifar-mlp-bin32-otto-trn-xor.exe: $(TRN_SRC) ki-common.h
 	$(CC) $(CFLAGS) \
-	  -Wno-sign-conversion -Wno-unused-parameter -Wno-unused-function \
+	  -Wno-sign-conversion -Wno-unused-parameter -Wno-unused-function -Wno-unused-variable \
 	  -DH0_XOR -o $@ $< $(LDLIBS)
 
 # ── Trained Model (cached) ─────────────────────────────────
 model-otto: cifar-mlp-bin32-otto-trn-xnor.exe
-	@mkdir -p $(MODEL_DIR)/cifar-otto-h256
-	@./cifar-mlp-bin32-otto-trn-xnor.exe --hiddenN 256 --epochsN 5 \
-	  --encoding latest --out $(MODEL_DIR)/cifar-otto-h256 2>&1 | tail -1
+	@mkdir -p $(MODEL_DIR)/cifar-otto-h256-e10
+	@echo -n "start..." && ./cifar-mlp-bin32-otto-trn-xnor.exe --hiddenN 256 --epochsN 10 \
+	  --encoding latest --out $(MODEL_DIR)/cifar-otto-h256-e10 2>&1 | grep '^REPORT'
 
 # ── Clean ──────────────────────────────────────────────────
 clean:
 	rm -f *.exe
-	rm -rf $(MODEL_DIR)/cifar-otto-h256
+	rm -rf $(MODEL_DIR)/cifar-otto-h256-e10

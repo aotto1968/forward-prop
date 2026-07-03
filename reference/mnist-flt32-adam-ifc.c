@@ -1,8 +1,8 @@
 /*
- * otto-score-ifc/mlp-flt32-ifc.c — Float32 2-Layer AdamW Inference
+ * otto-score-ifc/mlp-flt32-adam-ifc.c — Float32 2-Layer AdamW Inference
  * =================================================================
  *
- * Loads a trained 2-layer float32 model (exported by mlp-flt32-trn-w1-adam)
+ * Loads a trained 2-layer float32 model (exported by mlp-flt32-w1-adam-trn)
  * and classifies MNIST test data or a single image.
  *
  * Model format (from export_weights):
@@ -14,10 +14,10 @@
  * No bitwise ops, no MAJ3 — pure float32 matmul baseline.
  *
  * Build:
- *   make mlp-flt32-ifc-xnor.exe
+ *   make mlp-flt32-adam-ifc-xnor.exe
  *
  * Usage:
- *   ./mlp-flt32-ifc-xnor.exe --model DIR   [--evalN N]  [--image FILE]
+ *   ./mlp-flt32-adam-ifc-xnor.exe --model DIR   [--evalN N]  [--image FILE]
  */
 #include "ki-common.h"
 #include <inttypes.h>

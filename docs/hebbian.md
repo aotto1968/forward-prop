@@ -137,6 +137,6 @@ trainer lacks:
 
 ## Source Files
 
-- `mlp-bin32-trn-w1-hebbian.c` — Hebbian trainer (~570 lines)
-- `mlp-bin32-ifc.c` — Bin32 inference (~330 lines)
+- `mlp-bin32-w1-hebbian-trn.c` — Hebbian trainer (~570 lines)
+- `mlp-bin32-hebbian-ifc.c` — Bin32 inference (~330 lines)
 - `ki-common.h` — Shared helpers (MNIST loader, memory)

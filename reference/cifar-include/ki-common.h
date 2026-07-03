@@ -1,0 +1,1 @@
+../../../mnist-1/ki-common.h

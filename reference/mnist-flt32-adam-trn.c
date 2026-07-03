@@ -1,5 +1,5 @@
 /*
- * otto-score-ifc/mlp-flt32-trn-w1-adam.c — Float32 AdamW W1-Only (W0 Frozen)
+ * otto-score-ifc/mlp-flt32-w1-adam-trn.c — Float32 AdamW W1-Only (W0 Frozen)
  * =========================================================================
  *
  * Self-contained AdamW trainer (no #include "mlp.c", no #include "args.h").
@@ -11,7 +11,7 @@
  * Interface: ki-common.h — same CLI parameters as all programs.
  *
  * Reference implementation for 2-layer float32 baseline.
- * See: ki-w1/mlp-flt32-trn-w1-adam.c (original)
+ * See: ki-w1/mlp-flt32-w1-adam-trn.c (original)
  *      plans/plan-2026-06-04-flt32-w1-only.md (Resolved)
  */
 #include "ki-common.h"
@@ -256,7 +256,7 @@ int main(int argc, char *argv[]) {
     }
 
     /* ── Pack input: 784 px → 196 packed containers (4px/cont, averaged) ──
-     *   Same 4-pixel grouping as mlp-bin32-trn-w1-hebbian.c.
+     *   Same 4-pixel grouping as mlp-bin32-w1-hebbian-trn.c.
      *   Instead of uint32, 4 pixels are averaged as float [-1,+1].
      */
     int total_train = a.trainN;

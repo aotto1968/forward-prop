@@ -1,14 +1,14 @@
 /*
- * cifar-1/mlp-bin32-ifc.c — Bin32 Hebbian Inference (CIFAR-10)
+ * cifar-1/mlp-bin32-hebbian-ifc.c — Bin32 Hebbian Inference (CIFAR-10)
  * ==============================================================
  *
  * Loads a trained binary model (W0.bin + W1.bin) and classifies
  * CIFAR-10 test data. Pure XNOR+popcount, no float, no matmul.
  *
- * Derived from otto-score-ifc/mlp-bin32-ifc.c
+ * Derived from otto-score-ifc/mlp-bin32-hebbian-ifc.c
  * Changes: CIFAR-10 input dimension
  */
-#include "ki-common.h"
+#include <ki-common.h>
 #include "maj3.h"
 #include <inttypes.h>
 

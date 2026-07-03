@@ -4,8 +4,8 @@
 #
 # Targets:
 #   make all        — trainer + inference (XNOR + XOR)
-#   make trainer    — cifar-mlp-otto-score-trn-xnor.exe + xor
-#   make ifc        — cifar-mlp-otto-score-ifc-xnor.exe + xor
+#   make trainer    — cifar-mlp-bin32-otto-trn-xnor.exe + xor
+#   make ifc        — cifar-mlp-bin32-otto-ifc-xnor.exe + xor
 #   make clean      — remove executables
 #   make setup      — download CIFAR-10 dataset
 # ======================================================
@@ -27,24 +27,24 @@ setup:
 	@bash ../fetch_cifar10.sh
 
 # ── Otto Score Trainer ─────────────────────────────────────
-TRN_SRC = mlp-otto-score-trn.c
+TRN_SRC = mlp-bin32-otto-trn.c
 
-trainer: cifar-mlp-otto-score-trn-xnor.exe cifar-mlp-otto-score-trn-xor.exe
+trainer: cifar-mlp-bin32-otto-trn-xnor.exe cifar-mlp-bin32-otto-trn-xor.exe
 
-cifar-mlp-otto-score-trn-xnor.exe: $(TRN_SRC) ki-common.h
+cifar-mlp-bin32-otto-trn-xnor.exe: $(TRN_SRC) ki-common.h
 	$(CC) $(CFLAGS) \
 	  -Wno-sign-conversion -Wno-unused-parameter -Wno-unused-function \
 	  -o $@ $< $(LDLIBS)
 
-cifar-mlp-otto-score-trn-xor.exe: $(TRN_SRC) ki-common.h
+cifar-mlp-bin32-otto-trn-xor.exe: $(TRN_SRC) ki-common.h
 	$(CC) $(CFLAGS) \
 	  -Wno-sign-conversion -Wno-unused-parameter -Wno-unused-function \
 	  -DH0_XOR -o $@ $< $(LDLIBS)
 
 # ── Inference via trainer's --model flag ────────────────────
 ifc:
-	@echo "  Inference via: cifar-mlp-otto-score-trn-xnor.exe --model <file>"
+	@echo "  Inference via: cifar-mlp-bin32-otto-trn-xnor.exe --model <file>"
 
 # ── Clean ──────────────────────────────────────────────────
 clean:
-	rm -f cifar-mlp-otto-score-trn-xnor.exe cifar-mlp-otto-score-trn-xor.exe
+	rm -f *.exe

@@ -4,8 +4,8 @@
 #
 # Targets:
 #   make all        — trainer + inference (XNOR + XOR)
-#   make trainer    — mlp-otto-score-trn-xnor.exe + xor
-#   make ifc        — mlp-otto-score-ifc-xnor.exe + xor
+#   make trainer    — mlp-bin32-otto-trn-xnor.exe + xor
+#   make ifc        — mlp-bin32-otto-ifc-xnor.exe + xor
 #   make clean      — remove executables
 #   make setup      — download MNIST dataset
 # ===================================================
@@ -26,24 +26,24 @@ setup:
 	@bash ../fetch_mnist.sh
 
 # ── Otto Score Trainer ─────────────────────────────────────
-TRN_SRC = mlp-otto-score-trn.c
+TRN_SRC = mlp-bin32-otto-trn.c
 
-trainer: mnist-mlp-otto-score-trn-xnor.exe mnist-mlp-otto-score-trn-xor.exe
+trainer: mnist-mlp-bin32-otto-trn-xnor.exe mnist-mlp-bin32-otto-trn-xor.exe
 
-mnist-mlp-otto-score-trn-xnor.exe: $(TRN_SRC) ki-common.h
+mnist-mlp-bin32-otto-trn-xnor.exe: $(TRN_SRC) ki-common.h
 	$(CC) $(CFLAGS) \
 	  -Wno-sign-conversion -Wno-unused-parameter -Wno-unused-function \
 	  -o $@ $< $(LDLIBS)
 
-mnist-mlp-otto-score-trn-xor.exe: $(TRN_SRC) ki-common.h
+mnist-mlp-bin32-otto-trn-xor.exe: $(TRN_SRC) ki-common.h
 	$(CC) $(CFLAGS) \
 	  -Wno-sign-conversion -Wno-unused-parameter -Wno-unused-function \
 	  -DH0_XOR -o $@ $< $(LDLIBS)
 
 # ── Inference via trainer's --model flag ────────────────────
 ifc:
-	@echo "  Inference via: mnist-mlp-otto-score-trn-xnor.exe --model <file> --encoding exp"
+	@echo "  Inference via: mnist-mlp-bin32-otto-trn-xnor.exe --model <file> --encoding exp"
 
 # ── Clean ──────────────────────────────────────────────────
 clean:
-	rm -f mnist-mlp-otto-score-trn-xnor.exe mnist-mlp-otto-score-trn-xor.exe
+	rm -f mnist-mlp-bin32-otto-trn-xnor.exe mnist-mlp-bin32-otto-trn-xor.exe

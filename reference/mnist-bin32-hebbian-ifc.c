@@ -1,8 +1,8 @@
 /*
- * otto-score-ifc/mlp-bin32-ifc.c — Bin32 Hebbian Inference
+ * otto-score-ifc/mlp-bin32-hebbian-ifc.c — Bin32 Hebbian Inference
  * =========================================================
  *
- * Loads a trained uint32 binary model (exported by mlp-bin32-trn-w1-hebbian)
+ * Loads a trained uint32 binary model (exported by mlp-bin32-w1-hebbian-trn)
  * and classifies MNIST test data or a single image.
  *
  * Model format (same as flt32, but uint32 weights):
@@ -14,10 +14,10 @@
  * Pure &|~ + popcount — NO floating point, NO matmul.
  *
  * Build:
- *   make mlp-bin32-ifc-xnor.exe
+ *   make mlp-bin32-hebbian-ifc-xnor.exe
  *
  * Usage:
- *   ./mlp-bin32-ifc-xnor.exe --model DIR  [--evalN N]  [--image FILE]
+ *   ./mlp-bin32-hebbian-ifc-xnor.exe --model DIR  [--evalN N]  [--image FILE]
  */
 #include "ki-common.h"
 #include "maj3.h"

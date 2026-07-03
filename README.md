@@ -2,7 +2,7 @@
 
 **95.6% MNIST (full 10000-test evaluation). Zero floating point. Zero training. Only `&|~` + int32.**
 
-**Also includes a 2-layer float32 AdamW baseline for comparison: `mlp-flt32-trn-w1-adam` + `mlp-flt32-ifc`.**
+**Also includes a 2-layer float32 AdamW baseline for comparison: `mlp-flt32-w1-adam-trn` + `mlp-flt32-adam-ifc`.**
 
 **Supports single (v1) and ensemble (v5) models — auto-detected on load.**
 **Precision scaling via OT_PRECISION — default F=1024, legacy models at F=131072.**
@@ -76,10 +76,10 @@ using only `&`, `|`, `~` — no multiply, no float, no training.
 
 | File                                    | What it does                              |
 | --------------------------------------- | ----------------------------------------- |
-| `mlp-otto-score-ifc-xnor.exe`           | Inference (XNOR, reads .otto models)      |
-| `mlp-otto-score-ifc-xor.exe`            | Inference (XOR, reads .otto models)       |
-| `mnist-mlp-otto-score-trn-xnor.exe`      | Ensemble trainer (iterative correction)   |
-| `mnist-mlp-otto-score-trn-xor.exe`       | Ensemble trainer (XOR mode)               |
+| `mlp-bin32-otto-ifc-xnor.exe`           | Inference (XNOR, reads .otto models)      |
+| `mlp-bin32-otto-ifc-xor.exe`            | Inference (XOR, reads .otto models)       |
+| `mnist-mlp-bin32-otto-trn-xnor.exe`      | Ensemble trainer (iterative correction)   |
+| `mnist-mlp-bin32-otto-trn-xor.exe`       | Ensemble trainer (XOR mode)               |
 
 Both inference binaries auto-detect single (v1) and ensemble (v5/v6) model formats.
 All log-odds values are scaled by `F = (1<<OT_PRECISION)` — default F=1024.
@@ -88,17 +88,17 @@ All log-odds values are scaled by `F = (1<<OT_PRECISION)` — default F=1024.
 
 | File                          | What it does                        |
 | ----------------------------- | ----------------------------------- |
-| `mlp-flt32-trn-w1-adam.exe`   | 2-layer AdamW trainer (float32)     |
-| `mlp-flt32-ifc.exe`           | 2-layer inference (float32)         |
+| `mlp-flt32-w1-adam-trn.exe`   | 2-layer AdamW trainer (float32)     |
+| `mlp-flt32-adam-ifc.exe`           | 2-layer inference (float32)         |
 
 **Hebbian reference executables (XNOR + MAJ3 + popcnt, ~78%):**
 
 | File                                    | What it does                              |
 | --------------------------------------- | ----------------------------------------- |
-| `mlp-bin32-trn-w1-hebbian-xnor.exe`     | Bitwise Hebbian trainer (XNOR)            |
-| `mlp-bin32-trn-w1-hebbian-xor.exe`      | Bitwise Hebbian trainer (XOR)             |
-| `mlp-bin32-ifc-xnor.exe`                | Bin32 inference (XNOR + popcnt, no float) |
-| `mlp-bin32-ifc-xor.exe`                 | Bin32 inference (XOR + popcnt, no float)  |
+| `mlp-bin32-w1-hebbian-trn-xnor.exe`     | Bitwise Hebbian trainer (XNOR)            |
+| `mlp-bin32-w1-hebbian-trn-xor.exe`      | Bitwise Hebbian trainer (XOR)             |
+| `mlp-bin32-hebbian-ifc-xnor.exe`                | Bin32 inference (XNOR + popcnt, no float) |
+| `mlp-bin32-hebbian-ifc-xor.exe`                 | Bin32 inference (XOR + popcnt, no float)  |
 
 Note: Hebbian oscillates at ~78-82% — does **not** converge like Otto Score. See comparison table.
 
@@ -109,7 +109,7 @@ See "Float32 2-Layer Reference" section below.
 ## 📊 What parameters can I change?
 
 ```
-./mlp-otto-score-ifc-xnor.exe --model models/model-xnor.otto --evalN 10000 --threadN 4
+./mlp-bin32-otto-ifc-xnor.exe --model models/model-xnor.otto --evalN 10000 --threadN 4
 ```
 
 | Flag           | What it does                                   | Default  |
@@ -123,14 +123,14 @@ See "Float32 2-Layer Reference" section below.
 
 ```bash
 # Full evaluation on all 10000 test digits
-./mlp-otto-score-ifc-xnor.exe --model models/model-xnor.otto --evalN 10000
+./mlp-bin32-otto-ifc-xnor.exe --model models/model-xnor.otto --evalN 10000
 # Expected: ~86% (1-pass model, not iteratively trained)
 
 # Fewer threads (slower, but works on any machine)
-./mlp-otto-score-ifc-xnor.exe --model models/model-xnor.otto --evalN 10000 --threadN 2
+./mlp-bin32-otto-ifc-xnor.exe --model models/model-xnor.otto --evalN 10000 --threadN 2
 
 # Quick check with only 100 digits
-./mlp-otto-score-ifc-xnor.exe --model models/model-xnor.otto --evalN 100
+./mlp-bin32-otto-ifc-xnor.exe --model models/model-xnor.otto --evalN 100
 ```
 
 ## 🖼️ Classify your own handwritten digit
@@ -142,7 +142,7 @@ Take a photo, convert it, classify it:
 convert mydigit.jpg -resize 28x28! -negate -depth 8 pgm:- > digit.pgm
 
 # Classify it!
-./mlp-otto-score-ifc-xnor.exe --model models/model-xnor.otto --image digit.pgm
+./mlp-bin32-otto-ifc-xnor.exe --model models/model-xnor.otto --image digit.pgm
 ```
 
 The classifier accepts **PGM (P5)** images or raw 784-byte files.
@@ -202,12 +202,12 @@ thread scheduling. This is normal — the model itself is deterministic.
 ├── fetch_mnist.sh                   ← MNIST download script
 ├── convert_to_pgm.sh                ← image → MNIST PGM converter
 ├── convert_to_raw.sh                ← image → raw 784-byte converter
-├── mlp-otto-score-ifc.c             ← Otto Score inference (~440 lines)
-├── mlp-otto-score-trn.c        ← Otto Score ensemble trainer (~660 lines)
-├── mlp-flt32-trn-w1-adam.c          ← Float32 AdamW trainer (~440 lines)
-├── mlp-flt32-ifc.c                  ← Float32 2-layer inference (~300 lines)
-├── mlp-bin32-trn-w1-hebbian.c       ← Bitwise Hebbian trainer (~570 lines, ~78%)
-├── mlp-bin32-ifc.c                  ← Bin32 inference (~330 lines, XNOR+popcnt)
+├── mlp-bin32-otto-ifc.c             ← Otto Score inference (~440 lines)
+├── mlp-bin32-otto-trn.c        ← Otto Score ensemble trainer (~660 lines)
+├── mlp-flt32-w1-adam-trn.c          ← Float32 AdamW trainer (~440 lines)
+├── mlp-flt32-adam-ifc.c                  ← Float32 2-layer inference (~300 lines)
+├── mlp-bin32-w1-hebbian-trn.c       ← Bitwise Hebbian trainer (~570 lines, ~78%)
+├── mlp-bin32-hebbian-ifc.c                  ← Bin32 inference (~330 lines, XNOR+popcnt)
 ├── ki-common.h                      ← float32/matmul/AdamW helpers (shared)
 ├── ki-otto-common.h                 ← Otto Score specific (batch correction, precision)
 ├── docs/
@@ -271,11 +271,11 @@ on load — no extra flags needed.
 ```bash
 # Train an ensemble (from mnist-1 directory)
 cd ../mnist-1
-./mnist-mlp-otto-score-trn-xnor.exe --hiddenN 128 --ensembleN 3 --epochsN 20 --out out/otto-h128-e3-xnor
+./mnist-mlp-bin32-otto-trn-xnor.exe --hiddenN 128 --ensembleN 3 --epochsN 20 --out out/otto-h128-e3-xnor
 
 # Evaluate with inference (auto-detects v5 ensemble format)
 cd ../otto-score-ifc
-./mlp-otto-score-ifc-xnor.exe --model ../mnist-1/out/otto-h128-e3-xnor/model.otto --evalN 10000
+./mlp-bin32-otto-ifc-xnor.exe --model ../mnist-1/out/otto-h128-e3-xnor/model.otto --evalN 10000
 # → 95.5%
 ```
 
@@ -311,7 +311,7 @@ Typical:       H=512 → 95%+ eval (MNIST, 10 epochs)
 
 ```bash
 make flt32
-./mlp-flt32-trn-w1-adam.exe --hiddenN 512 --epochsN 10 --out out/flt32-ref
+./mlp-flt32-w1-adam-trn.exe --hiddenN 512 --epochsN 10 --out out/flt32-ref
 # → Evaluates on 10000 test digits, exports weights to out/flt32-ref/
 ```
 
@@ -319,10 +319,10 @@ make flt32
 
 ```bash
 # Evaluate MNIST test set
-./mlp-flt32-ifc.exe --model out/flt32-ref --evalN 10000
+./mlp-flt32-adam-ifc.exe --model out/flt32-ref --evalN 10000
 
 # Classify a single image (PGM or raw 784 bytes)
-./mlp-flt32-ifc.exe --model out/flt32-ref --image tests/digit5.pgm
+./mlp-flt32-adam-ifc.exe --model out/flt32-ref --image tests/digit5.pgm
 ```
 
 ### Key differences vs Otto Score

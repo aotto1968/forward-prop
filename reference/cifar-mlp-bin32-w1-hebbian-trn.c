@@ -1,5 +1,5 @@
 /*
- * cifar-1/mlp-bin32-trn-w1-hebbian.c — Majority + Hebbian (CIFAR-10)
+ * cifar-1/mlp-bin32-w1-hebbian-trn.c — Majority + Hebbian (CIFAR-10)
  * ===================================================================
  *
  * Reference implementation: bitwise Hebbian training for CIFAR-10.
@@ -8,7 +8,7 @@
  * Note: This trainer does NOT converge well (typically ~40-45% on CIFAR-10).
  * Included as reference for comparison with Otto Score and AdamW.
  *
- * Derived from otto-score-ifc/mlp-bin32-trn-w1-hebbian.c
+ * Derived from otto-score-ifc/mlp-bin32-w1-hebbian-trn.c
  * Changes: CIFAR-10 input dimension (3072 px → 768 containers)
  */
 #define _POSIX_C_SOURCE 200809L
@@ -20,7 +20,7 @@
 #include <time.h>
 #include <sys/time.h>
 #define KI_COMMON_LOAD_INPUT
-#include "ki-common.h"
+#include <ki-common.h>
 #include "w0_random.h"
 #include "maj3.h"
 

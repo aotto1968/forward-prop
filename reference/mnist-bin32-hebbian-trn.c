@@ -1,5 +1,5 @@
 /*
- * otto-score-ifc/mlp-bin32-trn-w1-hebbian.c — Majority + Hebbian (DRAM-native)
+ * otto-score-ifc/mlp-bin32-w1-hebbian-trn.c — Majority + Hebbian (DRAM-native)
  * ============================================================================
  *
  * Reference implementation: bitwise Hebbian training for MNIST.
@@ -10,10 +10,10 @@
  * Included as reference for comparison with Otto Score and AdamW baselines.
  *
  * Build:
- *   make mlp-bin32-trn-w1-hebbian-xnor.exe    (XNOR, PACKING=1, NC=196)
- *   make mlp-bin32-trn-w1-hebbian-xor.exe     (XOR,  PACKING=1, NC=196)
+ *   make mlp-bin32-w1-hebbian-trn-xnor.exe    (XNOR, PACKING=1, NC=196)
+ *   make mlp-bin32-w1-hebbian-trn-xor.exe     (XOR,  PACKING=1, NC=196)
  *
- * Original: ki-w1/mlp-bin32-trn-w1-hebbian.c
+ * Original: ki-w1/mlp-bin32-w1-hebbian-trn.c
  */
 #define _POSIX_C_SOURCE 200809L
 #include <stdio.h>
@@ -208,7 +208,7 @@ static inline int predict(const uint32_t *in, const uint32_t *W0,
 
 /* ── Weight Export (uint32 binary format) ───────────────────────────
  * Saves best W0 + W1 as binary for inference.
- * Format matches mlp-bin32-ifc.c expectations.
+ * Format matches mlp-bin32-hebbian-ifc.c expectations.
  */
 static void export_bin_weights(const uint32_t *W0, const uint32_t *W1,
                                 int H_f, const char *dir) {

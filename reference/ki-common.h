@@ -74,12 +74,12 @@ typedef struct {
     char   out[256];        /* --out DIR: export directory */
     float  lr;              /* Learning rate float (--lr, default: 0.002) */
 
-    /* AdamW-specific — used by mlp-flt32-trn-w1-adam, ignored by others */
+    /* AdamW-specific — used by mlp-flt32-w1-adam-trn, ignored by others */
     uint32_t lr_min_uint;   /* Minimum LR uint32 (--lr-min-uint, default: lr>>3) */
     int      warmup_epochs; /* Warmup epochs (--warmup, default: epochs/5) */
     int      no_decay;      /* --no-decay: constant LR (no cosine decay) */
 
-    /* Hebbian-specific — used by mlp-bin32-trn-w1-hebbian */
+    /* Hebbian-specific — used by mlp-bin32-w1-hebbian-trn */
     int    hebbian_pct;     /* --hebbian-pct: flip threshold % (default: 50) */
     int    debug_detail;    /* --debug-detail: per-sample debug output */
 

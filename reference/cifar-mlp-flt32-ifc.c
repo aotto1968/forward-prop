@@ -1,13 +1,13 @@
 /*
- * cifar-1/mlp-flt32-ifc.c — Float32 2-Layer AdamW Inference (CIFAR-10)
+ * cifar-1/mlp-flt32-adam-ifc.c — Float32 2-Layer AdamW Inference (CIFAR-10)
  * =====================================================================
  *
- * Loads a trained 2-layer float32 model (exported by mlp-flt32-trn-w1-adam)
+ * Loads a trained 2-layer float32 model (exported by mlp-flt32-w1-adam-trn)
  * and classifies CIFAR-10 test data.
  *
- * Derived from otto-score-ifc/mlp-flt32-ifc.c
+ * Derived from otto-score-ifc/mlp-flt32-adam-ifc.c
  */
-#include "ki-common.h"
+/* ki-adamw.h includes the project's current ki-common.h via cifar-include/ */
 #include "ki-adamw.h"
 #include <inttypes.h>
 

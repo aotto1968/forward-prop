@@ -249,6 +249,6 @@ analysis of this effect.
 
 ## Source Files
 
-- `mlp-otto-score-ifc.c` — Inference engine (~440 lines)
-- `mlp-otto-score-trn.c` — Ensemble trainer (~660 lines)
+- `mlp-bin32-otto-ifc.c` — Inference engine (~440 lines)
+- `mlp-bin32-otto-trn.c` — Ensemble trainer (~660 lines)
 - `ki-otto-common.h` — Shared infrastructure (batch correction, precision)

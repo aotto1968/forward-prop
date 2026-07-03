@@ -1,15 +1,15 @@
 /*
- * cifar-1/mlp-flt32-trn-w1-adam.c — Float32 AdamW W1-Only (W0 Frozen)
+ * cifar-1/mlp-flt32-w1-adam-trn.c — Float32 AdamW W1-Only (W0 Frozen)
  * ====================================================================
  *
  * CIFAR-10 version. Forward: matmul + LReLU(0.05) | Loss: MSE ±1
  * Optimizer: AdamW(lr, wd=1e-4) | Schedule: warmup + cosine decay
  * W0: kaiming_uniform init, FROZEN — W1: kaiming_uniform init, AdamW
  *
- * Derived from otto-score-ifc/mlp-flt32-trn-w1-adam.c
+ * Derived from otto-score-ifc/mlp-flt32-w1-adam-trn.c
  * Changes: CIFAR-10 data loader, 3072 input → 768 packed containers
  */
-#include "ki-common.h"
+/* ki-adamw.h includes the project's current ki-common.h via cifar-include/ */
 #include "ki-adamw.h"
 
 #define N_CLASSES KI_NCLASSES

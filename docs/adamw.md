@@ -108,7 +108,7 @@ W0.bin           — float32[H × 196]
 W1.bin           — float32[10 × H]
 ```
 
-The inference engine (`mlp-flt32-ifc.exe`) loads these and runs the
+The inference engine (`mlp-flt32-adam-ifc.exe`) loads these and runs the
 forward pass using the same float32 matmul + LReLU operations.
 
 ---
@@ -146,6 +146,6 @@ single float weight cannot express.
 
 ## Source Files
 
-- `mlp-flt32-trn-w1-adam.c` — AdamW trainer (~440 lines)
-- `mlp-flt32-ifc.c` — Float32 inference (~300 lines)
+- `mlp-flt32-w1-adam-trn.c` — AdamW trainer (~440 lines)
+- `mlp-flt32-adam-ifc.c` — Float32 inference (~300 lines)
 - `ki-common.h` — Shared helpers (matmul, AdamW, MNIST loader)

@@ -1,16 +1,13 @@
 # Makefile — Reference Implementations (MNIST + CIFAR-10)
 # ========================================================
-# Builds all reference binaries for the public distribution.
+# Builds float32 AdamW reference binaries for both datasets.
+# Hebbian references are now unified in ../mnist/ and ../cifar/.
 #
 # Targets:
-#   make all           — MNIST + CIFAR references
-#   make mnist         — MNIST refs only (hebbian + adam)
-#   make cifar         — CIFAR refs only (hebbian + adam)
-#   make model-adam-mnist   — train MNIST AdamW model
-#   make model-hebb-mnist   — train MNIST Hebbian model
-#   make model-adam-cifar   — train CIFAR AdamW model
-#   make model-hebb-cifar   — train CIFAR Hebbian model
-#   make clean         — remove executables + models
+#   make all               — MNIST + CIFAR Adam
+#   make model-adam-mnist  — train MNIST AdamW model
+#   make model-adam-cifar  — train CIFAR AdamW model
+#   make clean             — remove executables
 # ========================================================
 
 CC       = gcc
@@ -19,71 +16,38 @@ CFLAGS_CIFAR = -O3 -march=native -fopenmp -Icifar-include -I. -I../lib
 LDLIBS   = -lm -lz
 
 .PHONY: all mnist cifar clean \
-        model-adam-mnist model-hebb-mnist \
-        model-adam-cifar model-hebb-cifar
+        model-adam-mnist model-adam-cifar
 
 all: mnist cifar
 
 # ═══════════════════════════════════════════════════════════════
-# MNIST References
+# MNIST Adam
 # ═══════════════════════════════════════════════════════════════
+MNIST_ADAM_TRN = mnist-mlp-flt32-adam-trn.exe
+MNIST_ADAM_IFC = mnist-mlp-flt32-adam-ifc.exe
 
-MNIST_HEBB_TRN_XNOR = mnist-mlp-bin32-hebbian-trn-xnor.exe
-MNIST_HEBB_TRN_XOR  = mnist-mlp-bin32-hebbian-trn-xor.exe
-MNIST_HEBB_IFC_XNOR = mnist-mlp-bin32-hebbian-ifc-xnor.exe
-MNIST_HEBB_IFC_XOR  = mnist-mlp-bin32-hebbian-ifc-xor.exe
-MNIST_ADAM_TRN      = mnist-mlp-flt32-adam-trn.exe
-MNIST_ADAM_IFC      = mnist-mlp-flt32-adam-ifc.exe
+mnist: $(MNIST_ADAM_TRN) $(MNIST_ADAM_IFC)
 
-mnist: \
-  $(MNIST_HEBB_TRN_XNOR) $(MNIST_HEBB_TRN_XOR) \
-  $(MNIST_HEBB_IFC_XNOR) $(MNIST_HEBB_IFC_XOR) \
-  $(MNIST_ADAM_TRN) $(MNIST_ADAM_IFC)
-
-$(MNIST_HEBB_TRN_XNOR): mnist-mlp-bin32-hebbian-trn.c
-	$(CC) $(CFLAGS) -DPACKING=1 -o $@ $< $(LDLIBS)
-$(MNIST_HEBB_TRN_XOR): mnist-mlp-bin32-hebbian-trn.c
-	$(CC) $(CFLAGS) -DPACKING=1 -DH0_XOR -o $@ $< $(LDLIBS)
-$(MNIST_HEBB_IFC_XNOR): mnist-mlp-bin32-hebbian-ifc.c
-	$(CC) $(CFLAGS) -o $@ $< $(LDLIBS)
-$(MNIST_HEBB_IFC_XOR): mnist-mlp-bin32-hebbian-ifc.c
-	$(CC) $(CFLAGS) -DH0_XOR -o $@ $< $(LDLIBS)
 $(MNIST_ADAM_TRN): mnist-mlp-flt32-adam-trn.c
 	$(CC) $(CFLAGS) -o $@ $< $(LDLIBS)
 $(MNIST_ADAM_IFC): mnist-mlp-flt32-adam-ifc.c
 	$(CC) $(CFLAGS) -o $@ $< $(LDLIBS)
 
 # ═══════════════════════════════════════════════════════════════
-# CIFAR References
+# CIFAR Adam
 # ═══════════════════════════════════════════════════════════════
+CIFAR_ADAM_TRN = cifar-mlp-flt32-w1-adam-trn.exe
+CIFAR_ADAM_IFC = cifar-mlp-flt32-adam-ifc.exe
 
-CIFAR_HEBB_TRN_XNOR = cifar-mlp-bin32-w1-hebbian-trn-xnor.exe
-CIFAR_HEBB_TRN_XOR  = cifar-mlp-bin32-w1-hebbian-trn-xor.exe
-CIFAR_HEBB_IFC_XNOR = cifar-mlp-bin32-hebbian-ifc-xnor.exe
-CIFAR_HEBB_IFC_XOR  = cifar-mlp-bin32-hebbian-ifc-xor.exe
-CIFAR_ADAM_TRN      = cifar-mlp-flt32-w1-adam-trn.exe
-CIFAR_ADAM_IFC      = cifar-mlp-flt32-adam-ifc.exe
+cifar: $(CIFAR_ADAM_TRN) $(CIFAR_ADAM_IFC)
 
-cifar: \
-  $(CIFAR_HEBB_TRN_XNOR) $(CIFAR_HEBB_TRN_XOR) \
-  $(CIFAR_HEBB_IFC_XNOR) $(CIFAR_HEBB_IFC_XOR) \
-  $(CIFAR_ADAM_TRN) $(CIFAR_ADAM_IFC)
-
-$(CIFAR_HEBB_TRN_XNOR): cifar-mlp-bin32-w1-hebbian-trn.c
-	$(CC) $(CFLAGS_CIFAR) -DPACKING=1 -o $@ $< $(LDLIBS)
-$(CIFAR_HEBB_TRN_XOR): cifar-mlp-bin32-w1-hebbian-trn.c
-	$(CC) $(CFLAGS_CIFAR) -DPACKING=1 -DH0_XOR -o $@ $< $(LDLIBS)
-$(CIFAR_HEBB_IFC_XNOR): cifar-mlp-bin32-hebbian-ifc.c
-	$(CC) $(CFLAGS_CIFAR) -o $@ $< $(LDLIBS)
-$(CIFAR_HEBB_IFC_XOR): cifar-mlp-bin32-hebbian-ifc.c
-	$(CC) $(CFLAGS_CIFAR) -DH0_XOR -o $@ $< $(LDLIBS)
 $(CIFAR_ADAM_TRN): cifar-mlp-flt32-w1-adam-trn.c
 	$(CC) $(CFLAGS_CIFAR) -o $@ $< $(LDLIBS)
 $(CIFAR_ADAM_IFC): cifar-mlp-flt32-adam-ifc.c
 	$(CC) $(CFLAGS_CIFAR) -o $@ $< $(LDLIBS)
 
 # ═══════════════════════════════════════════════════════════════
-# Trained Models (cached: only rebuild when trainer binary changes)
+# Trained Models (cached)
 # ═══════════════════════════════════════════════════════════════
 MODEL_DIR = ../models
 
@@ -91,17 +55,9 @@ model-adam-mnist: $(MNIST_ADAM_TRN)
 	@mkdir -p $(MODEL_DIR)/mnist-adam-h512-e10
 	@echo -n "start..." && ./$(MNIST_ADAM_TRN) --hiddenN 512 --epochsN 10 --out $(MODEL_DIR)/mnist-adam-h512-e10 2>&1 | grep '^REPORT'
 
-model-hebb-mnist: $(MNIST_HEBB_TRN_XNOR) $(MNIST_HEBB_IFC_XNOR)
-	@mkdir -p $(MODEL_DIR)/mnist-hebbian-h512-e10
-	@echo -n "start..." && ./$(MNIST_HEBB_TRN_XNOR) --hiddenN 512 --epochsN 10 --out $(MODEL_DIR)/mnist-hebbian-h512-e10 2>&1 | grep '^REPORT'
-
 model-adam-cifar: $(CIFAR_ADAM_TRN)
-	@mkdir -p $(MODEL_DIR)/cifar-adam-h256-e10
-	@echo -n "start..." && ./$(CIFAR_ADAM_TRN) --hiddenN 256 --epochsN 10 --evalN 10000 --out $(MODEL_DIR)/cifar-adam-h256-e10 2>&1 | grep '^REPORT'
-
-model-hebb-cifar: $(CIFAR_HEBB_TRN_XNOR)
-	@mkdir -p $(MODEL_DIR)/cifar-hebbian-h256-e10
-	@echo -n "start..." && ./$(CIFAR_HEBB_TRN_XNOR) --hiddenN 256 --epochsN 10 --evalN 10000 --out $(MODEL_DIR)/cifar-hebbian-h256-e10 2>&1 | grep Exported
+	@mkdir -p $(MODEL_DIR)/cifar-adam-h256-e5
+	@echo -n "start..." && ./$(CIFAR_ADAM_TRN) --hiddenN 256 --epochsN 5 --evalN 10000 --out $(MODEL_DIR)/cifar-adam-h256-e5 2>&1 | grep '^REPORT'
 
 # ═══════════════════════════════════════════════════════════════
 # Clean

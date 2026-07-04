@@ -1,0 +1,1 @@
+../mnist/mlp-bin32-hebbian-trn.c

@@ -65,6 +65,7 @@
  */
 #define KI_NBLOCKS 8
 
+#ifndef KI_ENCODING_H
 static inline int ki_clamp_u8(int v) {
     if (v < 0) return 0;
     if (v > 255) return 255;
@@ -119,6 +120,7 @@ static inline void ki_blocks_from_rgb(int r, int g, int b, uint8_t blocks[COLOR_
     blocks[COLOR_CM] = (uint8_t)ki_clamp_u8(128 + (g - b));               /* CM */
     blocks[COLOR_CP] = (uint8_t)ki_clamp_u8(128 + (r - (g + b)/2));       /* CP */
 }
+#endif /* KI_ENCODING_H */
 
 /* ═══════════════════════════════════════════════════════════════════════
  * CIFAR-10 DATA STRUCT + LOADER

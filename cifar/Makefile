@@ -1,13 +1,16 @@
-# Makefile — Otto Score CIFAR-10 (Trainer + Inference)
-# ======================================================
+# Makefile — Otto Score + Hebbian CIFAR-10 (Trainer + Inference)
+# ==============================================================
 # Self-contained CIFAR-10 demo for the public distribution.
 #
 # Targets:
-#   make all        — trainer (XNOR + XOR)
-#   make model-otto — train CIFAR Otto Score model
-#   make clean      — remove executables
-#   make setup      — download CIFAR-10 dataset
-# ======================================================
+#   make all         — Otto + Hebbian trainer (XNOR + XOR)
+#   make otto        — Otto Score trainer only
+#   make hebbian     — Hebbian trainer only
+#   make model-otto  — train CIFAR Otto Score model
+#   make model-hebb  — train CIFAR Hebbian model
+#   make clean       — remove executables
+#   make setup       — download CIFAR-10 dataset
+# ==============================================================
 
 CC       = gcc
 CFLAGS   = -O3 -march=native -fopenmp -Wall -Wextra -Werror \
@@ -17,9 +20,9 @@ LDLIBS   = -lm -lz
 
 MODEL_DIR = ../models
 
-.PHONY: all trainer clean setup model-otto
+.PHONY: all otto hebbian clean setup model-otto model-hebb
 
-all: trainer
+all: otto hebbian
 
 # ── Dataset ────────────────────────────────────────────────
 setup:
@@ -27,28 +30,51 @@ setup:
 	@mkdir -p data
 	@bash ../fetch_cifar10.sh
 
-# ── Otto Score Trainer ─────────────────────────────────────
-TRN_SRC = mlp-bin32-otto-trn.c
+# ═══════════════════════════════════════════════════════════
+# Otto Score Trainer
+# ═══════════════════════════════════════════════════════════
+OTTO_SRC = mlp-bin32-otto-trn.c
 
-trainer: cifar-mlp-bin32-otto-trn-xnor.exe cifar-mlp-bin32-otto-trn-xor.exe
+otto: cifar-mlp-bin32-otto-trn-xnor.exe cifar-mlp-bin32-otto-trn-xor.exe
 
-cifar-mlp-bin32-otto-trn-xnor.exe: $(TRN_SRC) ki-common.h
+cifar-mlp-bin32-otto-trn-xnor.exe: $(OTTO_SRC) ki-common.h
 	$(CC) $(CFLAGS) \
 	  -Wno-sign-conversion -Wno-unused-parameter -Wno-unused-function -Wno-unused-variable \
 	  -o $@ $< $(LDLIBS)
 
-cifar-mlp-bin32-otto-trn-xor.exe: $(TRN_SRC) ki-common.h
+cifar-mlp-bin32-otto-trn-xor.exe: $(OTTO_SRC) ki-common.h
 	$(CC) $(CFLAGS) \
 	  -Wno-sign-conversion -Wno-unused-parameter -Wno-unused-function -Wno-unused-variable \
 	  -DH0_XOR -o $@ $< $(LDLIBS)
 
-# ── Trained Model (cached) ─────────────────────────────────
 model-otto: cifar-mlp-bin32-otto-trn-xnor.exe
-	@mkdir -p $(MODEL_DIR)/cifar-otto-h256-e10
-	@echo -n "start..." && ./cifar-mlp-bin32-otto-trn-xnor.exe --hiddenN 256 --epochsN 10 \
-	  --encoding latest --out $(MODEL_DIR)/cifar-otto-h256-e10 2>&1 | grep '^REPORT'
+	@mkdir -p $(MODEL_DIR)/cifar-otto-h256-e5
+	@./cifar-mlp-bin32-otto-trn-xnor.exe --hiddenN 256 --epochsN 5 \
+	  --encoding latest --out $(MODEL_DIR)/cifar-otto-h256-e5 2>&1 | tail -1
+
+# ═══════════════════════════════════════════════════════════
+# Hebbian Trainer (unified: via symlink to mnist)
+# ═══════════════════════════════════════════════════════════
+HEBB_SRC = mlp-bin32-hebbian-trn.c
+
+hebbian: cifar-mlp-bin32-hebbian-trn-xnor.exe cifar-mlp-bin32-hebbian-trn-xor.exe
+
+cifar-mlp-bin32-hebbian-trn-xnor.exe: $(HEBB_SRC) ki-common.h
+	$(CC) $(CFLAGS) \
+	  -Wno-sign-conversion -Wno-unused-parameter -Wno-unused-function -Wno-unused-variable \
+	  -o $@ $< $(LDLIBS)
+
+cifar-mlp-bin32-hebbian-trn-xor.exe: $(HEBB_SRC) ki-common.h
+	$(CC) $(CFLAGS) \
+	  -Wno-sign-conversion -Wno-unused-parameter -Wno-unused-function -Wno-unused-variable \
+	  -DH0_XOR -o $@ $< $(LDLIBS)
+
+model-hebb: cifar-mlp-bin32-hebbian-trn-xnor.exe
+	@mkdir -p $(MODEL_DIR)/cifar-hebbian-h256-e5
+	@./cifar-mlp-bin32-hebbian-trn-xnor.exe --hiddenN 256 --epochsN 5 \
+	  --encoding latest --out $(MODEL_DIR)/cifar-hebbian-h256-e5 2>&1 | tail -1
 
 # ── Clean ──────────────────────────────────────────────────
 clean:
 	rm -f *.exe
-	rm -rf $(MODEL_DIR)/cifar-otto-h256-e10
+	rm -rf $(MODEL_DIR)/cifar-otto-h256-e5 $(MODEL_DIR)/cifar-hebbian-h256-e5

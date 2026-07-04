@@ -19,7 +19,7 @@
  * Usage:
  *   ./mlp-flt32-adam-ifc-xnor.exe --model DIR   [--evalN N]  [--image FILE]
  */
-#include "ki-common.h"
+#include "mnist-ki-common.h"
 #include <inttypes.h>
 
 #define N_CLASSES KI_NCLASSES

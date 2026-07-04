@@ -17,7 +17,7 @@
 #define KI_COMMON_LOAD_INPUT   /* override load_input: color-split for CIFAR */
 #include "ki-common.h"
 #include "maj3.h"
-#include "../lib/enc-lut.h"
+#include "../lib/ki-encoding.h"
 #include <inttypes.h>
 
 /* ── Forward declaration für ki_Member (Struct-Definition folgt
@@ -937,7 +937,13 @@ static int ifc_load_model(const char *path,
 int main(int argc, char *argv[]) {
     aa.lr_step = (int)round(aa.lr * (1<<OT_PRECISION));
     ki_parse_args(argc, argv);
-    enc_lut_init_all();  /* Precompute encoding tables */
+    /* Precompute encoding LUTs for each active (enc, width) pair */
+    for (int _ei = 0; _ei < aa.enc_count; _ei++)
+        enc_lut_init_enc((int)aa.enc_array[_ei].type, (int)aa.enc_array[_ei].width);
+    if (aa.enc_count == 0) {
+        int def_enc = aa.debug_binarize ? KI_ENC_LIN7 : KI_ENC_RAW;
+        enc_lut_init_enc(def_enc, KI_ENC_WIDTH_DEFAULT);
+    }
     if (KI_COLORS <= 1)
         aa.channel = KI_DEFAULT_COLOR;  /* MNIST: ignore --channels */
     /* 1:1 Mapping: Bit b = COLOR_BIT direkt (COLOR_MNIST=0, R=1, G=2, …, GB=10)

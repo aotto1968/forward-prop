@@ -14,7 +14,7 @@
  * See: ki-w1/mlp-flt32-w1-adam-trn.c (original)
  *      plans/plan-2026-06-04-flt32-w1-only.md (Resolved)
  */
-#include "ki-common.h"
+#include "mnist-ki-common.h"
 
 #define N_CLASSES KI_NCLASSES
 #define ADAM_BETA1 0.9f

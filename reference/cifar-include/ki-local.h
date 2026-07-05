@@ -1,1 +1,0 @@
-../../cifar/ki-local.h

@@ -235,7 +235,7 @@ typedef struct {
     int    dry_run;         /* --dry-run: print arch and exit */
     int    debug;           /* --debug: verbose output */
     unsigned int seed;      /* Random seed (--seed, default: 42) */
-    char   out[256];        /* --out DIR: export directory */
+    char   out[256];        /* --export DIR: export directory */
     char   predictions[256]; /* --predictions FILE: export per-sample predictions (for vis-errors) */
     float  lr;              /* Step size (--lr, default: 0.05) */
     float  lr_min;          /* Min LR fraction (--lr-min, default: 0.1) */
@@ -266,10 +266,11 @@ typedef struct {
     int         enc_count;             /* Anzahl Einträge in enc_array */
     int    opt_target_norm;    /* --optional target-norm: vote normalisierung aktivieren */
     char   seed_file[256]; /* --seed-file PATH: true random source */
-    char   model[512];    /* --model PATH: load .otto model (inference-only) */
+    char   model[512];    /* --import DIR: load model for inference */
     int    seed_splitmix;  /* --seed-splitmix: ignore seed_file, use splitmix64 PRNG */
     int    multi_correct;  /* --multi-correct: alle über true_k bestrafen (default: 1) */
     int    ensemble_seed;    /* ENS_SEED_ONCE|CONST|INCR (default: ONCE) */
+    int    debug_class_voting; /* --debug-class-voting: per-member per-class accuracy table */
 } ki_Args;
 
 /* ── Global args (defined in each main .c file) ────────────── */
@@ -360,8 +361,8 @@ static inline void ki_parse_args(int argc, char *argv[]) {
             printf("                    exp    exponential,\n");
             printf("                    sig    sigmoid.\n");
             printf("                    raw    no encoding (raw 8-bit bytes).\n");
-            printf("  --out DIR         Export directory                                              (default: none)\n");
-            printf("  --model PATH      Load .otto model for inference                                (default: none)\n");
+            printf("  --export DIR      Export directory                                              (default: none)\n");
+            printf("  --import DIR      Load model for inference                                      (default: none)\n");
             printf("  --optional target-norm  Vote normalisierung (equal voting power)                (default: off)\n");
             printf("  --?no-?multi-correct  Only punish argmax, not all over true_k                   (default: multi-correct)\n");
             printf("  ---------------------------------------------------------------------------------------------\n");
@@ -370,10 +371,12 @@ static inline void ki_parse_args(int argc, char *argv[]) {
             printf("  --qq              5000 train / 2000 eval / 3 epochs\n");
             printf("  --debug           Verbose output                                                (default: off)\n");
             printf("  --debug-h0        Per-neuron debug                                              (default: off)\n");
+            printf("  --debug-class-voting  Member × Class accuracy table (trainN only)               (default: off)\n");
             printf("  --shuffle         Shuffle data before train/eval split                          (default: off)\n");
             exit(0);
         } else if (strcmp(argv[i], "--dry-run") == 0) {
             aa.dry_run = 1;
+            aa.epochs  = 0;
         } else if (strcmp(argv[i], "--debug") == 0) {
             aa.debug = 1;
         } else if (strcmp(argv[i], "--quick") == 0) {
@@ -384,6 +387,7 @@ static inline void ki_parse_args(int argc, char *argv[]) {
             aa.hidden = atoi(argv[++i]);
         } else if (strcmp(argv[i], "--epochsN") == 0 && i + 1 < argc) {
             aa.epochs = atoi(argv[++i]);
+            if (aa.epochs == 0) aa.dry_run = 1;
         } else if (strcmp(argv[i], "--batchN") == 0 && i + 1 < argc) {
             aa.batchN = atoi(argv[++i]);
             if (aa.batchN < 1) aa.batchN = 1;
@@ -439,17 +443,21 @@ static inline void ki_parse_args(int argc, char *argv[]) {
             aa.lr_min = (float)atof(argv[++i]);
         } else if (strcmp(argv[i], "--seed") == 0 && i + 1 < argc) {
             aa.seed = (unsigned int)atoi(argv[++i]);
-        } else if (strcmp(argv[i], "--out") == 0 && i + 1 < argc) {
+        } else if (strcmp(argv[i], "--export") == 0 || strcmp(argv[i], "--out") == 0) {
+            if (i + 1 >= argc) { fprintf(stderr, "[ERROR] --export DIR\n"); exit(1); }
             strncpy(aa.out, argv[++i], sizeof(aa.out) - 1);
             aa.out[sizeof(aa.out) - 1] = '\0';
         } else if (strcmp(argv[i], "--predictions") == 0 && i + 1 < argc) {
             strncpy(aa.predictions, argv[++i], sizeof(aa.predictions) - 1);
             aa.predictions[sizeof(aa.predictions) - 1] = '\0';
-        } else if (strcmp(argv[i], "--model") == 0 && i + 1 < argc) {
+        } else if (strcmp(argv[i], "--import") == 0 || strcmp(argv[i], "--model") == 0) {
+            if (i + 1 >= argc) { fprintf(stderr, "[ERROR] --import DIR\n"); exit(1); }
             strncpy(aa.model, argv[++i], sizeof(aa.model) - 1);
             aa.model[sizeof(aa.model) - 1] = '\0';
         } else if (strcmp(argv[i], "--debug-h0") == 0) {
             aa.debug_h0 = 1;
+        } else if (strcmp(argv[i], "--debug-class-voting") == 0) {
+            aa.debug_class_voting = 1;
         } else if (strcmp(argv[i], "--shuffle") == 0) {
             aa.shuffle = 1;
         } else if (strcmp(argv[i], "--ensembleN") == 0 && i + 1 < argc) {
@@ -750,6 +758,8 @@ static inline void ki_parse_args(int argc, char *argv[]) {
             if (enc_mask) aa.channel = enc_mask;
         }
     }
+    /* ── dry_run override: --dry-run = epochs=0 regardless of --epochsN ── */
+    if (aa.dry_run) aa.epochs = 0;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
@@ -1261,8 +1271,8 @@ static inline int ki_batch_correct(int32_t *target, int H,
                                             case 8:  VN_CORRECT_8(h0, h, H, dc[tid], true_k, k, (int)step_k); break;
                                             case 16: VN_CORRECT_16(h0, h, H, dc[tid], true_k, k, (int)step_k); break;
                                             case 32: VN_CORRECT_32(h0, h, H, dc[tid], true_k, k, (int)step_k); break;
-                                        }
-                                    }
+    }
+}
                                 }
                             }
                         }

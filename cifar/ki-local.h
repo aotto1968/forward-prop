@@ -135,6 +135,7 @@ typedef struct {
     float *X;          /* [num_images * pixels] normalized to [-1, +1] */
     uint8_t *X_raw;    /* [num_images * pixels] raw uint8 [0,255] */
     uint8_t *y;        /* [num_images] labels */
+    int dry_run;       /* skip pixel data (fast metadata only) */
 } ki_ImageData;
 
 /* Generic dataset aliases (used by ki-common.h) */
@@ -183,11 +184,19 @@ static int ki_cifar_read(ki_ImageData *out) {
         return -1;
     }
 
+    int dry_run = out->dry_run;
     memset(out, 0, sizeof(*out));
+    out->dry_run = dry_run;
     out->rows     = 32;
     out->cols     = 32;
     out->channels = 3;
     out->pixels   = KI_PX;
+    out->num_images = 60000;
+
+    if (dry_run) {
+        printf("  [CIFAR-10] dry-run: 60000 samples (%d px, 3 channels) — 5 train + 1 test batch\n", KI_PX);
+        return 0;
+    }
 
     const char *train_files[] = {
         "data_batch_1.bin", "data_batch_2.bin", "data_batch_3.bin",

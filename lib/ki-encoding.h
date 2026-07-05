@@ -361,6 +361,38 @@ static inline void ki_blocks_from_rgb(int r, int g, int b, uint8_t blocks[COLOR_
     blocks[COLOR_CP] = (uint8_t)ki_clamp_u8(128 + (r - (g + b)/2));
 }
 
+/* ═══════════════════════════════════════════════════════════════════════
+ * PRINT MEMBER STRUCTURE — unified format für Otto/Hebbian/Adam
+ * ═══════════════════════════════════════════════════════════════════════
+ * Gibt eine konsistente Member-Liste aus:
+ *   Structure: M0(COL=ENC_WIDTH), M1(COL=ENC_WIDTH), ...
+ *
+ * Parameter:
+ *   colors[]  — ki_color_bit für jeden Member (-1 = unbekannt)
+ *   types[]   - Encoding-Typ (-1 = kein Encoding)
+ *   widths[]  - Encoding-Breite (-1 = unbekannt)
+ *   n         - Anzahl Members
+ *   ens       - Ensemble-Zahl (für Display: × EN=ens)
+ */
+static inline void ki_print_member_structure(const int *colors,
+                                               const int *types,
+                                               const int *widths,
+                                               int n, int ens) {
+    printf("  Structure: ");
+    for (int i = 0; i < n; i++) {
+        if (i > 0) printf(", ");
+        printf("M%d(", i);
+        if (colors && colors[i] >= 0)
+            printf("%s", ki_color_name(colors[i]));
+        if (types && types[i] >= 0)
+            printf("=%s%d", ki_enc_name_short((int8_t)types[i]),
+                   widths && widths[i] >= 0 ? widths[i] : 8);
+        printf(")");
+    }
+    if (ens > 1) printf("  × EN=%d", ens);
+    printf("\n");
+}
+
 #ifdef __cplusplus
 }
 #endif

@@ -14,7 +14,7 @@
  *
  * Usage:
  *   ./mlp-bin32-hebbian-trn-xnor.exe --hiddenN 256 --epochsN 3 --encoding exp
- *   ./mlp-bin32-hebbian-trn-xnor.exe --model models/hebbian --evalN 10000
+ *   ./mlp-bin32-hebbian-trn-xnor.exe --import models/hebbian --evalN 10000
  */
 #define _POSIX_C_SOURCE 200809L
 #define KI_COMMON_LOAD_INPUT
@@ -256,6 +256,7 @@ static void hebbian_update(uint32_t *W1, const uint32_t *X, const uint8_t *Y,
 /* ═══════════════════════════════════════════════════════════════════════
  * EXPORT / IMPORT helpers
  * ═══════════════════════════════════════════════════════════════════════ */
+#define HEB_MAX_MEM 256
 typedef struct {
     int       H;
     int       nc;
@@ -327,6 +328,7 @@ ki_Args aa = {
     .threadN  = 8,
     .seed     = 42,
     .hebbian_pct = 50,
+    .ensembleN   = 1,
 };
 
 int main(int argc, char *argv[]) {
@@ -359,7 +361,8 @@ int main(int argc, char *argv[]) {
     }
     (void)mem_off; /* used via offs[] in training section */
 
-    /* ── IFC: --model ──────────────────────────────────────────── */
+    /* ── Dry run (before data loading) ────────────────────────── */
+    /* ── IFC: --import ──────────────────────────────────────────── */
     if (aa.model[0]) {
         /* Count members from directory */
         Bin32Model *models[KI_ENC_MAX];
@@ -370,7 +373,7 @@ int main(int argc, char *argv[]) {
         }
         if (n_loaded == 0) { fprintf(stderr, "[FATAL] No members in %s\n", aa.model); return 1; }
 
-        ki_Dataset data;
+        ki_Dataset data = { .dry_run = aa.dry_run };
         if (ki_dataset_read(&data) != 0 || data.pixels != KI_PX) return 1;
         uint32_t *X_all = load_input(data.X_raw, data.num_images);
         int te = aa.evalN > data.num_images ? data.num_images : aa.evalN;
@@ -407,85 +410,163 @@ int main(int argc, char *argv[]) {
      * TRAINING MODE
      * ═══════════════════════════════════════════════════════════════ */
     int total_all = aa.trainN + aa.evalN;
-    ki_Dataset data;
+    ki_Dataset data = { .dry_run = aa.dry_run };
     if (ki_dataset_read(&data) != 0 || data.pixels != KI_PX) return 1;
     if (total_all > data.num_images) total_all = data.num_images;
 
-    uint32_t *X_all = load_input(data.X_raw, total_all);
-    int te = aa.evalN > total_all ? total_all : aa.evalN;
-    int off = total_all - te;
-    uint8_t *y_te = data.y + off;
+    uint32_t *X_all = NULL;
+    int te = 0, off = 0;
+    uint8_t *y_te = NULL;
+    if (!aa.dry_run) {
+        X_all = load_input(data.X_raw, total_all);
+        te = aa.evalN > total_all ? total_all : aa.evalN;
+        off = total_all - te;
+        y_te = data.y + off;
+    }
 
     /* ── Allocate per-member W0 + W1 ────────────────────────────── */
-    uint32_t *W0s[KI_ENC_MAX], *W1s[KI_ENC_MAX];
-    int ncs[KI_ENC_MAX], offs[KI_ENC_MAX];
+    uint32_t *W0s[HEB_MAX_MEM], *W1s[HEB_MAX_MEM];
+    int ncs[HEB_MAX_MEM], offs[HEB_MAX_MEM];
+    int total_members = aa.ensembleN * n_enc;
+    if (total_members > HEB_MAX_MEM) total_members = HEB_MAX_MEM;
+
+    /* Seed-File setzen (wie Otto) */
+    if (aa.seed_file[0])
+        w0_rand_set_file(aa.seed_file);
+
     int cum_off = 0;
-    for (int i = 0; i < n_enc && i < KI_ENC_MAX; i++) {
-        ncs[i] = mem_nc[i];
-        offs[i] = cum_off;
-        cum_off += ncs[i];
-        W0s[i] = (uint32_t *)malloc((size_t)H * (size_t)ncs[i] * sizeof(uint32_t));
-        W1s[i] = (uint32_t *)calloc((size_t)N_CLASSES * (size_t)H, sizeof(uint32_t));
-        /* W0 init */
-        w0_srandom((unsigned int)(aa.seed + (unsigned)i));
-        for (size_t j = 0; j < (size_t)H * (size_t)ncs[i]; j++)
-            W0s[i][j] = w0_random();
+    int mi = 0;
+    for (int e = 0; e < aa.ensembleN && mi < HEB_MAX_MEM; e++) {
+        for (int i = 0; i < n_enc && mi < HEB_MAX_MEM; i++, mi++) {
+            ncs[mi] = mem_nc[i];
+            offs[mi] = cum_off;
+            if (e == 0) cum_off += ncs[mi];  /* stride only from first ensemble copy */
+            W0s[mi] = (uint32_t *)malloc((size_t)H * (size_t)ncs[mi] * sizeof(uint32_t));
+            W1s[mi] = (uint32_t *)malloc((size_t)N_CLASSES * (size_t)H * sizeof(uint32_t));
+            /* W0 + W1 via w0_random() — per-ensemble+encoding seed */
+            uint64_t w_seed = (uint64_t)aa.seed;
+            if (aa.ensemble_seed == ENS_SEED_INCR) {
+                w_seed += (uint64_t)(e * n_enc + i);
+            } else if (aa.ensemble_seed == ENS_SEED_CONST) {
+                w_seed += (uint64_t)(e);  /* same W0 per encoding across ensembles */
+            }
+            /* else ENS_SEED_ONCE: all sequential from same stream */
+            w0_srandom(w_seed);
+            for (size_t j = 0; j < (size_t)H * (size_t)ncs[mi]; j++)
+                W0s[mi][j] = w0_random();
+            for (size_t j = 0; j < (size_t)N_CLASSES * (size_t)H; j++)
+                W1s[mi][j] = w0_random();
+        }
     }
 
-    if (aa.dry_run) {
-        printf("══╡ Hebbian %s ╞══  H=%d  Ep=%d  members=%d  stride=%d  %s\n",
-               H0_STR, H, epochs, n_enc, cum_off, KI_COLORS > 1 ? "CIFAR" : "MNIST");
-        for (int i = 0; i < n_enc && i < KI_ENC_MAX; i++)
-            printf("  member[%d]: nc=%d off=%d  enc=%s w=%d col=%d\n", i,
-                   ncs[i], offs[i],
-                   aa.enc_count > 0 ? ki_enc_name_short((int)aa.enc_array[i].type) : "exp",
-                   aa.enc_count > 0 ? (int)aa.enc_array[i].width : 8,
-                   aa.enc_count > 0 ? (int)aa.enc_array[i].color : -1);
-        return 0;
-    }
-
-    printf("══╡ Hebbian %s ╞══  H=%-4d  Ep=%-2d  members=%-2d  stride=%-4d  %s%s\n",
-           H0_STR, H, epochs, n_enc, cum_off, KI_COLORS > 1 ? "CIFAR" : "MNIST",
-           aa.out[0] ? "  export" : "");
+    printf("══════════════════════════════════════════════════════════════════════\n");
+    printf("══╡ HEBBIAN ╞══  %s  H=%-4d  Ep=%-2d   EN=%-2d  enc=%-2d  members=%-2d  %s\n",
+           H0_STR, H, epochs, aa.ensembleN, n_enc, total_members, KI_COLORS > 1 ? "CIFAR" : "MNIST");
+    printf("══╡ SETUP ╞══════════════════════════════════════════════════════════\n");
+    printf("  Input:       %d px → %d blocks × %d = %d total  (%s)\n",
+           KI_PX, n_enc, ncs[0], cum_off,
+           KI_COLORS > 1 ? "color blocks" : "grayscale");
+    printf("  ───────────────────────────────────────────────────────────\n");
+    printf("  HIDDEN       %-4d nrn x %2d bit  = %7zu bit  (%5.1f KB)  per member\n",
+           H, 32, (size_t)H * 32, (double)((size_t)H * 32) / 8 / 1024);
+    printf("  OUTPUT       %-4d nrn x %2d bit  = %7zu bit  (%5.1f KB)\n",
+           N_CLASSES, 32, (size_t)N_CLASSES * 32, (double)((size_t)N_CLASSES * 32) / 8 / 1024);
+    printf("  W0:          H0[%3d] x I0[%3d] x bin32  = %9zu bit  (%5.1f KB)  per member, frozen\n",
+           H, ncs[0], (size_t)H * (size_t)ncs[0] * 32,
+           (double)((size_t)H * (size_t)ncs[0] * 32) / 8 / 1024);
+    printf("  W1:          C1[%3d] × H0[%3d] x bin32 = %9zu bit  (%5.1f KB)  per member, hebbian\n",
+           N_CLASSES, H, (size_t)N_CLASSES * (size_t)H * 32,
+           (double)((size_t)N_CLASSES * (size_t)H * 32) / 8 / 1024);
+    printf("  ───────────────────────────────────────────────────────────\n");
+    size_t total_bit = ((size_t)H * (size_t)ncs[0] + (size_t)N_CLASSES * (size_t)H) * 32;
+    printf("  TOTAL                     %9zu bit  (%5.1f KB)  × %d members = %zu KB\n",
+           total_bit, (double)total_bit / 8 / 1024, total_members,
+           (size_t)total_members * total_bit / 8 / 1024);
+    printf("  OMP:         %d threads\n", aa.threadN);
+    printf("  Train/Eval:  %d / %d samples\n", aa.trainN, aa.evalN);
+    printf("  Score:       XNOR + popcount (per-member, summed)\n");
+    const char *rng = aa.seed_splitmix ? "splitmix64" :
+                      (aa.seed_file[0] ? "true random file" : "PRNG");
+    printf("  Seed:        %u  %s  seed-member: %s",
+           aa.seed, rng, ensemble_seed_str());
+    if (aa.seed_file[0] && !aa.seed_splitmix)
+        printf("  from %s", aa.seed_file);
+    printf("\n");
     fflush(stdout);
+    printf("\n══╡ MEMBER ╞══════════════════════════════════════════════════\n");
+    printf("  Grid: EN[%d] × base[%d] = %d members\n",
+           aa.ensembleN, n_enc, total_members);
+    /* Build arrays for ki_print_member_structure */
+    int _c[KI_ENC_MAX], _t[KI_ENC_MAX], _w[KI_ENC_MAX];
+    for (int i = 0; i < n_enc && i < KI_ENC_MAX; i++) {
+        _c[i] = (int)aa.enc_array[i].color;
+        _t[i] = (int)aa.enc_array[i].type;
+        _w[i] = (int)aa.enc_array[i].width > 0 ? (int)aa.enc_array[i].width : KI_ENC_WIDTH_DEFAULT;
+    }
+    ki_print_member_structure(_c, _t, _w, n_enc, aa.ensembleN);
+    (void)mi;
 
     /* ── Train ─────────────────────────────────────────────────── */
     float best_acc = 0.0f;
     /* Extract per-member data for training */
-    uint32_t **X_mems = (uint32_t **)malloc((size_t)n_enc * sizeof(uint32_t *));
-    for (int m = 0; m < n_enc && m < KI_ENC_MAX; m++) {
-        X_mems[m] = (uint32_t *)malloc((size_t)aa.trainN * (size_t)ncs[m] * sizeof(uint32_t));
-        for (int s = 0; s < aa.trainN; s++)
-            memcpy(X_mems[m] + (size_t)s * (size_t)ncs[m],
-                   X_all + (size_t)s * (size_t)cum_off + offs[m],
-                   (size_t)ncs[m] * sizeof(uint32_t));
+    uint32_t **X_mems = NULL;
+    if (!aa.dry_run) {
+        X_mems = (uint32_t **)malloc((size_t)n_enc * sizeof(uint32_t *));
+        for (int m = 0; m < n_enc && m < KI_ENC_MAX; m++) {
+            X_mems[m] = (uint32_t *)malloc((size_t)aa.trainN * (size_t)ncs[m] * sizeof(uint32_t));
+            for (int s = 0; s < aa.trainN; s++)
+                memcpy(X_mems[m] + (size_t)s * (size_t)ncs[m],
+                       X_all + (size_t)s * (size_t)cum_off + offs[m],
+                       (size_t)ncs[m] * sizeof(uint32_t));
+        }
     }
+    printf("\n══╡ TRAINING ╞══  pct=50→30  members=%d  EN=%d  step=cos-time\n",
+           total_members, aa.ensembleN);
     struct timeval tv0; gettimeofday(&tv0, NULL);
+    int ms = 0;
+    float acc = 0.0f;
     for (int ep = 0; ep < epochs; ep++) {
         int total_flips = 0;
-        for (int m = 0; m < n_enc && m < KI_ENC_MAX; m++) {
+        /* Dynamischer Threshold: 50→30 über Epochen */
+        int pct = 50 - ep * 20 / (epochs > 1 ? epochs - 1 : 1);
+        if (pct < 30) pct = 30;
+        for (int m = 0; m < total_members && m < HEB_MAX_MEM; m++) {
+            int ei = m % n_enc;
             int flips = 0;
-            hebbian_update(W1s[m], X_mems[m], data.y, aa.trainN, W0s[m], H, ncs[m],
+            hebbian_update(W1s[m], X_mems[ei], data.y, aa.trainN, W0s[m], H, ncs[ei],
                            (unsigned int)(aa.seed + (unsigned)m + (unsigned)ep),
-                           &flips, 50);
+                           &flips, pct);
             total_flips += flips;
         }
-        float acc = accuracy_multi(X_all + (size_t)off * (size_t)cum_off, y_te, te,
-                                   (const uint32_t *const *)W0s, (const uint32_t *const *)W1s,
-                                   ncs, offs, H, n_enc);
+        acc = accuracy_multi(X_all + (size_t)off * (size_t)cum_off, y_te, te,
+                             (const uint32_t *const *)W0s, (const uint32_t *const *)W1s,
+                             ncs, offs, H, total_members);
         if (acc > best_acc) best_acc = acc;
         struct timeval tv1; gettimeofday(&tv1, NULL);
-        int ms = (int)((tv1.tv_sec-tv0.tv_sec)*1000 + (tv1.tv_usec-tv0.tv_usec)/1000);
+        ms = (int)((tv1.tv_sec - tv0.tv_sec) * 1000 + (tv1.tv_usec - tv0.tv_usec) / 1000);
         printf("  Ep %2d/%d  evl=%.1f%%  best=%.1f%%  flips=%d  time=%dms\n",
                ep + 1, epochs, acc, best_acc, total_flips, ms);
     }
-    printf("\n  Best eval: %.1f%%\n", best_acc);
+    /* ── RESULT ──────────────────────────────────────────────── */
+    printf("\n══╡ RESULT ╞══════════════════════════════════════════════════════\n");
+    printf("  H=%d  EN=%d  mem=%d  ep=%d  trn=%.1f%%  evl=%.1f%%  best=%.1f%%  time=%dms\n",
+           H, aa.ensembleN, total_members, epochs, 0.0, (double)acc, (double)best_acc, ms);
+    int eval_ok = (int)(best_acc * (float)te / 100.0f + 0.5f);
+    int train_ok = (int)(best_acc * (float)aa.trainN / 100.0f + 0.5f);
+    ki_report_show(train_ok, aa.trainN, eval_ok, te, ms, aa.threadN, 0, 0.0f);
 
-    if (aa.out[0])
-        for (int m = 0; m < n_enc && m < KI_ENC_MAX; m++)
+    if (aa.out[0]) {
+        printf("\n══╡ EXPORT ╞════════════════════════════════════════════════\n");
+        for (int m = 0; m < total_members && m < HEB_MAX_MEM; m++)
             member_export(W0s[m], W1s[m], H, ncs[m], aa.out, m);
+        printf("  Model:  %s  (%d members, H=%d)\n", aa.out, total_members, H);
+    }
 
-    for (int i = 0; i < n_enc && i < KI_ENC_MAX; i++) { free(W0s[i]); free(W1s[i]); free(X_mems[i]); }
+    for (int m = 0; m < total_members && m < HEB_MAX_MEM; m++) {
+        free(W0s[m]); free(W1s[m]);
+    }
+    for (int i = 0; i < n_enc && i < KI_ENC_MAX; i++)
+        free(X_mems ? X_mems[i] : NULL);
     free(X_mems); free(X_all); ki_dataset_free(&data);
     return 0;
 }

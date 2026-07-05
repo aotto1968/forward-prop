@@ -589,17 +589,27 @@ static void print_member_structure(int ensembleN, int splitVN, int splitHN,
     printf("  Per member: W0[%d × %d], Target[%d × %d × V=%d]\n",
            KI_NCLASSES, H_local, NC_slice, H_local, 32 / splitVN);
     int max_col = eff_colors;
-    printf("  Structure: H[0..%d] × C[", H_local - 1);
-    for (int ci = 0; ci < max_col; ci++) {
+    /* Build arrays for ki_print_member_structure, lookup encoding */
+    int _c[64], _t[64], _w[64];
+    int _n = 0;
+    for (int ci = 0; ci < max_col && _n < 64; ci++) {
         int col = active_chans[ci];
-        if (ci > 0) printf(", ");
-        printf("%s:", opp_name(col));
-        for (int hi = 0; hi < splitHN; hi++) {
-            int start = hi * NC_slice;
-            printf("%s%d..%d", hi > 0 ? "|" : "", start, start + NC_slice - 1);
+        for (int hi = 0; hi < splitHN && _n < 64; hi++) {
+            _c[_n] = col;
+            _t[_n] = -1; _w[_n] = -1;
+            /* Nachschlagen: enc_array für diese Farbe (oder default -1) */
+            for (int ei = 0; ei < aa.enc_count && ei < KI_ENC_MAX; ei++) {
+                int ec = (int)aa.enc_array[ei].color;
+                if (ec == col || ec < 0) {  /* explizite Farbe oder default */
+                    _t[_n] = (int)aa.enc_array[ei].type;
+                    _w[_n] = (int)aa.enc_array[ei].width;
+                    break;
+                }
+            }
+            _n++;
         }
     }
-    printf("]\n");
+    ki_print_member_structure(_c, _t, _w, _n, ensembleN);
     if (ensembleN > 1) {
         if (aa.ensemble_seed == ENS_SEED_CONST) {
             printf("  → ENSEMBLE x%d: alle Channel-Member teilen W0 (const)\n",
@@ -885,6 +895,110 @@ static void print_member_debug(ki_Member **members, int active_members,
 }
 
 /* ═══════════════════════════════════════════════════════════════════
+ * CLASS-VOTING DEBUG — Member × Klasse Trefferquote auf trainN
+ * ═══════════════════════════════════════════════════════════════════
+ * Nur bei --debug-class-voting aktiv.  Zeigt pro Member und Klasse
+ * wie oft der Member korrekt lag (pred == y[s]) geteilt durch
+ * Anzahl Samples dieser Klasse.
+ *
+ * Zeilen = Member (mit Channel=Encoding-Name)
+ * Spalten = Klassen 0..K-1  + avg
+ */
+static void print_class_voting_debug(ki_Member **members, int active_members,
+                                      const uint32_t *X, const uint8_t *y,
+                                      int N, int n_cont, int ep) {
+    if (N <= 0 || active_members <= 0) return;
+
+    /* ── Accumulatoren ─────────────────────────────────────────── */
+    int *total = (int *)calloc((size_t)KI_NCLASSES, sizeof(int));
+    int (*correct)[KI_NCLASSES] = (int (*)[KI_NCLASSES])
+        calloc((size_t)active_members, sizeof(int[KI_NCLASSES]));
+    if (!total || !correct) {
+        fprintf(stderr, "[FATAL] print_class_voting_debug OOM\n");
+        free(total); free(correct); exit(1);
+    }
+
+    /* ── Erster Pass: Samples pro Klasse zählen ────────────────── */
+    for (int s = 0; s < N; s++) {
+        int k = (int)y[s];
+        if (k >= 0 && k < KI_NCLASSES) total[k]++;
+    }
+
+    /* ── Zweiter Pass: pro Member Scores berechnen, argmax, vergleich ── */
+    for (int m = 0; m < active_members; m++) {
+        ki_Member *mem = members[m];
+        for (int s = 0; s < N; s++) {
+            int64_t sc[KI_NCLASSES];
+            scores_otto(X + (size_t)s * (size_t)n_cont + mem->slc_off,
+                        mem->W0, mem->H_local, mem->NC_slice,
+                        mem->target, mem->offset, sc);
+            int pred = 0;
+            for (int k = 1; k < KI_NCLASSES; k++)
+                if (sc[k] > sc[pred]) pred = k;
+            if (pred == (int)y[s]) {
+                int true_k = (int)y[s];
+                if (true_k >= 0 && true_k < KI_NCLASSES)
+                    correct[m][true_k]++;
+            }
+        }
+    }
+
+    /* ── Tabelle ausgeben ──────────────────────────────────────── */
+    #define FORMAT_TEXT           "  %-14s"
+    #define FORMAT_FLT            "  %6.1f%%"
+    printf("\n  ── Class-voting stats (Ep %d) ──────────────────────────────\n", ep + 1);
+    printf(FORMAT_TEXT, "member");
+    for (int k = 0; k < KI_NCLASSES; k++)
+        printf("  class%-2d", k);
+    printf("  avg    \n");
+
+    /* Trennlinie */
+    printf(FORMAT_TEXT,"──────────────");
+    for (int k = 0; k < KI_NCLASSES; k++)
+        printf("  ───────");
+    printf("  ───────\n");
+
+    int *ok_member = (int *)calloc((size_t)active_members, sizeof(int));
+    for (int m = 0; m < active_members; m++) {
+        /* ── Member-Label ─────────────────────────────────────── */
+        char label[24];
+        ki_Member *mem = members[m];
+        if (aa.enc_count > 0 && mem->vi < aa.enc_count) {
+            int col = (int)aa.enc_array[mem->vi].color;
+            int typ = (int)aa.enc_array[mem->vi].type;
+            int w   = (int)aa.enc_array[mem->vi].width;
+            const char *cn = (col >= 0) ? ki_color_name(col) : "?";
+            const char *en = ki_enc_name_short((int8_t)typ);
+            snprintf(label, sizeof(label), "#%d %s=%s%d", m, cn, en, w);
+        } else {
+            snprintf(label, sizeof(label), "#%d", m);
+        }
+
+        printf(FORMAT_TEXT, label);
+        int member_ok = 0;
+        for (int k = 0; k < KI_NCLASSES; k++) {
+            if (total[k] > 0) {
+                double pct = (double)correct[m][k] * 100.0 / (double)total[k];
+                printf(FORMAT_FLT, pct);
+                member_ok += correct[m][k];
+            } else {
+                printf("       ");
+            }
+        }
+        ok_member[m] = member_ok;
+        double avg = (double)member_ok * 100.0 / (double)N;
+        printf(FORMAT_FLT "\n", avg);
+    }
+
+    printf("  ──────────────────────────────────────────────────────────────\n\n");
+    fflush(stdout);
+
+    free(total); free(correct); free(ok_member);
+    #undef FORMAT_TEXT
+    #undef FORMAT_FLT
+}
+
+/* ═══════════════════════════════════════════════════════════════════
  * IFC MODEL LOAD — read exported .otto file
  * ═══════════════════════════════════════════════════════════════════
  * Returns arrays allocated by the caller (must free).
@@ -1027,26 +1141,10 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    /* ── Dry run ─────────────────────────────────────────────── */
-    if (aa.dry_run) {
-        int hl = H;
-        int ncs = nc_blk / splitHN;
-        /* nc_total: Gesamt-Container aus enc_array */
-        int nc_total_dry = 0;
-        for (int i = 0; i < aa.enc_count; i++) {
-            int w = (int)aa.enc_array[i].width;
-            if (w < 1) w = KI_ENC_WIDTH_DEFAULT;
-            nc_total_dry += (KI_COLORS > 1 ? KI_NC : NC) * w / 8;
-        }
-        print_setup(H, aa.epochs, aa.trainN, aa.evalN, aa.threadN, aa.seed, aa.batchN,
-                    splitVN, splitHN, ncs, hl, aa.ensembleN, aa.channel, nc_blk, nc_total_dry);
-        printf("  Data stride: %d containers per image\n", nc_total_dry);
-        print_member_structure(aa.ensembleN, splitVN, splitHN, hl, ncs, aa.channel);
-        return 0;
-    }
-
     /* ── Load dataset (MNIST or CIFAR-10, ki-local.h adapts) ── */
-    ki_Dataset data;
+    struct timeval tv_start, tv_end;
+    gettimeofday(&tv_start, NULL);
+    ki_Dataset data = { .dry_run = aa.dry_run };
     if (ki_dataset_read(&data) != 0) return 1;
     if (data.pixels != KI_PX) {
         fprintf(stderr, "[FATAL] Expected %d pixels, got %d\n", KI_PX, data.pixels);
@@ -1064,28 +1162,19 @@ int main(int argc, char *argv[]) {
         if (w < 1) w = KI_ENC_WIDTH_DEFAULT;
         n_cont += (size_t)((KI_COLORS > 1 ? KI_NC : NC) * w / 8);
     }
-    uint32_t *X_all = load_input(data.X_raw, total_all);
-    uint32_t *X_flat_free = NULL;  /* owned by flat mode, freed at cleanup */
+    /* ── Pixel-data-dependent init (skipped for dry-run) ────── */
+    uint32_t *X_all = NULL;
+    uint32_t *X_flat_free = NULL;
+    uint32_t *X_perm = NULL;
+    uint8_t  *y_perm = NULL;
+    int own_eval_data = 0;
+    if (!aa.dry_run) {
+        X_all = load_input(data.X_raw, total_all);
 
-    /* ── Flat mode: concat selected blocks into contiguous array ── */
-    if (aa.debug_flat && eff_colors_orig > 1) {
-        /* Flat mode: block_off per selected channel */
-        int *block_off_f = (int *)calloc((size_t)eff_colors_orig, sizeof(int));
-        size_t flat_cont = 0;
-        for (int bi = 0; bi < eff_colors_orig; bi++) {
-            int bit = active_chans[bi];
-            int w = KI_ENC_WIDTH_DEFAULT;
-            for (int ei = 0; ei < aa.enc_count && ei < KI_ENC_MAX; ei++)
-                if ((int)aa.enc_array[ei].color == bit) { w = (int)aa.enc_array[ei].width; break; }
-            if (w < 1) w = KI_ENC_WIDTH_DEFAULT;
-            int ncb = KI_NC * w / 8;
-            block_off_f[bi] = (int)flat_cont;
-            flat_cont += (size_t)ncb;
-        }
-        X_flat_free = (uint32_t *)malloc((size_t)total_all * flat_cont * sizeof(uint32_t));
-        if (!X_flat_free) { free(block_off_f); fprintf(stderr, "[FATAL] X_flat OOM\n"); return 1; }
-        for (int s = 0; s < total_all; s++) {
-            uint32_t *dst = X_flat_free + (size_t)s * flat_cont;
+        /* ── Flat mode: concat selected blocks into contiguous array ── */
+        if (aa.debug_flat && eff_colors_orig > 1) {
+            int *block_off_f = (int *)calloc((size_t)eff_colors_orig, sizeof(int));
+            size_t flat_cont = 0;
             for (int bi = 0; bi < eff_colors_orig; bi++) {
                 int bit = active_chans[bi];
                 int w = KI_ENC_WIDTH_DEFAULT;
@@ -1093,52 +1182,65 @@ int main(int argc, char *argv[]) {
                     if ((int)aa.enc_array[ei].color == bit) { w = (int)aa.enc_array[ei].width; break; }
                 if (w < 1) w = KI_ENC_WIDTH_DEFAULT;
                 int ncb = KI_NC * w / 8;
-                memcpy(dst + (size_t)block_off_f[bi],
-                       X_all + (size_t)s * n_cont + (size_t)block_off_f[bi],
-                       (size_t)ncb * sizeof(uint32_t));
+                block_off_f[bi] = (int)flat_cont;
+                flat_cont += (size_t)ncb;
             }
+            X_flat_free = (uint32_t *)malloc((size_t)total_all * flat_cont * sizeof(uint32_t));
+            if (!X_flat_free) { free(block_off_f); fprintf(stderr, "[FATAL] X_flat OOM\n"); return 1; }
+            for (int s = 0; s < total_all; s++) {
+                uint32_t *dst = X_flat_free + (size_t)s * flat_cont;
+                for (int bi = 0; bi < eff_colors_orig; bi++) {
+                    int bit = active_chans[bi];
+                    int w = KI_ENC_WIDTH_DEFAULT;
+                    for (int ei = 0; ei < aa.enc_count && ei < KI_ENC_MAX; ei++)
+                        if ((int)aa.enc_array[ei].color == bit) { w = (int)aa.enc_array[ei].width; break; }
+                    if (w < 1) w = KI_ENC_WIDTH_DEFAULT;
+                    int ncb = KI_NC * w / 8;
+                    memcpy(dst + (size_t)block_off_f[bi],
+                           X_all + (size_t)s * n_cont + (size_t)block_off_f[bi],
+                           (size_t)ncb * sizeof(uint32_t));
+                }
+            }
+            free(block_off_f);
+            free(X_all);
+            X_all = X_flat_free;
+            n_cont = flat_cont;
         }
-        free(block_off_f);
-        free(X_all);
-        X_all = X_flat_free;
-        n_cont = flat_cont;
+
+        /* ── Optional: shuffle indices before train/eval split ──────── */
+        if (aa.shuffle) {
+            printf("  Shuffling %d samples before %d/%d split...\n",
+                   total_all, total_train, total_eval);
+            int *idx = (int *)malloc((size_t)total_all * sizeof(int));
+            for (int i = 0; i < total_all; i++) idx[i] = i;
+            srand(aa.seed);
+            for (int i = total_all - 1; i > 0; i--) {
+                int j = rand() % (i + 1);
+                int t = idx[i]; idx[i] = idx[j]; idx[j] = t;
+            }
+            X_perm = (uint32_t *)malloc((size_t)total_all * n_cont * sizeof(uint32_t));
+            y_perm = (uint8_t *)malloc((size_t)total_all * sizeof(uint8_t));
+            for (int i = 0; i < total_all; i++) {
+                int src = idx[i];
+                memcpy(X_perm + (size_t)i * n_cont, X_all + (size_t)src * n_cont,
+                       n_cont * sizeof(uint32_t));
+                y_perm[i] = data.y[src];
+            }
+            free(idx);
+        }
     }
-
     uint32_t *X_tr  = X_all;
-    uint32_t *X_te  = X_all + (size_t)total_train * n_cont;
-    uint8_t  *y_tr  = data.y;
-    uint8_t  *y_te  = data.y + total_train;
-    int own_eval_data = 0;
-    uint32_t *X_perm = NULL;  /* allocated by shuffle, freed in cleanup */
-    uint8_t  *y_perm = NULL;
+    uint32_t *X_te  = X_all ? X_all + (size_t)total_train * n_cont : NULL;
+    uint8_t  *y_tr  = aa.dry_run ? NULL : data.y;
+    uint8_t  *y_te  = aa.dry_run ? NULL : data.y + total_train;
 
-    /* ── Optional: shuffle indices before train/eval split ───────── */
-    if (aa.shuffle) {
-        printf("  Shuffling %d samples before %d/%d split...\n",
-               total_all, total_train, total_eval);
-        int *idx = (int *)malloc((size_t)total_all * sizeof(int));
-        for (int i = 0; i < total_all; i++) idx[i] = i;
-        srand(aa.seed);  /* reuse --seed for reproducibility */
-        for (int i = total_all - 1; i > 0; i--) {
-            int j = rand() % (i + 1);
-            int t = idx[i]; idx[i] = idx[j]; idx[j] = t;
-        }
-
-        X_perm = (uint32_t *)malloc((size_t)total_all * n_cont * sizeof(uint32_t));
-        y_perm = (uint8_t *)malloc((size_t)total_all * sizeof(uint8_t));
-        for (int i = 0; i < total_all; i++) {
-            int src = idx[i];
-            memcpy(X_perm + (size_t)i * n_cont, X_all + (size_t)src * n_cont,
-                   n_cont * sizeof(uint32_t));
-            y_perm[i] = data.y[src];
-        }
-
+    /* ── If shuffle occurred, switch to permuted pointers ─────── */
+    if (X_perm) {
         X_tr = X_perm;
         X_te = X_perm + (size_t)total_train * n_cont;
         y_tr = y_perm;
         y_te = y_perm + total_train;
         own_eval_data = 1;
-        free(idx);
     }
 
     /* ── Compute per-block nc and offsets from enc_array ── */
@@ -1158,7 +1260,6 @@ int main(int argc, char *argv[]) {
     int H_local   = H;
     int NC_slice  = nc_blk / splitHN;  /* base slice (from default width) */
     int total_members = ensembleN * splitHN * eff_colors;
-    int nc_off = 0;
 
     /* ── Default W0-Quelle: assets/random.bin suchen (bevor print_setup) ─ */
     /* --seed-splitmix deaktiviert sowohl seed_file als auch die default-suche */
@@ -1171,7 +1272,7 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    /* ── IFC MODE: --model → evaluieren statt trainieren ───────────── */
+    /* ── IFC MODE: --import → evaluieren statt trainieren ───────────── */
     if (aa.model[0]) {
         printf("\n══╡ INFERENCE ╞══════════════════════════════════════════════════\n");
         uint32_t *W0_ifc; int32_t *tgt_ifc; int64_t *off_ifc;
@@ -1256,8 +1357,9 @@ int main(int argc, char *argv[]) {
     int64_t *offset_ens = (int64_t *)ki_xcalloc((size_t)total_members * KI_NCLASSES, sizeof(int64_t));
 
     int class_counts[KI_NCLASSES] = {0};
-    for (int s = 0; s < total_train; s++)
-        class_counts[(int)y_tr[s]]++;
+    if (!aa.dry_run)
+        for (int s = 0; s < total_train; s++)
+            class_counts[(int)y_tr[s]]++;
 
     /* ═══════════════════════════════════════════════════════════════
      * TARGET INIT
@@ -1270,48 +1372,49 @@ int main(int argc, char *argv[]) {
     print_member_structure(ensembleN, splitVN, splitHN, H_local, NC_slice, aa.channel);
 #if 1
     /* ── BAYESIAN INIT (build_target + logit + class_offset + center) ── */
-    for (int m = 0; m < total_members; m++) {
-        int h_idx     = m % splitHN;
-        int vi        = (m / splitHN) % eff_colors;
-        if (aa.debug_flat) {
-            nc_off = h_idx * NC_slice;
-        } else {
-            if (aa.enc_count > 0) {
-                nc_off = multi_enc_blk_off[vi] + h_idx * (multi_enc_nc[vi] / splitHN);
-            } else {
-                int color = active_chans[vi];
-                if (aa.channel >= 0 && !(aa.channel & (1 << color))) continue;
-                nc_off = 0;
-            }
-        }
-        int32_t *target_m = target_ens + (size_t)m * tgt_sz_m;
-        const uint32_t *W0_m = W0_ens + (size_t)m * w0_m_sz;
-        int nc_slice_m = (aa.enc_count > 0) ? (multi_enc_nc[vi] / splitHN) : NC_slice;
-        int32_t *tgt = ki_build_target(X_tr, y_tr, total_train, W0_m,
-                                      H_local, nc_slice_m, nc_off,
-                                      (int)n_cont, 1);
-        memcpy(target_m, tgt, tgt_sz_m * sizeof(int32_t));
-        free(tgt);
-        int64_t off_m[KI_NCLASSES];
-        compute_class_offset(off_m, target_m, H_local, class_counts);
-        memcpy(offset_ens + (size_t)m * KI_NCLASSES, off_m, KI_NCLASSES * sizeof(int64_t));
-        logit_convert(target_m, H_local, class_counts);
+    if (aa.dry_run) {
+      /* ── RANDOM INIT (correction builds from scratch) ────── */
+/*
+      for (size_t i=0; i < tgt_sz; i++) {
+        target_ens[i] = (int32_t) (w0_random() >> OT_PRECISION);
+      }
+*/
+    } else {
+      int nc_off = 0;
+      for (int m = 0; m < total_members; m++) {
+          int h_idx     = m % splitHN;
+          int vi        = (m / splitHN) % eff_colors;
+          if (aa.debug_flat) {
+              nc_off = h_idx * NC_slice;
+          } else {
+              if (aa.enc_count > 0) {
+                  nc_off = multi_enc_blk_off[vi] + h_idx * (multi_enc_nc[vi] / splitHN);
+              } else {
+                  int color = active_chans[vi];
+                  if (aa.channel >= 0 && !(aa.channel & (1 << color))) continue;
+                  nc_off = 0;
+              }
+          }
+          int32_t *target_m = target_ens + (size_t)m * tgt_sz_m;
+          const uint32_t *W0_m = W0_ens + (size_t)m * w0_m_sz;
+          int nc_slice_m = (aa.enc_count > 0) ? (multi_enc_nc[vi] / splitHN) : NC_slice;
+          int32_t *tgt = ki_build_target(X_tr, y_tr, total_train, W0_m,
+                                        H_local, nc_slice_m, nc_off,
+                                        (int)n_cont, 1);
+          memcpy(target_m, tgt, tgt_sz_m * sizeof(int32_t));
+          free(tgt);
+          int64_t off_m[KI_NCLASSES];
+          compute_class_offset(off_m, target_m, H_local, class_counts);
+          memcpy(offset_ens + (size_t)m * KI_NCLASSES, off_m, KI_NCLASSES * sizeof(int64_t));
+          logit_convert(target_m, H_local, class_counts);
+      }
     }
-    fflush(stdout);
 #else
     /* ── RANDOM INIT (correction builds from scratch) ────── */
     printf("  [TARGET] Random init — correction loop builds from scratch\n");
     for (size_t i=0; i < tgt_sz; i++) {
       target_ens[i] = (int32_t) (w0_random() >> OT_PRECISION);
     }
-/*
-    for (int m = 0; m < total_members; m++) {
-      int32_t *target_m = target_ens + (size_t)m * tgt_sz_m;
-      logit_convert(target_m, H_local, class_counts);
-      center_target(target_m, H_local);
-    }
-*/
-    (void)nc_off;  /* unused in random init */
 #endif
     printf("\n");
     fflush(stdout);
@@ -1388,9 +1491,6 @@ int main(int argc, char *argv[]) {
         memcpy(err_ens, target_ens, tgt_sz * sizeof(int32_t));
         memcpy(err_off, offset_ens, (size_t)total_members * KI_NCLASSES * sizeof(int64_t));
     }
-
-    struct timeval tv_start, tv_end;
-    gettimeofday(&tv_start, NULL);
 
     for (int ep = 0; ep < epochs; ep++) {
         /* Step für jeden Member berechnen (jeder hat seinen eigenen) */
@@ -1554,6 +1654,12 @@ int main(int argc, char *argv[]) {
             print_member_debug(members, active_members, _x, _y2, _n, (int)n_cont, ep);
         }
 
+        /* --debug-class-voting: IMMER auf trainN (niemals eval) */
+        if (aa.debug_class_voting) {
+            print_class_voting_debug(members, active_members,
+                                     X_tr, y_tr, total_train, (int)n_cont, ep);
+        }
+
         if (_is_done) break;
 
     }
@@ -1567,14 +1673,16 @@ int main(int argc, char *argv[]) {
                          + (tv_end.tv_usec - tv_start.tv_usec) / 1000);
 
     /* Final evaluation: mit AKTUELLEN Targets (nach letzter Korrektur) */
-    int trn_ok, evl_ok = 0;
-    uint8_t *pred_eval = aa.predictions[0] ?  (uint8_t *)malloc((size_t)total_eval * sizeof(uint8_t)) : NULL ;
+    int trn_ok=0, evl_ok = 0;
+    uint8_t *pred_eval = aa.predictions[0] ?  (uint8_t *)ki_xcalloc((size_t)total_eval, sizeof(uint8_t)) : NULL ;
+    if (!aa.dry_run) {
 
-    trn_ok = evaluate_member(X_tr, y_tr, total_train,
-                    members, active_members, (int)n_cont, NULL);
-    if (total_eval > 0)
-        evl_ok = evaluate_member(X_te, y_te, total_eval,
-                    members, active_members, (int)n_cont, pred_eval);
+      trn_ok = evaluate_member(X_tr, y_tr, total_train,
+                      members, active_members, (int)n_cont, NULL);
+      if (total_eval > 0)
+          evl_ok = evaluate_member(X_te, y_te, total_eval,
+                      members, active_members, (int)n_cont, pred_eval);
+    }
 
     /* Sync members → flat (für Export, da Export flat arrays liest) */
     {

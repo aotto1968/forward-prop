@@ -55,6 +55,7 @@ typedef struct {
     float *X;         /* [num_images * pixels] normalized to [-1, +1] */
     uint8_t *X_raw;   /* [num_images * pixels] raw uint8 [0,255] */
     uint8_t *y;       /* [num_images] labels */
+    int dry_run;      /* skip pixel data (fast metadata only) */
 } ki_MNISTData;
 
 /* Generic dataset aliases (used by ki-common.h) */
@@ -134,7 +135,9 @@ static int ki_mnist_read(ki_MNISTData *out) {
         return -1;
     }
 
+    int dry_run = out->dry_run;
     memset(out, 0, sizeof(*out));
+    out->dry_run = dry_run;
     uint8_t *raw = NULL;
     size_t raw_size = 0;
     char path[512];
@@ -161,6 +164,14 @@ static int ki_mnist_read(ki_MNISTData *out) {
     out->rows = rows;
     out->cols = cols;
     out->pixels = pixels;
+
+    /* Dry-run: header already parsed, skip pixel data */
+    if (dry_run) {
+        free(raw);
+        printf("  [MNIST] dry-run: %d images, %d px each\n", num_img, pixels);
+        return 0;
+    }
+
     size_t npix = (size_t)num_img * (size_t)pixels;
     out->X_raw = (uint8_t *)malloc(npix);
     memcpy(out->X_raw, raw + 16, npix);

@@ -1,16 +1,18 @@
-# Makefile — Otto Score + Hebbian CIFAR-10 (Trainer + Inference)
-# ==============================================================
+# Makefile — Otto Score + Hebbian + Adam CIFAR-10 (Trainer + Inference)
+# =====================================================================
 # Self-contained CIFAR-10 demo for the public distribution.
 #
 # Targets:
 #   make all         — Otto + Hebbian trainer (XNOR + XOR)
 #   make otto        — Otto Score trainer only
 #   make hebbian     — Hebbian trainer only
+#   make adam        — Float32 AdamW trainer
 #   make model-otto  — train CIFAR Otto Score model
 #   make model-hebb  — train CIFAR Hebbian model
+#   make model-adam  — train CIFAR AdamW model
 #   make clean       — remove executables
 #   make setup       — download CIFAR-10 dataset
-# ==============================================================
+# =====================================================================
 
 CC       = gcc
 CFLAGS   = -O3 -march=native -fopenmp -Wall -Wextra -Werror \
@@ -20,9 +22,9 @@ LDLIBS   = -lm -lz
 
 MODEL_DIR = ../models
 
-.PHONY: all otto hebbian clean setup model-otto model-hebb
+.PHONY: all otto hebbian adam clean setup model-otto model-hebb model-adam
 
-all: otto hebbian
+all: otto hebbian adam
 
 # ── Dataset ────────────────────────────────────────────────
 setup:
@@ -50,7 +52,7 @@ cifar-mlp-bin32-otto-trn-xor.exe: $(OTTO_SRC) ki-common.h
 model-otto: cifar-mlp-bin32-otto-trn-xnor.exe
 	@mkdir -p $(MODEL_DIR)/cifar-otto-h256-e5
 	@./cifar-mlp-bin32-otto-trn-xnor.exe --hiddenN 256 --epochsN 5 \
-	  --encoding latest --export $(MODEL_DIR)/cifar-otto-h256-e5 2>&1 | tail -1
+	  --encoding latest --export $(MODEL_DIR)/cifar-otto-h256-e5 2>&1 | grep '^REPORT'
 
 # ═══════════════════════════════════════════════════════════
 # Hebbian Trainer (unified: via symlink to mnist)
@@ -72,9 +74,26 @@ cifar-mlp-bin32-hebbian-trn-xor.exe: $(HEBB_SRC) ki-common.h
 model-hebb: cifar-mlp-bin32-hebbian-trn-xnor.exe
 	@mkdir -p $(MODEL_DIR)/cifar-hebbian-h256-e5
 	@./cifar-mlp-bin32-hebbian-trn-xnor.exe --hiddenN 256 --epochsN 5 \
-	  --encoding latest --export $(MODEL_DIR)/cifar-hebbian-h256-e5 2>&1 | tail -1
+	  --encoding latest --export $(MODEL_DIR)/cifar-hebbian-h256-e5 2>&1 | grep '^REPORT'
+
+# ═══════════════════════════════════════════════════════════
+# Float32 AdamW Trainer (unified: via symlink to mnist)
+# ═══════════════════════════════════════════════════════════
+ADAM_SRC = mlp-flt32-adam-trn.c
+
+adam: cifar-mlp-flt32-adam-trn.exe
+
+cifar-mlp-flt32-adam-trn.exe: $(ADAM_SRC) ki-common.h ../lib/ki-adamw.h
+	$(CC) $(CFLAGS) \
+	  -Wno-sign-conversion -Wno-unused-parameter -Wno-unused-function -Wno-unused-variable \
+	  -Wno-format-truncation -o $@ $< $(LDLIBS)
+
+model-adam: cifar-mlp-flt32-adam-trn.exe
+	@mkdir -p $(MODEL_DIR)/cifar-adam-h256-e5
+	@./cifar-mlp-flt32-adam-trn.exe --hiddenN 256 --epochsN 5 \
+	  --encoding latest --export $(MODEL_DIR)/cifar-adam-h256-e5 2>&1 | grep '^REPORT'
 
 # ── Clean ──────────────────────────────────────────────────
 clean:
 	rm -f *.exe
-	rm -rf $(MODEL_DIR)/cifar-otto-h256-e5 $(MODEL_DIR)/cifar-hebbian-h256-e5
+	rm -rf $(MODEL_DIR)/cifar-otto-h256-e5 $(MODEL_DIR)/cifar-hebbian-h256-e5 $(MODEL_DIR)/cifar-adam-h256-e5

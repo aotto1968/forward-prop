@@ -1275,9 +1275,11 @@ int main(int argc, char *argv[]) {
     /* ── IFC MODE: --import → evaluieren statt trainieren ───────────── */
     if (aa.model[0]) {
         printf("\n══╡ INFERENCE ╞══════════════════════════════════════════════════\n");
+        char model_path[1024];
+        snprintf(model_path, sizeof(model_path), "%s/model.otto", aa.model);
         uint32_t *W0_ifc; int32_t *tgt_ifc; int64_t *off_ifc;
         int n_mifc, hl_ifc, ns_ifc;
-        if (ifc_load_model(aa.model, &W0_ifc, &tgt_ifc, &off_ifc,
+        if (ifc_load_model(model_path, &W0_ifc, &tgt_ifc, &off_ifc,
                            &n_mifc, &hl_ifc, &ns_ifc) < 0) return 1;
         /* Create ki_Member array from model data */
         int K = KI_NCLASSES, V = 32;

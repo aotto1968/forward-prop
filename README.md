@@ -33,16 +33,16 @@ make test
 
 ## 🎯 Test Targets
 
-| Command                   | What it tests                                  |
-| ------------------------- | ---------------------------------------------- |
-| `make test-mnist`         | All 3 MNIST approaches                         |
-| `make test-mnist-otto`    | Otto Score MNIST only                          |
-| `make test-mnist-adam`    | Float32 AdamW MNIST only                       |
-| `make test-mnist-hebbian` | Bin32 Hebbian MNIST only                       |
-| `make test-cifar`         | All 3 CIFAR-10 approaches                      |
-| `make test-cifar-otto`    | Otto Score CIFAR-10 only                       |
-| `make test-cifar-adam`    | Float32 AdamW CIFAR-10 only                    |
-| `make test-cifar-hebbian` | Bin32 Hebbian CIFAR-10 only                    |
+| Command                   | What it tests               |
+| ------------------------- | --------------------------- |
+| `make test-mnist`         | All 3 MNIST approaches      |
+| `make test-mnist-otto`    | Otto Score MNIST only       |
+| `make test-mnist-adam`    | Float32 AdamW MNIST only    |
+| `make test-mnist-hebbian` | Bin32 Hebbian MNIST only    |
+| `make test-cifar`         | All 3 CIFAR-10 approaches   |
+| `make test-cifar-otto`    | Otto Score CIFAR-10 only    |
+| `make test-cifar-adam`    | Float32 AdamW CIFAR-10 only |
+| `make test-cifar-hebbian` | Bin32 Hebbian CIFAR-10 only |
 
 First run trains all 6 models. Subsequent runs use cached models (<1s total).
 
@@ -80,30 +80,30 @@ Each trainer doubles as inference engine via `--import`. Zero code drift.
 
 ## Build Targets
 
-| Command          | Builds                                                     |
-| ---------------- | ---------------------------------------------------------- |
-| `make` / `all`   | All 6 binaries (Otto + Hebbian + Adam × XNOR/XOR)         |
-| `make otto`      | Otto Score only (mnist/ + cifar/)                          |
-| `make hebbian`   | Hebbian only (mnist/ + cifar/)                             |
-| `make adam`      | Float32 AdamW only (mnist/ + cifar/)                       |
-| `make models`    | Train all 6 models (cached)                                |
-| `make clean`     | Remove executables                                         |
+| Command        | Builds                                            |
+| -------------- | ------------------------------------------------- |
+| `make` / `all` | All 6 binaries (Otto + Hebbian + Adam × XNOR/XOR) |
+| `make otto`    | Otto Score only (mnist/ + cifar/)                 |
+| `make hebbian` | Hebbian only (mnist/ + cifar/)                    |
+| `make adam`    | Float32 AdamW only (mnist/ + cifar/)              |
+| `make models`  | Train all 6 models (cached)                       |
+| `make clean`   | Remove executables                                |
 
 ## CLI Flags (unified across all trainers)
 
-| Flag | Description | Default |
-|------|-------------|---------|
-| `--hiddenN N` | Hidden neurons | 64 |
-| `--epochsN N` | Training epochs | 1 |
-| `--encoding TYPE` | Input encoding (exp, sig, up8, down8, raw, etc.) | raw8 |
-| `--ensembleN N` | Independent W0 copies | 1 |
-| `--export DIR` | Model export directory | none |
-| `--import DIR` | Load model for inference | none |
-| `--dry-run` | Print architecture and exit (metadata only, instant) | off |
-| `--seed N` | Random seed | 42 |
-| `--seed-member MODE` | Member seed strategy (once, const, incr) | once |
-| `--batchN N` | Mini-batch size | 64 |
-| `--debug-class-voting` | Per-member per-class accuracy table | off |
+| Flag                   | Description                                          | Default |
+| ---------------------- | ---------------------------------------------------- | ------- |
+| `--hiddenN N`          | Hidden neurons                                       | 64      |
+| `--epochsN N`          | Training epochs                                      | 1       |
+| `--encoding TYPE`      | Input encoding (exp, sig, up8, down8, raw, etc.)     | raw8    |
+| `--ensembleN N`        | Independent W0 copies                                | 1       |
+| `--export DIR`         | Model export directory                               | none    |
+| `--import DIR`         | Load model for inference                             | none    |
+| `--dry-run`            | Print architecture and exit (metadata only, instant) | off     |
+| `--seed N`             | Random seed                                          | 42      |
+| `--seed-member MODE`   | Member seed strategy (once, const, incr)             | once    |
+| `--batchN N`           | Mini-batch size                                      | 64      |
+| `--debug-class-voting` | Per-member per-class accuracy table                  | off     |
 
 Backward-compat aliases: `--out` = `--export`, `--model` = `--import`.
 
@@ -114,11 +114,11 @@ Every training binary doubles as inference engine. No separate IFC binaries:
 ```bash
 # MNIST Otto Score
 ./mnist/mnist-mlp-bin32-otto-trn-xnor.exe \
-  --import models/mnist-otto-h512-e10/model.otto --evalN 10000 --encoding exp
+  --import models/mnist-otto-h512-e10 --evalN 10000 --encoding exp
 
 # CIFAR-10 Otto Score (--encoding latest = 11 members)
 ./cifar/cifar-mlp-bin32-otto-trn-xnor.exe \
-  --import models/cifar-otto-h256-e5/model.otto --evalN 10000 --encoding latest
+  --import models/cifar-otto-h256-e5 --evalN 10000 --encoding latest
 
 # MNIST Hebbian
 ./mnist/mnist-mlp-bin32-hebbian-trn-xnor.exe \
@@ -164,11 +164,11 @@ Without `--export`, no files are written (training-only mode).
 
 All approaches use the same dataset split and are comparable at equal H:
 
-| Approach                | MNIST H=512  | CIFAR H=256  | Hardware Target  |
-| ----------------------- | ------------ | ------------ | ---------------- |
-| Otto Score (bitwise)    | **97.0%**    | **55.0%**    | DRAM (bit-logic) |
-| Bin32 Hebbian (bitwise) | **84.4%**    | **32.4%**    | DRAM (bit-logic) |
-| Float32 AdamW (matmul)  | 92.6%        | 41.2%        | CPU/GPU          |
+| Approach                | MNIST H=512 | CIFAR H=256 | Hardware Target  |
+| ----------------------- | ----------- | ----------- | ---------------- |
+| Otto Score (bitwise)    | **97.0%**   | **55.0%**   | DRAM (bit-logic) |
+| Bin32 Hebbian (bitwise) | **84.4%**   | **32.4%**   | DRAM (bit-logic) |
+| Float32 AdamW (matmul)  | 92.6%       | 41.2%       | CPU/GPU          |
 
 - **Otto Score**: MAJ3 + iterative Bayesian correction. Pure `&|~` + popcount.
 - **Hebbian**: Counter-based co-occurrence learning with multi-encoding members.

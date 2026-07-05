@@ -50,7 +50,7 @@ cifar-mlp-bin32-otto-trn-xor.exe: $(OTTO_SRC) ki-common.h
 model-otto: cifar-mlp-bin32-otto-trn-xnor.exe
 	@mkdir -p $(MODEL_DIR)/cifar-otto-h256-e5
 	@./cifar-mlp-bin32-otto-trn-xnor.exe --hiddenN 256 --epochsN 5 \
-	  --encoding latest --out $(MODEL_DIR)/cifar-otto-h256-e5 2>&1 | tail -1
+	  --encoding latest --export $(MODEL_DIR)/cifar-otto-h256-e5 2>&1 | tail -1
 
 # ═══════════════════════════════════════════════════════════
 # Hebbian Trainer (unified: via symlink to mnist)
@@ -72,7 +72,7 @@ cifar-mlp-bin32-hebbian-trn-xor.exe: $(HEBB_SRC) ki-common.h
 model-hebb: cifar-mlp-bin32-hebbian-trn-xnor.exe
 	@mkdir -p $(MODEL_DIR)/cifar-hebbian-h256-e5
 	@./cifar-mlp-bin32-hebbian-trn-xnor.exe --hiddenN 256 --epochsN 5 \
-	  --encoding latest --out $(MODEL_DIR)/cifar-hebbian-h256-e5 2>&1 | tail -1
+	  --encoding latest --export $(MODEL_DIR)/cifar-hebbian-h256-e5 2>&1 | tail -1
 
 # ── Clean ──────────────────────────────────────────────────
 clean:

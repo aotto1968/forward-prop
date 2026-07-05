@@ -51,7 +51,7 @@ mnist-mlp-bin32-otto-trn-xor.exe: $(OTTO_SRC) ki-common.h
 model-otto: mnist-mlp-bin32-otto-trn-xnor.exe
 	@mkdir -p $(MODEL_DIR)/mnist-otto-h512-e10
 	@./mnist-mlp-bin32-otto-trn-xnor.exe --hiddenN 512 --epochsN 10 \
-	  --encoding exp --out $(MODEL_DIR)/mnist-otto-h512-e10 2>&1 | tail -1
+	  --encoding exp --export $(MODEL_DIR)/mnist-otto-h512-e10 2>&1 | tail -1
 
 # ═══════════════════════════════════════════════════════════
 # Hebbian Trainer (unified: MNIST + CIFAR via ki-local.h)
@@ -73,7 +73,7 @@ mnist-mlp-bin32-hebbian-trn-xor.exe: $(HEBB_SRC) ki-common.h
 model-hebb: mnist-mlp-bin32-hebbian-trn-xnor.exe
 	@mkdir -p $(MODEL_DIR)/mnist-hebbian-h512-e10
 	@./mnist-mlp-bin32-hebbian-trn-xnor.exe --hiddenN 512 --epochsN 10 \
-	  --encoding exp --out $(MODEL_DIR)/mnist-hebbian-h512-e10 2>&1 | tail -1
+	  --encoding exp --export $(MODEL_DIR)/mnist-hebbian-h512-e10 2>&1 | tail -1
 
 # ═══════════════════════════════════════════════════════════
 # Float32 AdamW Trainer (unified: MNIST + CIFAR via ki-local.h)
@@ -91,7 +91,7 @@ mnist-mlp-flt32-adam-trn.exe: $(ADAM_SRC) ki-common.h ../lib/ki-adamw.h
 model-adam: mnist-mlp-flt32-adam-trn.exe
 	@mkdir -p $(MODEL_DIR)/mnist-adam-h512-e10
 	@./mnist-mlp-flt32-adam-trn.exe --hiddenN 512 --epochsN 10 \
-	  --out $(MODEL_DIR)/mnist-adam-h512-e10 2>&1 | grep '^REPORT'
+	  --export $(MODEL_DIR)/mnist-adam-h512-e10 2>&1 | grep '^REPORT'
 
 # ── Clean ──────────────────────────────────────────────────
 clean:

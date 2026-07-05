@@ -8,7 +8,7 @@ Only `&|~` + int32 + popcount. Also includes float32 AdamW + multi-member Hebbia
 ## 🚀 Quick Start
 
 ```bash
-# Step 1: Build everything (12 binaries)
+# Step 1: Build everything (6 binaries)
 make all
 
 # Step 2: Download datasets (MNIST + CIFAR-10)
@@ -53,70 +53,112 @@ First run trains all 6 models. Subsequent runs use cached models (<1s total).
 ```
 otto-score-ifc/
 ├── Makefile              ← orchestrates: delegates to subdirectories
-├── mnist/                ← MNIST (Otto Score + Hebbian, unified sources)
+├── mnist/                ← MNIST sources (Otto + Hebbian + Adam, unified)
 │   ├── Makefile
 │   ├── mlp-bin32-otto-trn.c      ← Otto Score (shared source)
 │   ├── mlp-bin32-hebbian-trn.c   ← Hebbian (shared source)
-│   ├── ki-common.h               ← Shared header (modern API)
+│   ├── mlp-flt32-adam-trn.c      ← Float32 AdamW (unified, --import inference)
+│   ├── ki-common.h               ← Shared header (args, parsing, RNG)
 │   └── ki-local.h                ← MNIST dataset config
-├── cifar/                ← CIFAR-10 (Otto Score + Hebbian)
+├── cifar/                ← CIFAR-10 (symlinks to mnist/ + CIFAR ki-local.h)
 │   ├── Makefile
 │   ├── mlp-bin32-otto-trn.c      → ../mnist/...
 │   ├── mlp-bin32-hebbian-trn.c   → ../mnist/...
+│   ├── mlp-flt32-adam-trn.c      → ../mnist/...
 │   ├── ki-common.h               → ../mnist/ki-common.h
 │   └── ki-local.h                ← CIFAR dataset config
-├── reference/             ← AdamW references (MNIST + CIFAR)
-│   ├── Makefile
-│   ├── cifar-include/            ← CIFAR headers for reference builds
-│   └── mnist-mlp-flt32-*.c       ← AdamW (trainer + inference)
-├── lib/                   ← Shared headers (maj3.h, w0_random.h, ki-encoding.h)
-├── models/                ← Cached trained models  (-e10 MNIST, -e5 CIFAR)
+├── lib/                   ← Shared headers (ki-adamw.h, ki-encoding.h, maj3.h, w0_random.h)
+├── models/                ← Cached trained models (-e10 MNIST, -e5 CIFAR)
 ├── fetch_mnist.sh         ← MNIST download
 ├── fetch_cifar10.sh       ← CIFAR-10 download
 └── README.md              ← this file
 ```
 
+All 3 trainers (Otto, Hebbian, Adam) are **unified** across MNIST and CIFAR:
+the same `.c` file is compiled with different `ki-local.h` per dataset.
+Each trainer doubles as inference engine via `--import`. Zero code drift.
+
 ## Build Targets
 
 | Command          | Builds                                                     |
 | ---------------- | ---------------------------------------------------------- |
-| `make` / `all`   | All 12 binaries (4 MNIST + 4 CIFAR + 4 reference)         |
+| `make` / `all`   | All 6 binaries (Otto + Hebbian + Adam × XNOR/XOR)         |
 | `make otto`      | Otto Score only (mnist/ + cifar/)                          |
 | `make hebbian`   | Hebbian only (mnist/ + cifar/)                             |
-| `make adam`      | Float32 AdamW references (reference/)                      |
+| `make adam`      | Float32 AdamW only (mnist/ + cifar/)                       |
 | `make models`    | Train all 6 models (cached)                                |
 | `make clean`     | Remove executables                                         |
-| `make clean-all` | Remove executables + cached models                         |
 
-## Inference via `--model`
+## CLI Flags (unified across all trainers)
 
-Every training binary doubles as inference engine via `--model`:
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--hiddenN N` | Hidden neurons | 64 |
+| `--epochsN N` | Training epochs | 1 |
+| `--encoding TYPE` | Input encoding (exp, sig, up8, down8, raw, etc.) | raw8 |
+| `--ensembleN N` | Independent W0 copies | 1 |
+| `--export DIR` | Model export directory | none |
+| `--import DIR` | Load model for inference | none |
+| `--dry-run` | Print architecture and exit (metadata only, instant) | off |
+| `--seed N` | Random seed | 42 |
+| `--seed-member MODE` | Member seed strategy (once, const, incr) | once |
+| `--batchN N` | Mini-batch size | 64 |
+| `--debug-class-voting` | Per-member per-class accuracy table | off |
+
+Backward-compat aliases: `--out` = `--export`, `--model` = `--import`.
+
+## Inference via `--import`
+
+Every training binary doubles as inference engine. No separate IFC binaries:
 
 ```bash
 # MNIST Otto Score
 ./mnist/mnist-mlp-bin32-otto-trn-xnor.exe \
-  --model models/mnist-otto-h512-e10/model.otto --evalN 10000 --encoding exp
+  --import models/mnist-otto-h512-e10/model.otto --evalN 10000 --encoding exp
 
 # CIFAR-10 Otto Score (--encoding latest = 11 members)
 ./cifar/cifar-mlp-bin32-otto-trn-xnor.exe \
-  --model models/cifar-otto-h256-e5/model.otto --evalN 10000 --encoding latest
+  --import models/cifar-otto-h256-e5/model.otto --evalN 10000 --encoding latest
 
 # MNIST Hebbian
 ./mnist/mnist-mlp-bin32-hebbian-trn-xnor.exe \
-  --model models/mnist-hebbian-h512-e10 --evalN 10000 --encoding exp
+  --import models/mnist-hebbian-h512-e10 --evalN 10000 --encoding exp
 
 # CIFAR Hebbian (multi-member, 11 members via --encoding latest)
 ./cifar/cifar-mlp-bin32-hebbian-trn-xnor.exe \
-  --model models/cifar-hebbian-h256-e5 --evalN 10000 --encoding latest
+  --import models/cifar-hebbian-h256-e5 --evalN 10000 --encoding latest
 
-# AdamW references (separate IFC binaries)
-./reference/mnist-mlp-flt32-adam-ifc.exe \
-  --model models/mnist-adam-h512-e10 --evalN 10000
-./reference/cifar-mlp-flt32-adam-ifc.exe \
-  --model models/cifar-adam-h256-e5 --evalN 10000
+# AdamW (float32, --import works the same way)
+./mnist/mnist-mlp-flt32-adam-trn.exe \
+  --import models/mnist-adam-h512-e10 --evalN 10000
+./cifar/cifar-mlp-flt32-adam-trn.exe \
+  --import models/cifar-adam-h256-e5 --evalN 10000
 ```
 
-There are **no separate IFC source files** for Otto Score or Hebbian — the trainer binary IS the inference binary. Zero code drift between training and evaluation.
+## `--dry-run` — Fast Architecture Preview
+
+Prints the full 5-section layout (SETUP, MEMBER, TRAINING, EXPORT, RESULT)
+**without loading pixel data** (metadata only from dataset headers):
+
+```bash
+# MNIST — instant
+./mnist/mnist-mlp-bin32-otto-trn-xnor.exe --dry-run --hiddenN 512 --epochsN 10
+
+# CIFAR — skips 180MB batch-file reads
+./cifar/cifar-mlp-flt32-adam-trn.exe --dry-run --hiddenN 128 --encoding latest
+```
+
+## `--export` — Save Trained Models
+
+All trainers export per-member weights via `--export DIR`:
+
+```bash
+./mnist/mnist-mlp-bin32-otto-trn-xnor.exe --hiddenN 256 --epochsN 10 \
+  --encoding exp --export models/mnist-otto/
+# → writes models/mnist-otto/weights-0.meta, W0-0.bin, W1-0.bin, ...
+```
+
+Without `--export`, no files are written (training-only mode).
 
 ## Results Summary
 
@@ -131,11 +173,11 @@ All approaches use the same dataset split and are comparable at equal H:
 - **Otto Score**: MAJ3 + iterative Bayesian correction. Pure `&|~` + popcount.
 - **Hebbian**: Counter-based co-occurrence learning with multi-encoding members.
   MNIST: single member (exp8). CIFAR: 11 members (`--encoding latest`).
-- **AdamW**: 2-layer float32 MLP (LeakyReLU, AdamW). Reference baseline.
+- **AdamW**: 1-layer float32 MLP (LeakyReLU, AdamW). Unified source with `--import` inference.
 
 ## References
 
-- **Float32 AdamW**: 2-layer MLP with LeakyReLU(0.05), MSE loss, AdamW optimizer.
+- **Float32 AdamW**: 1-layer MLP with LeakyReLU(0.05), MSE loss, AdamW optimizer.
   MNIST: 92.6% (10 ep). CIFAR: 41.2% (5 ep).
 - **Bin32 Hebbian (legacy)**: The old single-member Hebbian (raw pixels, no encoding)
   achieved only 10% on CIFAR (random baseline). The new multi-member version with

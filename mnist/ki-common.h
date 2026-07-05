@@ -443,14 +443,14 @@ static inline void ki_parse_args(int argc, char *argv[]) {
             aa.lr_min = (float)atof(argv[++i]);
         } else if (strcmp(argv[i], "--seed") == 0 && i + 1 < argc) {
             aa.seed = (unsigned int)atoi(argv[++i]);
-        } else if (strcmp(argv[i], "--export") == 0 || strcmp(argv[i], "--out") == 0) {
+        } else if (strcmp(argv[i], "--export") == 0 || strcmp(argv[i], "--export") == 0) {
             if (i + 1 >= argc) { fprintf(stderr, "[ERROR] --export DIR\n"); exit(1); }
             strncpy(aa.out, argv[++i], sizeof(aa.out) - 1);
             aa.out[sizeof(aa.out) - 1] = '\0';
         } else if (strcmp(argv[i], "--predictions") == 0 && i + 1 < argc) {
             strncpy(aa.predictions, argv[++i], sizeof(aa.predictions) - 1);
             aa.predictions[sizeof(aa.predictions) - 1] = '\0';
-        } else if (strcmp(argv[i], "--import") == 0 || strcmp(argv[i], "--model") == 0) {
+        } else if (strcmp(argv[i], "--import") == 0 || strcmp(argv[i], "--import") == 0) {
             if (i + 1 >= argc) { fprintf(stderr, "[ERROR] --import DIR\n"); exit(1); }
             strncpy(aa.model, argv[++i], sizeof(aa.model) - 1);
             aa.model[sizeof(aa.model) - 1] = '\0';

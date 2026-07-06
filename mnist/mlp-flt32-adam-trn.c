@@ -12,7 +12,9 @@
 #include "ki-common.h"
 #include "ki-adamw.h"
 
-ki_Args aa = { 0 };
+ki_Args aa = {
+    .seed_splitmix = 1,
+};
 #define N_CLASSES KI_NCLASSES
 #define ADAM_WD 1e-4f
 #define ADAM_MAX_MEM 128
@@ -371,11 +373,14 @@ int main(int argc, char *argv[]) {
            (double)aa.lr, (double)aa.lr_min, (double)ADAM_WD);
     printf("  Schedule:    warmup + cosine decay  (%s)\n",
            !use_members ? "flat (single W0)" : "members");
-    const char *rng = aa.seed_splitmix ? "splitmix64" :
-                      (aa.seed_file[0] ? "true random file" : "PRNG");
+    const char *rng_src;
+    if (aa.seed_file[0])
+        rng_src = "true random file";
+    else
+        rng_src = "splitmix64";
     printf("  Seed:        %u  %s  seed-member: %s",
-           aa.seed, rng, ensemble_seed_str());
-    if (aa.seed_file[0] && !aa.seed_splitmix)
+           aa.seed, rng_src, ensemble_seed_str());
+    if (aa.seed_file[0])
         printf("  from %s", aa.seed_file);
     printf("\n");
 
@@ -562,6 +567,28 @@ int main(int argc, char *argv[]) {
     int train_ok = (int)(best_eval_acc * (float)total_train / 100.0f + 0.5f);
     ki_report_show(train_ok, total_train, eval_ok, total_eval,
                    elapsed_ms, aa.threadN, 0, 0.0f);
+
+    /* ── Confusion matrix (end only) ───────────────────────────── */
+    if ((aa.debug_confusion || aa.debug_confusion_all) && !aa.dry_run) {
+        uint8_t *pred_tr = (uint8_t *)malloc((size_t)total_train);
+        #pragma omp parallel for schedule(static)
+        for (int s = 0; s < total_train; s++) {
+            float total[N_CLASSES];
+            for (int k = 0; k < N_CLASSES; k++) total[k] = 0;
+            for (int m = 0; m < n_mem && m < ADAM_MAX_MEM; m++) {
+                const float *slice = X_tr + (size_t)s * (size_t)nc_per_sample + mem_off[m];
+                float h0_buf[4096], out[N_CLASSES];
+                forward(&l0_arr[m], &l1_arr[m], slice, h0_buf, out, 1);
+                for (int k = 0; k < N_CLASSES; k++) total[k] += out[k];
+            }
+            int pred = 0;
+            for (int k = 1; k < N_CLASSES; k++)
+                if (total[k] > total[pred]) pred = k;
+            pred_tr[s] = (uint8_t)pred;
+        }
+        print_confusion_debug(y_tr, pred_tr, total_train, aa.epochs - 1, !aa.debug_confusion_all);
+        free(pred_tr);
+    }
 
     /* ── Cleanup ─────────────────────────────────────────────── */
     for (int m = 0; m < n_mem && m < ADAM_MAX_MEM; m++) {

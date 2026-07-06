@@ -349,4 +349,11 @@ static void ki_write_png(const char *path,
 #define ki_dataset_read ki_cifar_read
 #define ki_dataset_free ki_cifar_free
 
+/* ── Class names (truncated to 7 chars for table alignment) ──── */
+__attribute__((unused))
+static const char *ki_class_names[KI_NCLASSES] = {
+    "airplan","automob","bird","cat","deer",
+    "dog","frog","horse","ship","truck"
+};
+
 #endif /* KI_LOCAL_H */

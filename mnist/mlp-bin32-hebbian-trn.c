@@ -329,6 +329,7 @@ ki_Args aa = {
     .seed     = 42,
     .hebbian_pct = 50,
     .ensembleN   = 1,
+    .seed_splitmix = 1,
 };
 
 int main(int argc, char *argv[]) {
@@ -485,11 +486,14 @@ int main(int argc, char *argv[]) {
     printf("  OMP:         %d threads\n", aa.threadN);
     printf("  Train/Eval:  %d / %d samples\n", aa.trainN, aa.evalN);
     printf("  Score:       XNOR + popcount (per-member, summed)\n");
-    const char *rng = aa.seed_splitmix ? "splitmix64" :
-                      (aa.seed_file[0] ? "true random file" : "PRNG");
+    const char *rng_src;
+    if (aa.seed_file[0])
+        rng_src = "true random file";
+    else
+        rng_src = "splitmix64";
     printf("  Seed:        %u  %s  seed-member: %s",
-           aa.seed, rng, ensemble_seed_str());
-    if (aa.seed_file[0] && !aa.seed_splitmix)
+           aa.seed, rng_src, ensemble_seed_str());
+    if (aa.seed_file[0])
         printf("  from %s", aa.seed_file);
     printf("\n");
     fflush(stdout);
@@ -557,6 +561,31 @@ int main(int argc, char *argv[]) {
     int eval_ok = (int)(best_acc * (float)te / 100.0f + 0.5f);
     int train_ok = (int)(best_acc * (float)aa.trainN / 100.0f + 0.5f);
     ki_report_show(train_ok, aa.trainN, eval_ok, te, ms, aa.threadN, 0, 0.0f);
+
+    /* ── Confusion matrix (end only) ───────────────────────────── */
+    if ((aa.debug_confusion || aa.debug_confusion_all) && !aa.dry_run) {
+        uint8_t *pred_tr = (uint8_t *)malloc((size_t)aa.trainN);
+        #pragma omp parallel for schedule(static)
+        for (int s = 0; s < aa.trainN; s++) {
+            int64_t total[N_CLASSES];
+            for (int k = 0; k < N_CLASSES; k++) total[k] = 0;
+            for (int m = 0; m < total_members && m < HEB_MAX_MEM; m++) {
+                const uint32_t *slice = X_all + (size_t)s * (size_t)cum_off + offs[m];
+                uint32_t h0_buf[4096];
+                h0_compute(slice, W0s[m], h0_buf, H, ncs[m]);
+                int64_t scores[N_CLASSES];
+                member_score(h0_buf, W1s[m], H, scores);
+                for (int k = 0; k < N_CLASSES; k++) total[k] += scores[k];
+            }
+            int pred = 0;
+            for (int k = 1; k < N_CLASSES; k++)
+                if (total[k] > total[pred]) pred = k;
+            pred_tr[s] = (uint8_t)pred;
+        }
+        print_confusion_debug(data.y, pred_tr,
+                                aa.trainN, epochs - 1, !aa.debug_confusion_all);
+        free(pred_tr);
+    }
 
     if (aa.exportD[0]) {
         printf("\n══╡ EXPORT ╞════════════════════════════════════════════════\n");

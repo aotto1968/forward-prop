@@ -270,9 +270,11 @@ typedef struct {
     int    seed_splitmix;  /* --seed-splitmix: ignore seed_file, use splitmix64 PRNG */
     int    multi_correct;  /* --multi-correct: alle über true_k bestrafen (default: 1) */
     int    ensemble_seed;    /* ENS_SEED_ONCE|CONST|INCR (default: ONCE) */
-    int    debug_class_voting; /* --debug-class-voting: per-member per-class accuracy table */
+    int    debug_class_voting; /* --debug-class-voting: Member × Class accuracy (end only) */
+    int    debug_class_voting_all; /* --debug-class-voting-all: every epoch */
+    int    debug_confusion;    /* --debug-confusion-matrix: confusion matrix (end only) */
+    int    debug_confusion_all; /* --debug-confusion-matrix-all: every epoch */
 } ki_Args;
-
 /* ── Global args (defined in each main .c file) ────────────── */
 extern ki_Args aa;
 
@@ -326,7 +328,7 @@ static inline void ki_parse_args(int argc, char *argv[]) {
             printf("  --seed N          Random seed                                                   (default: %d)\n", aa.seed);
             printf("  --seed-file PATH-TO-RANDOM-FILE                                                 (default: none)\n");
             printf("                    Use true random data from file instead of PRNG\n");
-            printf("  --seed-splitmix   Ignore seed file, use splitmix64 PRNG explicitly              (default: off)\n");
+            printf("  --seed-splitmix   Use splitmix64 PRNG (default: on)                                      (default: off)\n");
             printf("  --seed-member const|incr|once  W0 seeding mode.                                 (default: %s)\n", ensemble_seed_str());
             printf("                    once    : one seed, all sequential.\n");
             printf("                    const   : same W0 per ensemble (tests color diversity).\n");
@@ -372,7 +374,10 @@ static inline void ki_parse_args(int argc, char *argv[]) {
             printf("  --qq              5000 train / 2000 eval / 3 epochs\n");
             printf("  --debug           Verbose output                                                (default: off)\n");
             printf("  --debug-h0        Per-neuron debug                                              (default: off)\n");
-            printf("  --debug-class-voting  Member × Class accuracy table (trainN only)               (default: off)\n");
+            printf("  --debug-class-voting  Member × Class accuracy table (end only)                    (default: off)\n");
+            printf("  --debug-class-voting-all  Member × Class every epoch                               (default: off)\n");
+            printf("  --debug-confusion-matrix  Confusion matrix table (end only)                        (default: off)\n");
+            printf("  --debug-confusion-matrix-all  Confusion matrix every epoch                          (default: off)\n");
             printf("  --shuffle         Shuffle data before train/eval split                          (default: off)\n");
             exit(0);
         } else if (strcmp(argv[i], "--dry-run") == 0) {
@@ -459,6 +464,12 @@ static inline void ki_parse_args(int argc, char *argv[]) {
             aa.debug_h0 = 1;
         } else if (strcmp(argv[i], "--debug-class-voting") == 0) {
             aa.debug_class_voting = 1;
+        } else if (strcmp(argv[i], "--debug-class-voting-all") == 0) {
+            aa.debug_class_voting_all = 1;
+        } else if (strcmp(argv[i], "--debug-confusion-matrix") == 0) {
+            aa.debug_confusion = 1;
+        } else if (strcmp(argv[i], "--debug-confusion-matrix-all") == 0) {
+            aa.debug_confusion_all = 1;
         } else if (strcmp(argv[i], "--shuffle") == 0) {
             aa.shuffle = 1;
         } else if (strcmp(argv[i], "--ensembleN") == 0 && i + 1 < argc) {
@@ -1416,7 +1427,57 @@ static inline void ki_report_show(int train_ok, int train_n,
            " err=%d lr=%.4f time=%dms threads=%d\n",
            tp, train_n, ep, eval_n,
            err, (double)lr, elapsed_ms, threadN);
-    printf("============================================================\n");
+     printf("============================================================\n");
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+ * CONFUSION MATRIX — [true][pred] Tabelle (K×K), generisch
+ * ═══════════════════════════════════════════════════════════════════
+ * Kann von jedem Trainer verwendet werden.
+ * is_final: 1 = Endausgabe, 0 = per-epoch
+ */
+__attribute__((unused))
+static void print_confusion_debug(const uint8_t *y_true, const uint8_t *y_pred,
+                                   int N, int ep, int is_final) {
+    if (N <= 0) return;
+    int cm[KI_NCLASSES][KI_NCLASSES];
+    memset(cm, 0, sizeof(cm));
+    for (int s = 0; s < N; s++) {
+        int t = (int)y_true[s];
+        int p = (int)y_pred[s];
+        if (t >= 0 && t < KI_NCLASSES && p >= 0 && p < KI_NCLASSES)
+            cm[t][p]++;
+    }
+
+    printf("\n  ── Confusion Matrix %s ─────────────────────────────\n", is_final ? "(final)" : "(per epoch)");
+    if (!is_final)
+        printf("  Ep %d\n", ep + 1);
+    else
+        (void)ep;
+    printf("  %-12s", "true \\ pred");
+    for (int k = 0; k < KI_NCLASSES; k++)
+        printf("  %-7s", ki_class_names[k]);
+    printf("  %-7s\n", "err%");
+
+    printf("  %-12s", "────────────");
+    for (int k = 0; k < KI_NCLASSES; k++)
+        printf("  %-7s", "───────");
+    printf("  %-7s\n", "───────");
+
+    for (int r = 0; r < KI_NCLASSES; r++) {
+        int row_tot = 0, row_err = 0;
+        for (int cc = 0; cc < KI_NCLASSES; cc++) {
+            row_tot += cm[r][cc];
+            if (cc != r) row_err += cm[r][cc];
+        }
+        float err_pct = row_tot > 0 ? (float)row_err * 100.0f / (float)row_tot : 0.0f;
+        printf("  %-12s", ki_class_names[r]);
+        for (int cc = 0; cc < KI_NCLASSES; cc++)
+            printf("  %-7d", cm[r][cc]);
+        printf("  %6.0f%%\n", (double)err_pct);
+    }
+    printf("  ─────────────────────────────────────────────────────\n\n");
+    fflush(stdout);
 }
 
 #endif /* KI_COMMON_H */

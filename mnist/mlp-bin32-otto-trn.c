@@ -49,6 +49,7 @@ ki_Args aa = {
     .opt_target_norm    = KI_DEFAULT_TARGET_NORM,
     .ensemble_seed      = ENS_SEED_ONCE,
     .multi_correct      = 0,
+    .seed_splitmix      = 1,
 };
 
 /* ═══════════════════════════════════════════════════════════════════════
@@ -555,14 +556,12 @@ static void print_setup(int H, int epochs, int trainN, int evalN,
     printf("  Predict:     argmax  (NO training, NO AdamW)\n");
     printf("  ───────────────────────────────────────────────────────────\n");
     const char *rng_src;
-    if (aa.seed_splitmix)
-        rng_src = "splitmix64";
-    else if (aa.seed_file[0])
+    if (aa.seed_file[0])
         rng_src = "true random file";
     else
-        rng_src = "PRNG";
+        rng_src = "splitmix64";
     printf("  Seed:        seed=%u  %s", aa.seed, rng_src);
-    if (aa.seed_file[0] && !aa.seed_splitmix) {
+    if (aa.seed_file[0]) {
         printf("  from %s", aa.seed_file);
     }
     printf("  seed-member: %s", ensemble_seed_str());
@@ -949,14 +948,14 @@ static void print_class_voting_debug(ki_Member **members, int active_members,
     printf("\n  ── Class-voting stats (Ep %d) ──────────────────────────────\n", ep + 1);
     printf(FORMAT_TEXT, "member");
     for (int k = 0; k < KI_NCLASSES; k++)
-        printf("  class%-2d", k);
-    printf("  avg    \n");
+        printf("  %-7s", ki_class_names[k]);
+    printf("  %-7s\n", "avg");
 
     /* Trennlinie */
     printf(FORMAT_TEXT,"──────────────");
     for (int k = 0; k < KI_NCLASSES; k++)
-        printf("  ───────");
-    printf("  ───────\n");
+        printf("  %-7s", "───────");
+    printf("  %-7s\n", "───────");
 
     int *ok_member = (int *)calloc((size_t)active_members, sizeof(int));
     for (int m = 0; m < active_members; m++) {
@@ -1261,16 +1260,9 @@ int main(int argc, char *argv[]) {
     int NC_slice  = nc_blk / splitHN;  /* base slice (from default width) */
     int total_members = ensembleN * splitHN * eff_colors;
 
-    /* ── Default W0-Quelle: assets/random.bin suchen (bevor print_setup) ─ */
-    /* --seed-splitmix deaktiviert sowohl seed_file als auch die default-suche */
-    if (!aa.seed_file[0] && !aa.seed_splitmix) {
-        FILE *_rf = fopen("assets/random.bin", "rb");
-        if (_rf) {
-            fclose(_rf);
-            strncpy(aa.seed_file, "assets/random.bin", sizeof(aa.seed_file) - 1);
-            aa.seed_file[sizeof(aa.seed_file) - 1] = '\0';
-        }
-    }
+    /* ── Default W0-Quelle: splitmix64 PRNG (kein auto-search mehr) ─── */
+    /* --seed-file override → w0_rand_set_file() in W0 init.
+     * Mit seed_splitmix=1 (default) wird immer splitmix64 genutzt. */
 
     /* ── IFC MODE: --import → evaluieren statt trainieren ───────────── */
     if (aa.importD[0]) {
@@ -1516,6 +1508,10 @@ int main(int argc, char *argv[]) {
         memcpy(err_off, offset_ens, (size_t)total_members * KI_NCLASSES * sizeof(int64_t));
     }
 
+    /* pred_epoch: reusable prediction buffer (debug_confusion_all spart 1× evaluate_member) */
+    uint8_t *pred_epoch = (aa.debug_confusion_all && !aa.dry_run)
+        ? (uint8_t *)malloc((size_t)total_train) : NULL ;
+
     for (int ep = 0; ep < epochs; ep++) {
         /* Step für jeden Member berechnen (jeder hat seinen eigenen) */
         int display_step = 0;
@@ -1582,7 +1578,7 @@ int main(int argc, char *argv[]) {
 
         /* Evaluate: Members außen, Samples innen (cache-optimal) */
         int trn_ok = evaluate_member(X_tr, y_tr, total_train,
-                        members, active_members, (int)n_cont, NULL);
+                        members, active_members, (int)n_cont, pred_epoch);
         int evl_ok = 0;
         if (total_eval > 0) {
             evl_ok = evaluate_member(X_te, y_te, total_eval,
@@ -1678,10 +1674,15 @@ int main(int argc, char *argv[]) {
             print_member_debug(members, active_members, _x, _y2, _n, (int)n_cont, ep);
         }
 
-        /* --debug-class-voting: IMMER auf trainN (niemals eval) */
-        if (aa.debug_class_voting) {
+        /* --debug-class-voting(-all): IMMER auf trainN (niemals eval) */
+        if (aa.debug_class_voting_all) {
             print_class_voting_debug(members, active_members,
                                      X_tr, y_tr, total_train, (int)n_cont, ep);
+        }
+
+        /* --debug-confusion-matrix-all: per-epoch confusion matrix on trainN */
+        if (aa.debug_confusion_all && pred_epoch) {
+            print_confusion_debug(y_tr, pred_epoch, total_train, ep, 0);
         }
 
         if (_is_done) break;
@@ -1689,6 +1690,7 @@ int main(int argc, char *argv[]) {
     }
 
 
+    free(pred_epoch);
     free(best_ens); free(best_off);
     if (aa.err_rollback) { free(err_ens); free(err_off); }
 
@@ -1699,14 +1701,27 @@ int main(int argc, char *argv[]) {
     /* Final evaluation: mit AKTUELLEN Targets (nach letzter Korrektur) */
     int trn_ok=0, evl_ok = 0;
     uint8_t *pred_eval = aa.predictions[0] ?  (uint8_t *)ki_xcalloc((size_t)total_eval, sizeof(uint8_t)) : NULL ;
+    /* pred_tr für debug_confusion — evaluate_member nur 1× auf trainN */
+    uint8_t *pred_tr = (aa.debug_confusion && !aa.dry_run)
+        ? (uint8_t *)ki_xcalloc((size_t)total_train, sizeof(uint8_t)) : NULL ;
     if (!aa.dry_run) {
 
       trn_ok = evaluate_member(X_tr, y_tr, total_train,
-                      members, active_members, (int)n_cont, NULL);
+                      members, active_members, (int)n_cont, pred_tr);
       if (total_eval > 0)
           evl_ok = evaluate_member(X_te, y_te, total_eval,
                       members, active_members, (int)n_cont, pred_eval);
     }
+
+    /* ── Final debug output (vor member destruction) ───────── */
+    if (aa.debug_class_voting && !aa.dry_run) {
+        print_class_voting_debug(members, active_members,
+                                 X_tr, y_tr, total_train, (int)n_cont, epochs - 1);
+    }
+    if (aa.debug_confusion && !aa.dry_run) {
+        print_confusion_debug(y_tr, pred_tr, total_train, epochs - 1, 1);
+    }
+    free(pred_tr);
 
     /* Sync members → flat (für Export, da Export flat arrays liest) */
     {

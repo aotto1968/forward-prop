@@ -281,4 +281,10 @@ static void ki_write_png(const char *path,
 #define ki_dataset_read ki_mnist_read
 #define ki_dataset_free ki_mnist_free
 
+/* ── Class names (dataset-specific) ────────────────────────────── */
+__attribute__((unused))
+static const char *ki_class_names[KI_NCLASSES] = {
+    "0","1","2","3","4","5","6","7","8","9"
+};
+
 #endif /* KI_LOCAL_H */

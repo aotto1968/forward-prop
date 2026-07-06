@@ -269,14 +269,14 @@ int main(int argc, char *argv[]) {
     int H = aa.hidden;
 
     /* ── IFC MODE: --import → evaluate only ───────────────────── */
-    if (aa.model[0]) {
+    if (aa.importD[0]) {
         printf("\n══╡ INFERENCE ╞══════════════════════════════════════════════════\n");
         /* Load per-member weights */
         int n_loaded = 0;
         ki_LinearLayer l0_arr[ADAM_MAX_MEM], l1_arr[ADAM_MAX_MEM];
         for (int i = 0; i < ADAM_MAX_MEM; i++) {
             char path[1024]; int nlay, hh, ncc, kk, hh2;
-            snprintf(path, sizeof(path), "%s/weights-%d.meta", aa.model, i);
+            snprintf(path, sizeof(path), "%s/weights-%d.meta", aa.importD, i);
             FILE *f = fopen(path, "r");
             if (!f) break;
             if (fscanf(f, "%d\n%d %d\n%d %d", &nlay, &hh, &ncc, &kk, &hh2) != 5
@@ -290,10 +290,10 @@ int main(int argc, char *argv[]) {
             l1_arr[i].in_features = hh;
             l1_arr[i].out_features = N_CLASSES;
             l1_arr[i].W = (float *)malloc((size_t)N_CLASSES * (size_t)hh * sizeof(float));
-            snprintf(path, sizeof(path), "%s/W0-%d.bin", aa.model, i);
+            snprintf(path, sizeof(path), "%s/W0-%d.bin", aa.importD, i);
             FILE *fw = fopen(path, "rb");
             if (fw) { fread(l0_arr[i].W, sizeof(float), (size_t)hh * (size_t)ncc, fw); fclose(fw); }
-            snprintf(path, sizeof(path), "%s/W1-%d.bin", aa.model, i);
+            snprintf(path, sizeof(path), "%s/W1-%d.bin", aa.importD, i);
             fw = fopen(path, "rb");
             if (fw) { fread(l1_arr[i].W, sizeof(float), (size_t)N_CLASSES * (size_t)hh, fw); fclose(fw); }
             n_loaded++;
@@ -381,9 +381,10 @@ int main(int argc, char *argv[]) {
 
     /* ── MEMBER section ──────────────────────────────────────── */
     printf("\n══╡ MEMBER ╞══════════════════════════════════════════════════\n");
-    printf("  Grid: EN[%d] × base[%d] = %d members%s, each: W0[%d × %d]  W1[%d × %d]\n",
+    printf("  Grid: EN[%d] × base[%d] = %d members%s\n",
            aa.ensembleN, base_n_mem, n_mem,
-           use_members ? "" : " (flat)",
+           use_members ? "" : " (flat)");
+    printf("  Per member: W0[H=%d × I=%d], W1[K=%d × H=%d]\n",
            H, (int)mem_nc[0], N_CLASSES, H);
     /* Build arrays for ki_print_member_structure */
     int c[ADAM_MAX_MEM], t[ADAM_MAX_MEM], w[ADAM_MAX_MEM];
@@ -539,14 +540,14 @@ int main(int argc, char *argv[]) {
                          + (tv_end.tv_usec - tv_start.tv_usec) / 1000);
 
     /* ── EXPORT (per-member, only with --export) ────────────────── */
-    if (!aa.dry_run && aa.out[0]) {
+    if (!aa.dry_run && aa.exportD[0]) {
         for (int m = 0; m < n_mem && m < ADAM_MAX_MEM; m++)
-            export_member(best_W0[m], best_W1[m], H, mem_nc[m], aa.out, m);
+            export_member(best_W0[m], best_W1[m], H, mem_nc[m], aa.exportD, m);
         size_t total_kb = 0;
         for (int m = 0; m < n_mem && m < ADAM_MAX_MEM; m++)
             total_kb += ((size_t)H * (size_t)mem_nc[m] + (size_t)N_CLASSES * (size_t)H) * sizeof(float);
         printf("\n══╡ EXPORT ╞════════════════════════════════════════════════\n");
-        printf("  Model:  %s  (%d members, H=%d)\n", aa.out, n_mem, H);
+        printf("  Model:  %s  (%d members, H=%d)\n", aa.exportD, n_mem, H);
         printf("  Total:  %zu KB  (%d × (W0=%zuB + W1=%zuB))\n",
                total_kb / 1024, n_mem,
                (size_t)H * (size_t)mem_nc[0] * sizeof(float) / 1024,

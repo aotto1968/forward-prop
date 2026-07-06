@@ -8,7 +8,7 @@
 #   cifar/  — Otto Score, Hebbian, Adam for CIFAR (symlinks to mnist/)
 # ==============================================================
 
-.PHONY: all otto adam hebbian setup clean \
+.PHONY: all otto adam hebbian vis-errors setup clean \
         test test-mnist test-cifar \
         test-mnist-otto test-mnist-adam test-mnist-hebbian \
         test-cifar-otto test-cifar-adam test-cifar-hebbian \
@@ -26,6 +26,9 @@ cifar:    ; $(MAKE) -s -C cifar all
 otto:     mnist cifar
 hebbian:  mnist cifar
 adam:     mnist cifar
+vis-errors:
+	$(MAKE) -s -C mnist vis-errors
+	$(MAKE) -s -C cifar vis-errors
 
 # ═══════════════════════════════════════════════════════════════
 # Dataset setup

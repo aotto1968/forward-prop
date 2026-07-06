@@ -586,8 +586,8 @@ static void print_member_structure(int ensembleN, int splitVN, int splitHN,
     printf("\n══╡ MEMBER ╞══════════════════════════════════════════════════\n");
     printf("  Grid: ENSEMBLE[%d] × COLOR[%d] × HN[%d] = %d members\n",
            ensembleN, eff_colors, splitHN, total);
-    printf("  Per member: W0[%d × %d], Target[%d × %d × V=%d]\n",
-           KI_NCLASSES, H_local, NC_slice, H_local, 32 / splitVN);
+    printf("  Per member: W0[H=%d × I=%d], Target[K=%d × H=%d × V=%d]\n",
+           H_local, NC_slice, KI_NCLASSES, H_local, 32 / splitVN);
     int max_col = eff_colors;
     /* Build arrays for ki_print_member_structure, lookup encoding */
     int _c[64], _t[64], _w[64];
@@ -1273,10 +1273,10 @@ int main(int argc, char *argv[]) {
     }
 
     /* ── IFC MODE: --import → evaluieren statt trainieren ───────────── */
-    if (aa.model[0]) {
+    if (aa.importD[0]) {
         printf("\n══╡ INFERENCE ╞══════════════════════════════════════════════════\n");
         char model_path[1024];
-        snprintf(model_path, sizeof(model_path), "%s/model.otto", aa.model);
+        snprintf(model_path, sizeof(model_path), "%s/model.otto", aa.importD);
         uint32_t *W0_ifc; int32_t *tgt_ifc; int64_t *off_ifc;
         int n_mifc, hl_ifc, ns_ifc;
         if (ifc_load_model(model_path, &W0_ifc, &tgt_ifc, &off_ifc,
@@ -1293,8 +1293,11 @@ int main(int argc, char *argv[]) {
             memcpy(mems[i]->offset, off_ifc + (size_t)i * K, (size_t)K * sizeof(int64_t));
         }
         /* Evaluate (no correction, just forward) */
+        uint8_t *pred_eval = aa.predictions[0]
+            ? (uint8_t *)ki_xcalloc((size_t)total_eval, sizeof(uint8_t))
+            : NULL;
         struct timeval tv0, tv1; gettimeofday(&tv0, NULL);
-        int evl_ok = evaluate_member(X_te, y_te, total_eval, mems, n_mifc, (int)n_cont, NULL);
+        int evl_ok = evaluate_member(X_te, y_te, total_eval, mems, n_mifc, (int)n_cont, pred_eval);
         gettimeofday(&tv1, NULL);
         int el = (int)((tv1.tv_sec-tv0.tv_sec)*1000 + (tv1.tv_usec-tv0.tv_usec)/1000);
         float acc = (float)evl_ok * 100.0f / (float)total_eval;
@@ -1302,6 +1305,25 @@ int main(int argc, char *argv[]) {
         printf("  Eval:    %.1f%%  (%d/%d)\n", acc, evl_ok, total_eval);
         printf("  Time:    %dms\n", el);
         ki_report_show(0, 0, evl_ok, total_eval, el, aa.threadN, 0, 0.0f);
+        /* ── Export per-sample predictions (for vis-errors) ─ */
+        if (aa.predictions[0] && pred_eval) {
+            FILE *pf = fopen(aa.predictions, "wb");
+            if (pf) {
+                uint32_t magic = 0x44455250;
+                uint32_t n_eval = (uint32_t)total_eval;
+                uint32_t off = 0;
+                fwrite(&magic, 4, 1, pf);
+                fwrite(&n_eval, 4, 1, pf);
+                fwrite(&off, 4, 1, pf);
+                fwrite(pred_eval, 1, (size_t)total_eval, pf);
+                fclose(pf);
+                printf("  Predictions: %s  (%d eval samples)\n",
+                       aa.predictions, total_eval);
+            } else {
+                fprintf(stderr, "[ERROR] Cannot write %s\n", aa.predictions);
+            }
+        }
+        free(pred_eval);
         for (int i = 0; i < n_mifc; i++) ki_member_destroy(mems[i]);
         free(mems); free(W0_ifc); free(tgt_ifc); free(off_ifc);
         ki_dataset_free(&data); free(X_all);
@@ -1423,8 +1445,8 @@ int main(int argc, char *argv[]) {
 
     {
         int step = (int)(aa.lr * (float)OT_F + 0.5f);
-        printf("══╡ TRAINING ╞══  lr=%.4f  step=%d  mode=%s  enc=%s  F=%d",
-             (double)aa.lr, step, mode_str(), enc_str(), OT_F);
+        printf("══╡ TRAINING ╞══  lr=%.4f  step=%d  mode=%s  F=%d",
+             (double)aa.lr, step, mode_str(), OT_F);
         if (aa.opt_target_norm)
             printf("  tgt-nrm=%d", aa.opt_target_norm ? 1 : 0);
         if (aa.target_err > 0.0f)
@@ -1719,8 +1741,8 @@ int main(int argc, char *argv[]) {
     ki_report_show(trn_ok, total_train, evl_ok, total_eval,
                    elapsed_ms, aa.threadN, fin_err, aa.lr);
 
-    if (aa.out[0] != '\0')
-        export_ensemble(aa.out, W0_ens, H, total_members, target_ens, offset_ens,
+    if (aa.exportD[0] != '\0')
+        export_ensemble(aa.exportD, W0_ens, H, total_members, target_ens, offset_ens,
                         H_local, NC_slice, (int)n_cont);
 
     /* ── Export per-sample predictions (eval only, for vis-errors) ─ */

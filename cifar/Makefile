@@ -22,9 +22,9 @@ LDLIBS   = -lm -lz
 
 MODEL_DIR = ../models
 
-.PHONY: all otto hebbian adam clean setup model-otto model-hebb model-adam
+.PHONY: all otto hebbian adam vis-errors clean setup model-otto model-hebb model-adam
 
-all: otto hebbian adam
+all: otto hebbian adam vis-errors
 
 # ── Dataset ────────────────────────────────────────────────
 setup:
@@ -92,6 +92,18 @@ model-adam: cifar-mlp-flt32-adam-trn.exe
 	@mkdir -p $(MODEL_DIR)/cifar-adam-h256-e5
 	@./cifar-mlp-flt32-adam-trn.exe --hiddenN 256 --epochsN 5 \
 	  --encoding latest --export $(MODEL_DIR)/cifar-adam-h256-e5 2>&1 | grep '^REPORT'
+
+# ═══════════════════════════════════════════════════════════
+# Error Visualizer (CIFAR rgb via ki-local.h)
+# ═══════════════════════════════════════════════════════════
+VIS_SRC = mlp-otto-vis-errors.c
+
+vis-errors: cifar-mlp-otto-vis-errors.exe
+
+cifar-mlp-otto-vis-errors.exe: $(VIS_SRC) ki-common.h
+	$(CC) $(CFLAGS) \
+	  -Wno-sign-conversion -Wno-unused-parameter -Wno-unused-function \
+	  -o $@ $< $(LDLIBS)
 
 # ── Clean ──────────────────────────────────────────────────
 clean:

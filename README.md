@@ -99,6 +99,7 @@ Each trainer doubles as inference engine via `--import`. Zero code drift.
 | `--ensembleN N`        | Independent W0 copies                                | 1       |
 | `--export DIR`         | Model export directory                               | none    |
 | `--import DIR`         | Load model for inference                             | none    |
+| `--predictions FILE`   | Export per-sample predictions (for vis-errors tool)  | none    |
 | `--dry-run`            | Print architecture and exit (metadata only, instant) | off     |
 | `--seed N`             | Random seed                                          | 42      |
 | `--seed-member MODE`   | Member seed strategy (once, const, incr)             | once    |
@@ -159,6 +160,44 @@ All trainers export per-member weights via `--export DIR`:
 ```
 
 Without `--export`, no files are written (training-only mode).
+
+## Error Visualization via `--predictions`
+
+Jeder Trainer kann per-sample predictions exportieren. Der integrierte
+**Error Visualizer** erzeugt ein index.html mit allen Samples, sortiert
+nach Klasse — Fehler rot markiert.
+
+MNIST (grayscale PNG, 28×28):
+
+```bash
+# Schritt 1: predictions erzeugen
+./mnist/mnist-mlp-bin32-otto-trn-xnor.exe \
+  --import models/mnist-otto-h512-e10 \
+  --evalN 10000 --encoding exp \
+  --predictions /tmp/mnist-preds.bin
+
+# Schritt 2: visualisieren
+./mnist/mnist-mlp-otto-vis-errors.exe \
+  --predictions /tmp/mnist-preds.bin \
+  --export vis/ --max 200
+# → vis/index.html (browser-ready)
+```
+
+CIFAR-10 (color RGB PNG, 32×32):
+
+```bash
+./cifar/cifar-mlp-bin32-otto-trn-xnor.exe \
+  --import models/cifar-otto-h256-e5 \
+  --evalN 10000 --encoding latest \
+  --predictions /tmp/cifar-preds.bin
+
+./cifar/cifar-mlp-otto-vis-errors.exe \
+  --predictions /tmp/cifar-preds.bin \
+  --export vis-cifar/ --max 200
+```
+
+`cifar-mlp-otto-vis-errors.exe` nutzt dataset-spezifisches `ki_write_png()`
+aus `ki-local.h` (color RGB für CIFAR, grayscale für MNIST).
 
 ## Results Summary
 

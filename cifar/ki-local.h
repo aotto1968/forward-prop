@@ -272,6 +272,79 @@ static inline void ki_cifar_free(ki_ImageData *data) {
     memset(data, 0, sizeof(*data));
 }
 
+/* ── PNG writer (dataset-specific: color RGB for CIFAR-10) ── */
+__attribute__((unused))
+static void _png_be32(FILE *f, uint32_t v) {
+    uint8_t buf[4] = {
+        (uint8_t)((v >> 24) & 0xFF),
+        (uint8_t)((v >> 16) & 0xFF),
+        (uint8_t)((v >>  8) & 0xFF),
+        (uint8_t)( v        & 0xFF)
+    };
+    fwrite(buf, 1, 4, f);
+}
+
+__attribute__((unused))
+static void _png_chunk(FILE *f, const char type[4],
+                        const void *data, size_t len) {
+    unsigned long crc = crc32(0L, NULL, 0);
+    _png_be32(f, (uint32_t)len);
+    crc = crc32(crc, (const unsigned char *)type, 4);
+    fwrite(type, 1, 4, f);
+    if (len > 0 && data) {
+        crc = crc32(crc, (const unsigned char *)data, (unsigned int)len);
+        fwrite(data, 1, len, f);
+    }
+    _png_be32(f, (uint32_t)(crc & 0xFFFFFFFFUL));
+}
+
+__attribute__((unused))
+static void ki_write_png(const char *path,
+                          const uint8_t *r, const uint8_t *g,
+                          const uint8_t *b, int w, int h) {
+    FILE *f = fopen(path, "wb");
+    if (!f) { fprintf(stderr, "[ERROR] Cannot write %s\n", path); return; }
+
+    uint8_t sig[8] = {137,80,78,71,13,10,26,10};
+    fwrite(sig, 1, 8, f);
+
+    uint8_t ihdr[13];
+    for (int i = 0; i < 4; i++) {
+        ihdr[3-i] = (uint8_t)((uint32_t)w >> (i*8));
+        ihdr[7-i] = (uint8_t)((uint32_t)h >> (i*8));
+    }
+    ihdr[8]  = 8;  ihdr[9]  = 2;  ihdr[10] = 0;  ihdr[11] = 0;  ihdr[12] = 0;
+    _png_chunk(f, "IHDR", ihdr, 13);
+
+    size_t row_bytes = (size_t)w * 3;
+    size_t raw_size = (size_t)h * (1 + row_bytes);
+    uint8_t *raw = (uint8_t *)malloc(raw_size);
+    for (int y = 0; y < h; y++) {
+        size_t y_off = (size_t)y * (1 + row_bytes);
+        raw[y_off] = 0;
+        for (int x = 0; x < w; x++) {
+            size_t off = (size_t)y * (size_t)w + (size_t)x;
+            size_t dst = y_off + 1 + (size_t)x * 3;
+            raw[dst + 0] = r[off];
+            raw[dst + 1] = g[off];
+            raw[dst + 2] = b[off];
+        }
+    }
+
+    uLongf comp_len = compressBound(raw_size);
+    uint8_t *comp = (uint8_t *)malloc(comp_len);
+    if (compress(comp, &comp_len, raw, raw_size) != Z_OK) {
+        fprintf(stderr, "[ERROR] PNG compression failed: %s\n", path);
+        free(raw); free(comp); fclose(f); return;
+    }
+    _png_chunk(f, "IDAT", comp, comp_len);
+    _png_chunk(f, "IEND", NULL, 0);
+
+    fclose(f);
+    free(raw);
+    free(comp);
+}
+
 /* Dataset function aliases */
 #define ki_dataset_read ki_cifar_read
 #define ki_dataset_free ki_cifar_free

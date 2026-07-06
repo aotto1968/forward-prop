@@ -22,9 +22,9 @@ LDLIBS   = -lm -lz
 
 MODEL_DIR = ../models
 
-.PHONY: all otto hebbian adam clean setup model-otto model-hebb model-adam
+.PHONY: all otto hebbian adam vis-errors clean setup model-otto model-hebb model-adam
 
-all: otto hebbian adam
+all: otto hebbian adam vis-errors
 
 # ── Dataset ────────────────────────────────────────────────
 setup:
@@ -92,6 +92,18 @@ model-adam: mnist-mlp-flt32-adam-trn.exe
 	@mkdir -p $(MODEL_DIR)/mnist-adam-h512-e10
 	@./mnist-mlp-flt32-adam-trn.exe --hiddenN 512 --epochsN 10 \
 	  --export $(MODEL_DIR)/mnist-adam-h512-e10 2>&1 | grep '^REPORT'
+
+# ═══════════════════════════════════════════════════════════
+# Error Visualizer (MNIST + CIFAR via ki-local.h)
+# ═══════════════════════════════════════════════════════════
+VIS_SRC = mlp-otto-vis-errors.c
+
+vis-errors: mnist-mlp-otto-vis-errors.exe
+
+mnist-mlp-otto-vis-errors.exe: $(VIS_SRC) ki-common.h
+	$(CC) $(CFLAGS) \
+	  -Wno-sign-conversion -Wno-unused-parameter -Wno-unused-function \
+	  -o $@ $< $(LDLIBS)
 
 # ── Clean ──────────────────────────────────────────────────
 clean:

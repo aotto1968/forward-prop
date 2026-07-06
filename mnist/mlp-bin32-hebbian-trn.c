@@ -363,15 +363,15 @@ int main(int argc, char *argv[]) {
 
     /* ── Dry run (before data loading) ────────────────────────── */
     /* ── IFC: --import ──────────────────────────────────────────── */
-    if (aa.model[0]) {
+    if (aa.importD[0]) {
         /* Count members from directory */
         Bin32Model *models[KI_ENC_MAX];
         int n_loaded = 0;
         for (int i = 0; i < KI_ENC_MAX; i++) {
-            models[i] = member_load(aa.model, i);
+            models[i] = member_load(aa.importD, i);
             if (models[i]) n_loaded++; else break;
         }
-        if (n_loaded == 0) { fprintf(stderr, "[FATAL] No members in %s\n", aa.model); return 1; }
+        if (n_loaded == 0) { fprintf(stderr, "[FATAL] No members in %s\n", aa.importD); return 1; }
 
         ki_Dataset data = { .dry_run = aa.dry_run };
         if (ki_dataset_read(&data) != 0 || data.pixels != KI_PX) return 1;
@@ -496,6 +496,9 @@ int main(int argc, char *argv[]) {
     printf("\n══╡ MEMBER ╞══════════════════════════════════════════════════\n");
     printf("  Grid: EN[%d] × base[%d] = %d members\n",
            aa.ensembleN, n_enc, total_members);
+    printf("  Per member: W0[H=%d × I=%d], W1[K=%d × H=%d]\n",
+           H, mem_nc[0] > 0 ? mem_nc[0] : (KI_COLORS > 1 ? KI_NC : NC),
+           N_CLASSES, H);
     /* Build arrays for ki_print_member_structure */
     int _c[KI_ENC_MAX], _t[KI_ENC_MAX], _w[KI_ENC_MAX];
     for (int i = 0; i < n_enc && i < KI_ENC_MAX; i++) {
@@ -555,11 +558,11 @@ int main(int argc, char *argv[]) {
     int train_ok = (int)(best_acc * (float)aa.trainN / 100.0f + 0.5f);
     ki_report_show(train_ok, aa.trainN, eval_ok, te, ms, aa.threadN, 0, 0.0f);
 
-    if (aa.out[0]) {
+    if (aa.exportD[0]) {
         printf("\n══╡ EXPORT ╞════════════════════════════════════════════════\n");
         for (int m = 0; m < total_members && m < HEB_MAX_MEM; m++)
-            member_export(W0s[m], W1s[m], H, ncs[m], aa.out, m);
-        printf("  Model:  %s  (%d members, H=%d)\n", aa.out, total_members, H);
+            member_export(W0s[m], W1s[m], H, ncs[m], aa.exportD, m);
+        printf("  Model:  %s  (%d members, H=%d)\n", aa.exportD, total_members, H);
     }
 
     for (int m = 0; m < total_members && m < HEB_MAX_MEM; m++) {

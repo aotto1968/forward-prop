@@ -235,7 +235,7 @@ typedef struct {
     int    dry_run;         /* --dry-run: print arch and exit */
     int    debug;           /* --debug: verbose output */
     unsigned int seed;      /* Random seed (--seed, default: 42) */
-    char   out[256];        /* --export DIR: export directory */
+    char   exportD[256];    /* --export DIR: export directory */
     char   predictions[256]; /* --predictions FILE: export per-sample predictions (for vis-errors) */
     float  lr;              /* Step size (--lr, default: 0.05) */
     float  lr_min;          /* Min LR fraction (--lr-min, default: 0.1) */
@@ -266,7 +266,7 @@ typedef struct {
     int         enc_count;             /* Anzahl Einträge in enc_array */
     int    opt_target_norm;    /* --optional target-norm: vote normalisierung aktivieren */
     char   seed_file[256]; /* --seed-file PATH: true random source */
-    char   model[512];    /* --import DIR: load model for inference */
+    char   importD[512];    /* --import DIR: load model for inference */
     int    seed_splitmix;  /* --seed-splitmix: ignore seed_file, use splitmix64 PRNG */
     int    multi_correct;  /* --multi-correct: alle über true_k bestrafen (default: 1) */
     int    ensemble_seed;    /* ENS_SEED_ONCE|CONST|INCR (default: ONCE) */
@@ -363,6 +363,7 @@ static inline void ki_parse_args(int argc, char *argv[]) {
             printf("                    raw    no encoding (raw 8-bit bytes).\n");
             printf("  --export DIR      Export directory                                              (default: none)\n");
             printf("  --import DIR      Load model for inference                                      (default: none)\n");
+            printf("  --predictions FILE Export per-sample predictions (for vis-errors, eval only)     (default: none)\n");
             printf("  --optional target-norm  Vote normalisierung (equal voting power)                (default: off)\n");
             printf("  --?no-?multi-correct  Only punish argmax, not all over true_k                   (default: multi-correct)\n");
             printf("  ---------------------------------------------------------------------------------------------\n");
@@ -445,15 +446,15 @@ static inline void ki_parse_args(int argc, char *argv[]) {
             aa.seed = (unsigned int)atoi(argv[++i]);
         } else if (strcmp(argv[i], "--export") == 0 || strcmp(argv[i], "--export") == 0) {
             if (i + 1 >= argc) { fprintf(stderr, "[ERROR] --export DIR\n"); exit(1); }
-            strncpy(aa.out, argv[++i], sizeof(aa.out) - 1);
-            aa.out[sizeof(aa.out) - 1] = '\0';
+            strncpy(aa.exportD, argv[++i], sizeof(aa.exportD) - 1);
+            aa.exportD[sizeof(aa.exportD) - 1] = '\0';
         } else if (strcmp(argv[i], "--predictions") == 0 && i + 1 < argc) {
             strncpy(aa.predictions, argv[++i], sizeof(aa.predictions) - 1);
             aa.predictions[sizeof(aa.predictions) - 1] = '\0';
         } else if (strcmp(argv[i], "--import") == 0 || strcmp(argv[i], "--import") == 0) {
             if (i + 1 >= argc) { fprintf(stderr, "[ERROR] --import DIR\n"); exit(1); }
-            strncpy(aa.model, argv[++i], sizeof(aa.model) - 1);
-            aa.model[sizeof(aa.model) - 1] = '\0';
+            strncpy(aa.importD, argv[++i], sizeof(aa.importD) - 1);
+            aa.importD[sizeof(aa.importD) - 1] = '\0';
         } else if (strcmp(argv[i], "--debug-h0") == 0) {
             aa.debug_h0 = 1;
         } else if (strcmp(argv[i], "--debug-class-voting") == 0) {

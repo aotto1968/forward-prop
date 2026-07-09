@@ -1,0 +1,527 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Otto Score: 99% MNIST, 58% CIFAR — DRAM-Native Status Paper</title>
+    <meta name="description" content="Status paper: Otto Score reaches 99.0% on MNIST and 58.7% on CIFAR-10 using pure &amp;|~ + int32. Thermometer encoding, per-channel encoding, cos-time step decay.">
+    <meta name="author" content="Andreas Otto">
+    <meta name="robots" content="index, follow">
+    <meta name="googlebot" content="index, follow">
+    <link rel="icon" type="image/svg+xml" href="../assets/favicon.svg">
+    <link rel="stylesheet" href="../style.css">
+    <link rel="canonical" href="https://forward-prop.nhi1.de/papers/otto-score-summary-2026-06.html">
+    <meta property="og:title" content="Otto Score — DRAM-Native Classification, 99% MNIST / 58% CIFAR">
+    <meta property="og:description" content="Complete status paper: thermometer encoding bridges number-world/binary-world gap. Per-channel encoding, cos-time step decay, data-limited scaling law.">
+    <meta property="og:type" content="article">
+    <meta property="og:url" content="https://forward-prop.nhi1.de/papers/otto-score-summary-2026-06.html">
+    <meta property="og:image" content="https://forward-prop.nhi1.de/assets/og-image.png">
+    <meta property="og:site_name" content="Forward-Prop Research">
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="Otto Score — 99% MNIST / 58% CIFAR — DRAM-Native Bit-Logic">
+    <meta name="twitter:description" content="Thermometer encoding, per-channel encoding, cos-time step decay. Pure &amp;|~ + int32 classification — no float, no multiply-accumulate.">
+    <meta name="twitter:image" content="https://forward-prop.nhi1.de/assets/og-image.png">
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "ScholarlyArticle",
+      "headline": "Otto Score: DRAM-native Classification via Bit-Logic + MAJ3",
+      "description": "Status paper June 2026. Otto Score reaches 99.0% MNIST and 58.7% CIFAR-10 using pure &amp;|~ + int32. Thermometer encoding, per-channel encoding selection, cos-time step decay.",
+      "author": { "@type": "Person", "name": "Andreas Otto" },
+      "datePublished": "2026-06-14",
+      "dateModified": "2026-06-29",
+      "about": { "@type": "Thing", "name": "Otto Score DRAM-Native Classifier", "description": "DRAM-native classifier using only &amp;|~ operations and int32 Bayes log-Score." }
+    }
+    </script>
+</head>
+<body>
+
+<header>
+    <div class="header-inner">
+        <div class="header-brand">
+            <span class="header-logo">Otto Score</span>
+            <span class="header-subtitle">DRAM-Native &amp;|~ Classification</span>
+        </div>
+        <nav>
+            <ul>
+                <li><a href="../index.html">Home</a></li>
+                <li><a href="otto-score-summary-2026-06.html">Status Paper</a></li>
+            </ul>
+        </nav>
+    </div>
+</header>
+
+<main>
+
+<div class="container" style="max-width:900px;">
+
+<h1 style="font-size:2rem; color:var(--navy); margin-bottom:0.25rem;">Otto Score: DRAM-native Classification via Bit-Logic + MAJ3</h1>
+<p style="font-size:1rem; color:var(--mid-gray); margin-bottom:2rem;"><strong>Status Paper — June 2026</strong> &nbsp;|&nbsp; forward-prop research project</p>
+
+<!-- ── Abstract ── -->
+<h2><span class="accent-bar">&#8203;</span> Abstract</h2>
+<div class="abstract-box">
+<p>We present <strong>Otto Score</strong>, a classification method designed for DRAM inference chips that use <strong>only bit-level operations</strong> (<code>&amp;</code>, <code>|</code>, <code>~</code>, <code>XNOR</code>, <code>popcount</code>). No floating-point, no integer multiply-accumulate, no division during inference.</p>
+<p>The method achieves <strong>99.0% on MNIST</strong> and <strong>58.7% on CIFAR-10</strong> using pure <code>&amp;|~</code> + int32 at inference time. Training uses float32 SGD as a compromise (gradients need continuous values), but the trained model is exported to pure integer weights for deployment.</p>
+<p><strong>Key architectural insight:</strong> Every ensemble member is computed independently and in parallel. Adding more members increases accuracy without increasing inference latency — members simply occupy more DRAM rows running simultaneously.</p>
+</div>
+
+<!-- ── Terminology ── -->
+<h2 style="margin-top:2.5rem;"><span class="accent-bar">&#8203;</span> Terminology</h2>
+<div class="table-wrapper">
+<table class="compare-table">
+<thead><tr><th>Term</th><th>Definition</th></tr></thead>
+<tbody>
+<tr><td>Channel</td><td>A transformed view of the input pixels (e.g., Luminance, Red-Green opponent, Hue). Each channel produces NC_slice uint32 containers per image.</td></tr>
+<tr><td>Encoding</td><td>A bit-level mapping from pixel values to thermometer patterns (e.g., <code>exp8</code>, <code>sig8</code>). Converts continuous float values to binary patterns with similar-popcount adjacency.</td></tr>
+<tr><td>Member</td><td>One independent classifier: one frozen random W0 matrix + one trained target matrix. A member sees exactly one channel with one encoding.</td></tr>
+<tr><td>Ensemble</td><td>A collection of members whose scores are summed for the final prediction. Members are <strong>parallel by design</strong> — each occupies a separate DRAM row.</td></tr>
+<tr><td>HiddenN (H)</td><td>Number of MAJ3 neurons per member. Each neuron produces 32 bits (one uint32) via bitwise majority voting. The total H0 output per member is H × 32 bits.</td></tr>
+<tr><td>MAJ3</td><td>Majority-of-3: compresses NC_slice uint32 containers into 32 bits via bitwise majority voting. A lossy but noise-robust projection.</td></tr>
+<tr><td>W0</td><td>The frozen random projection matrix (uint32 bit patterns). Never trained.</td></tr>
+<tr><td>Target</td><td>The trained log-odds correction matrix (int32 per class × neuron × bit). The only learned parameter.</td></tr>
+<tr><td>NC_slice</td><td>Number of uint32 containers per member input. Determined by <code>splitHN</code> (horizontal split factor).</td></tr>
+<tr><td>trainN / evalN</td><td>Number of training / evaluation samples.</td></tr>
+<tr><td>epochsN (Ep)</td><td>Number of iterative correction passes over the training data.</td></tr>
+<tr><td>step-err</td><td>Step decay mode: <code>cos-time</code>, <code>pow</code>, <code>cos-err</code>, <code>const</code>.</td></tr>
+<tr><td>target-err</td><td>Soft convergence target: training stops when error rate drops below threshold.</td></tr>
+<tr><td>Bit-Mass</td><td>Total information capacity: <code>H × EN × 32 bits per neuron</code>.</td></tr>
+<tr><td>Container</td><td>A uint32 value packing multiple pixels (typically 4 pixels × 8 bits). The unit of MAJ3 voting.</td></tr>
+</tbody>
+</table>
+</div>
+
+<!-- ── 1. Parallelism ── -->
+<h2 style="margin-top:2.5rem;"><span class="accent-bar">&#8203;</span> 1. Parallelism: More Members, Same Latency</h2>
+<p>Every ensemble member is a <strong>fully independent classifier</strong>:</p>
+<pre style="background:#1a1a2e; color:#e0e0e0; padding:1rem; border-radius:8px; font-size:0.82rem;">
+Member 0: channel_0 + encoding_0  →  W0[0]  →  MAJ3  →  target[0]  →  score_0[c]
+Member 1: channel_1 + encoding_1  →  W0[1]  →  MAJ3  →  target[1]  →  score_1[c]
+Member 2: channel_2 + encoding_2  →  W0[2]  →  MAJ3  →  target[2]  →  score_2[c]  → SUM → argmax
+...
+Member N: channel_N + encoding_N  →  W0[N]  →  MAJ3  →  target[N]  →  score_N[c]</pre>
+<p>On a DRAM chip, each member occupies <strong>one row</strong> (or a small group of rows). All members compute simultaneously — the chip's row buffers activate every member's W0 in parallel. Score summing is a lightweight reduction.</p>
+<p><strong>Consequence:</strong> Accuracy is limited by <strong>data, not by compute time.</strong> Doubling the ensemble (EN: 7 → 17) costs zero additional inference latency. On MNIST, adding members from EN=1 to EN=17 gains +8pp (89.9% → 97.6%) with no runtime penalty at chip level.</p>
+
+<div class="highlight-box">
+<strong>DRAM row budget:</strong> A modern DDR5 bank has 65,536 rows. With H=128 neurons per member, that's enough for <strong>512 members in parallel</strong> — far beyond what our experiments have tested.
+</div>
+
+<!-- ── 2. Methodic ── -->
+<h2 style="margin-top:2.5rem;"><span class="accent-bar">&#8203;</span> 2. Methodic: The Number World vs Binary World</h2>
+
+<h3>2.1 The Core Problem</h3>
+<p>A DRAM chip can perform bitwise operations on entire rows in parallel — but it cannot efficiently multiply or add floating-point numbers. Every input pixel must be represented as a <strong>bit pattern</strong> that the chip can compare via XNOR + popcount.</p>
+<p>This creates a fundamental tension: <strong>integer/floating-point values are continuous, but binary patterns are discrete.</strong></p>
+
+<h3>2.2 MNIST: When Raw Input Works</h3>
+<p>MNIST handwritten digits are <strong>binary by nature</strong>: each pixel is either "ink" (>128, treat as 1) or "paper" (<128, treat as 0). When packed into uint32 containers, the resulting 32-bit pattern directly represents the digit's shape. No encoding transformation is needed.</p>
+<pre style="background:#1a1a2e; color:#e0e0e0; padding:0.6rem 1rem; border-radius:8px; font-size:0.82rem;">
+Raw MNIST pixel (8-bit):   0x00 0xFF 0xFF 0x00  → 0x00FF00FF
+                            (paper, ink, ink, paper)</pre>
+<p>Standard Otto Score reaches <strong>86% in 1 pass</strong> and <strong>97%+ with iteration</strong> on MNIST without any special encoding — the signal is already binary.</p>
+
+<h3>2.3 CIFAR: The Continuity Requirement</h3>
+<p>CIFAR-10 color images have <strong>grayscale gradients</strong>. A pixel value of 127 and 128 differ by only 1 in the number world, but in raw 8-bit binary they differ by up to 8 bits (0x7F → 0x80 = bit pattern flip from 01111111 to 10000000). This <strong>discontinuity</strong> breaks the XNOR+popcount similarity measure.</p>
+
+<h3>2.4 The Solution: Thermometer Encoding</h3>
+<p><strong>Thermometer encoding</strong> restores continuity: each value v (0–255) is mapped to a pattern where the first <code>v>>s</code> bits are 1, the rest 0:</p>
+<pre style="background:#1a1a2e; color:#e0e0e0; padding:0.6rem 1rem; border-radius:8px; font-size:0.82rem;">
+raw 8-bit:  127→0x7F (popcount=7)    128→0x80 (popcount=1)    ← DISCONTINUOUS
+thermometer:127→0x1F (popcount=5)     128→0x20 (popcount=6)    ← CONTINUOUS</pre>
+<p>Two adjacent values now have <strong>similar popcount</strong> — the bit-level similarity reflects the numerical similarity.</p>
+
+<!-- ── 2.5 Channels + Encodings ── -->
+<h3 style="margin-top:2rem;">2.5 Channels + Encodings Define a Member</h3>
+<p>Every member is defined by the pair (channel, encoding). Multiple members can share the same channel with different encodings, or the same encoding on different channels.</p>
+
+<h4>Channels</h4>
+<div class="table-wrapper">
+<table class="compare-table">
+<thead><tr><th>Token</th><th>Name</th><th>Formula</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><code>r</code></td><td>Red</td><td>raw R</td><td>Raw red pixel</td></tr>
+<tr><td><code>g</code></td><td>Green</td><td>raw G</td><td>Raw green pixel</td></tr>
+<tr><td><code>b</code></td><td>Blue</td><td>raw B</td><td>Raw blue pixel</td></tr>
+<tr><td><code>y</code></td><td>Luminance (BT.601)</td><td>(77R+150G+29B)&gt;&gt;8</td><td>Broadcast luminance</td></tr>
+<tr><td><code>yl</code></td><td>Luminance (BT.709)</td><td>(54R+183G+18B)&gt;&gt;8</td><td>HDTV luminance</td></tr>
+<tr><td><code>lum</code>/<code>al</code></td><td>Luminance (R+G)</td><td>(R+G)&gt;&gt;1</td><td>Simple luminance sum</td></tr>
+<tr><td><code>rg</code>/<code>am</code></td><td>Red-Green opp.</td><td>(R-G+255)&gt;&gt;1</td><td>Red vs Green (L-M)</td></tr>
+<tr><td><code>by</code>/<code>ap</code></td><td>Blue-Yellow opp.</td><td>(2B-R-G+510)&gt;&gt;2</td><td>Blue vs Yellow (S-(L+M))</td></tr>
+<tr><td><code>bl</code></td><td>Luminance (R+B)</td><td>(R+B)&gt;&gt;1</td><td>Alternative luminance</td></tr>
+<tr><td><code>bm</code></td><td>R-B opponent</td><td>(R-B+255)&gt;&gt;1</td><td>Red-Blue difference</td></tr>
+<tr><td><code>bp</code></td><td>G-(R+B)/2 opp.</td><td>(2G-R-B+510)&gt;&gt;2</td><td>Green vs Red+Blue</td></tr>
+<tr><td><code>h</code></td><td>Hue</td><td>atan2(2R-G-B, G-B)</td><td>Color angle (HSV)</td></tr>
+<tr><td><code>s</code></td><td>Saturation</td><td>max(R,G,B)-min(R,G,B)</td><td>Color purity</td></tr>
+<tr><td><code>c</code></td><td>Contrast</td><td>Sobel 3×3 edge magnitude</td><td>Spatial edges on LUM</td></tr>
+</tbody>
+</table>
+</div>
+
+<h4>Encodings</h4>
+<p>Each encoding first computes a <strong>level</strong> (0 to max_lev, where max_lev = width for most encodings, except lin7 where max_lev = 7). The level is then converted to a thermometer bitmask:</p>
+<pre style="background:#1a1a2e; color:#e0e0e0; padding:0.5rem 1rem; border-radius:8px; font-size:0.82rem;">
+output = ((uint32_t)1 << level) - 1    // level lower bits set to 1
+// Examples: level=0 → 0x00000000, level=3 → 0x00000007 (popcount=3),
+//           level=8 → 0x000000FF (popcount=8), level=32 → 0xFFFFFFFF</pre>
+
+<p style="font-size:0.93rem; margin-bottom:0.75rem;">
+<strong>Term definitions:</strong><br>
+<code><b>pv</b></code> = pixel value (0–255) — the raw 8-bit input from the image after channel transformation.<br>
+<code><b>width</b></code> = encoding output width in bits (8, 16, or 32).  Determines the number of thermometer levels: <code>max_lev = width</code> (except <code>lin7</code>).<br>
+<code><b>max_lev</b></code> = maximum thermometer level = number of bits in the output pattern.  Default: <code>width</code> (so width=8 → max_lev=8 → output ranges from 0x00 to 0xFF).<br>
+<code><b>low_lev</b></code> = segment boundary level used by multi-segment encodings (<code>down</code>, <code>up</code>, <code>mid</code>) to allocate thermometer resolution across bright/dark/mid ranges.<br>
+<code><b>mid_lev</b></code> = <code>max_lev − low_lev</code> — the remaining levels allocated to the opposite segment.<br>
+After computing <code>level</code>, the final output is always: <code>((uint32_t)1 &lt;&lt; level) − 1</code> (thermometer mask: exactly <code>level</code> lower bits set to 1).
+</p>
+
+<div class="table-wrapper">
+<table class="compare-table">
+<thead><tr><th>Encoding</th><th>level formula</th><th>max_lev</th><th>Best For</th></tr></thead>
+<tbody>
+<tr>
+  <td><code>raw</code></td>
+  <td><code>return pv</code> (identity, no thermometer)</td>
+  <td>—</td>
+  <td>MNIST, binary signals</td>
+</tr>
+<tr>
+  <td><code>lin7</code></td>
+  <td><code>pv &gt;&gt; 5</code></td>
+  <td><strong>7</strong> (fixed)</td>
+  <td>Legacy 7-level linear</td>
+</tr>
+<tr>
+  <td><code>lin</code>/<code>lin8</code></td>
+  <td><code>(pv × max_lev) &gt;&gt; 8</code></td>
+  <td>width</td>
+  <td>Luminance — uniform slope</td>
+</tr>
+<tr>
+  <td><code>down</code></td>
+  <td><code>pv &lt; 64</code> → <code>(pv × low_lev) / 64</code><br>
+      <code>pv ≥ 64</code> → <code>low_lev + ((pv-64) × (max_lev-low_lev)) / 192</code><br>
+      <code>low_lev = max_lev × 3 / 7</code></td>
+  <td>width</td>
+  <td>Shadows — more levels in dark range</td>
+</tr>
+<tr>
+  <td><code>up</code></td>
+  <td><code>pv &gt; 192</code> → <code>low_lev + ((pv-192) × (max_lev-low_lev)) / 63</code><br>
+      <code>pv ≤ 192</code> → <code>(pv × low_lev) / 192</code><br>
+      <code>low_lev = max_lev × 4 / 7</code></td>
+  <td>width</td>
+  <td>Highlights — more levels in bright range</td>
+</tr>
+<tr>
+  <td><code>mid</code></td>
+  <td><code>pv &lt; 80</code> → <code>(pv × low_lev) / 80</code><br>
+      <code>pv &gt; 175</code> → <code>low_lev + ((pv-175) × mid_lev) / 80</code><br>
+      <code>else</code> → <code>low_lev + ((pv-80) × mid_lev) / 95</code><br>
+      <code>low_lev = max_lev × 3/8, mid_lev = max_lev - low_lev</code></td>
+  <td>width</td>
+  <td>Mid-tones — band-pass, compresses shadows and highlights</td>
+</tr>
+<tr>
+  <td><code>log</code></td>
+  <td><code>log₂(pv + 1) × max_lev / log₂(256)</code></td>
+  <td>width</td>
+  <td>Power-law distributions (edges) — high res for dark</td>
+</tr>
+<tr>
+  <td><code>exp</code></td>
+  <td><code>(pv / 255)<sup>e</sup> × max_lev</code>, with <code>e = 0.30</code> (width=8/32) or <code>e = 0.35</code> (width=16)</td>
+  <td>width</td>
+  <td>Brightness-sparse — high res for bright pixels</td>
+</tr>
+<tr>
+  <td><code>sig</code></td>
+  <td><code>σ(12 × (pv/255 − 0.5)) × max_lev</code>,<br>where <code>σ(x) = 1 / (1 + e<sup>−x</sup>)</code></td>
+  <td>width</td>
+  <td>Opponent channels (RG,BY) — S-shaped, saturates extremes</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><strong>Examples for width=8 (max_lev=8):</strong></p>
+<div class="table-wrapper">
+<table class="compare-table">
+<thead><tr><th>pv</th><th>raw</th><th>lin</th><th>exp</th><th>log</th><th>sig</th><th>up</th><th>down</th><th>mid</th></tr></thead>
+<tbody>
+<tr><td>0</td><td>0x00 (0)</td><td>0x00 (0)</td><td>0x00 (0)</td><td>0x00 (0)</td><td>0x00 (0)</td><td>0x00 (0)</td><td>0x00 (0)</td><td>0x00 (0)</td></tr>
+<tr><td>32</td><td>0x20 (1)</td><td>0x01 (1)</td><td>0x07 (3)</td><td>0x3F (6)</td><td>0x00 (0)</td><td>0x00 (0)</td><td>0x03 (2)</td><td>0x07 (3)</td></tr>
+<tr><td>64</td><td>0x40 (1)</td><td>0x03 (2)</td><td>0x1F (5)</td><td>0x7F (7)</td><td>0x00 (0)</td><td>0x01 (1)</td><td>0x0F (4)</td><td>0x0F (4)</td></tr>
+<tr><td>128</td><td>0x80 (1)</td><td>0x0F (4)</td><td>0xFF (8)</td><td>0xFF (8)</td><td>0x0F (4)</td><td>0x07 (3)</td><td>0x7F (7)</td><td>0xFF (8)</td></tr>
+<tr><td>192</td><td>0xC0 (2)</td><td>0x3F (6)</td><td>0xFF (8)</td><td>0xFF (8)</td><td>0xFF (8)</td><td>0x1F (5)</td><td>0xFF (8)</td><td>0x7F (7)</td></tr>
+<tr><td>255</td><td>0xFF (8)</td><td>0xFF (8)</td><td>0xFF (8)</td><td>0xFF (8)</td><td>0xFF (8)</td><td>0xFF (8)</td><td>0xFF (8)</td><td>0xFF (8)</td></tr>
+</tbody>
+</table>
+</div>
+<p>Note: popcount is shown in parentheses. The <code>raw</code> encoding produces popcount equal to the number of set bits in the 8-bit value — completely unrelated to the pixel's brightness (<code>0x80</code> = 128 has popcount 1, same as <code>0x01</code> = 1). This is why thermometer encoding is essential for photographic images.</p>
+
+<h4>Member Definition Examples</h4>
+<pre style="background:#1a1a2e; color:#e0e0e0; padding:0.8rem 1rem; border-radius:8px; font-size:0.82rem;">
+# One member: channel=mnist, encoding=exp8
+--channels mnist --encoding exp8
+
+# Two members: same channel, different encodings
+--channels mnist --encoding exp8,log8
+
+# Three members: different channels with per-channel encoding
+--channels g,bl,bm --encoding g=up8,bl=down8,bm=sig
+
+# 10 members: full CIFAR best config
+--encoding g=up8,bl=down8,bm=sig,bp=sig,b=up8,al=down8,am=sig,ap=sig,h=up8,c=log8</pre>
+
+<!-- ── 2.6 Container Width ── -->
+<h3 style="margin-top:2rem;">2.6 Container Width: 8/16/32 Does Not Help</h3>
+<p>The natural question: does widening the thermometer (8 → 16 → 32 bits) improve accuracy? Empirically: <strong>no</strong>.</p>
+<p>Each thermometer value is passed through <strong>MAJ3</strong>, which compresses NC_slice containers into exactly 32 bits via bitwise majority voting. After MAJ3, every bit-width produces exactly 32 bits. A wider container does not increase the information reaching the target.</p>
+<pre style="background:#1a1a2e; color:#e0e0e0; padding:0.6rem 1rem; border-radius:8px; font-size:0.82rem;">
+Width 8:   4 pixels × 8 bit  = 1 uint32 container  → MAJ3 → 32 bits
+Width 16:  2 pixels × 16 bit = 1 uint32 container  → MAJ3 → 32 bits
+Width 32:  1 pixel  × 32 bit = 1 uint32 container  → MAJ3 → 32 bits</pre>
+<p><strong>The correct lever is more members, not wider containers.</strong> Duplication (channel + encoding variants) creates independent MAJ3 projections with different random W0.</p>
+
+<!-- ── 2.7 Orthogonality ── -->
+<h3 style="margin-top:2rem;">2.7 Encoding Orthogonality</h3>
+<p>Encodings should be <strong>orthogonal</strong>: two encodings on the same pixel should produce bit patterns that are as decorrelated as possible. The best MNIST config (<code>exp8,log8,sig8</code>) exploits this:</p>
+<div class="table-wrapper">
+<table class="compare-table">
+<thead><tr><th>Encoding</th><th>Maps v=128 to</th><th>Popcount</th><th>Character</th></tr></thead>
+<tbody>
+<tr><td><code>exp8</code></td><td><code>0x01</code></td><td>1</td><td>Compressed dark range</td></tr>
+<tr><td><code>log8</code></td><td><code>0xFE</code></td><td>7</td><td>Compressed bright range</td></tr>
+<tr><td><code>sig8</code></td><td><code>0x60</code></td><td>2</td><td>S-curve, mid-range emphasis</td></tr>
+</tbody>
+</table>
+</div>
+<p>For CIFAR, orthogonality is achieved by pairing channels with encodings matched to their statistical distribution:</p>
+<div class="table-wrapper">
+<table class="compare-table">
+<thead><tr><th>Channel</th><th>Distribution</th><th>Encoding</th><th>Why</th></tr></thead>
+<tbody>
+<tr><td>G (raw green)</td><td>Uniform 0–255</td><td><code>up8</code></td><td>Ascending highlights bright greens</td></tr>
+<tr><td>BL (R+B lum)</td><td>Uniform 0–255</td><td><code>down8</code></td><td>Descending highlights dark areas</td></tr>
+<tr><td>BM (R-B opp.)</td><td>Peaked at 128</td><td><code>sig8</code></td><td>Sigmoid saturates opponent extremes</td></tr>
+<tr><td>H (hue angle)</td><td>Cyclic 0–255</td><td><code>up8</code></td><td>Ascending preserves angle order</td></tr>
+<tr><td>C (Sobel edges)</td><td>Power-law (80% &lt; 30)</td><td><code>log8</code></td><td>Log gives dark edges more levels</td></tr>
+</tbody>
+</table>
+</div>
+
+<!-- ── 3. Architecture ── -->
+<h2 style="margin-top:2.5rem;"><span class="accent-bar">&#8203;</span> 3. Architecture: Otto Score</h2>
+
+<h3>3.1 Inference (DRAM-native)</h3>
+<pre style="background:#1a1a2e; color:#e0e0e0; padding:1rem; border-radius:8px; font-size:0.82rem;">
+Input pixels → Thermometer encoding → uint32 containers
+                                            ↓
+Layer 0: Frozen random projection (W0) via MAJ3
+         W0: random uint32 bit patterns (permanent, never trained)
+         MAJ3: For each of H neurons, majority-vote over NC_slice containers
+               → 1 bit per neuron per class vote
+                                            ↓
+Layer 1: Trained Target (Bayesian log-Score)
+         target[c][h][b]: 32-bit log-odds correction
+         score[c] = sum over h,b of target[c][h][b] * h0_bit[h][b]
+                                            ↓
+         argmax(score) → predicted class</pre>
+
+<h3>3.2 Training (float32 SGD)</h3>
+<pre style="background:#1a1a2e; color:#e0e0e0; padding:0.8rem 1rem; border-radius:8px; font-size:0.82rem;">
+for each sample (x, y_true):
+    h0 = MAJ3(W0 @ encode(x))
+    scores[c] = sum(target[c] * h0)
+    pred = argmax(scores)
+    if pred != y_true:
+        target[y_true][h0_bit==1] += step    // reward correct
+        target[pred][h0_bit==1]   -= step    // penalize wrong</pre>
+
+<h3>3.3 Step Size Physics</h3>
+<div class="table-wrapper">
+<table class="compare-table">
+<thead><tr><th>Mode</th><th>Formula</th><th>Behavior</th></tr></thead>
+<tbody>
+<tr><td><code>pow</code></td><td><code>step_init × (err/total)<sup>power</sup></code></td><td>Decays with error — can oscillate</td></tr>
+<tr><td><strong><code>cos-time</code></strong></td><td><code>step_init × cos(progress × π/2)</code></td><td><strong>Smooth decay — independent of error. Winner.</strong></td></tr>
+<tr><td><code>cos-err</code></td><td><code>step_init × cos(err/total × π/2)</code></td><td>Error-dependent — unsuitable</td></tr>
+<tr><td><code>const</code></td><td><code>step_init</code></td><td>Oscillates in late epochs</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>cos-time is the clear winner for CIFAR.</strong> The step decreases independently of the current error, preventing the oscillation spiral: high error → large step → overshoot → error stays high.</p>
+
+<!-- ── 4. Results ── -->
+<h2 style="margin-top:2.5rem;"><span class="accent-bar">&#8203;</span> 4. Results</h2>
+
+<h3>4.1 MNIST</h3>
+<div class="table-wrapper">
+<table class="compare-table">
+<thead><tr><th>evalN</th><th>Best eval</th><th>EN</th><th>H</th><th>Ep</th><th>Ratio (train:eval)</th></tr></thead>
+<tbody>
+<tr><td>100</td><td><strong>99.0%</strong></td><td>7</td><td>128</td><td>8</td><td><strong>599:1</strong></td></tr>
+<tr><td>1000</td><td><strong>98.1%</strong></td><td>7</td><td>128</td><td>8</td><td>59:1</td></tr>
+<tr><td>10000</td><td><strong>97.7%</strong></td><td>7</td><td>128</td><td>8</td><td>5:1</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>The 98%-wall is data-limited, not method-limited.</strong> With 599:1 ratio we reach 99.0%. At 5:1, only 97.7%.</p>
+
+<div class="highlight-box">
+<strong>Best known config (standard split, evalN=10000):</strong><br>
+<code>./mnist-mlp-bin32-otto-trn-xnor.exe --hiddenN 128 --ensembleN 7 --epochsN 8 --step-err cos-time --encoding exp8,log8,sig8</code>
+</div>
+
+<h3 style="margin-top:2rem;">4.2 CIFAR-10</h3>
+<div class="table-wrapper">
+<table class="compare-table">
+<thead><tr><th>Config</th><th>eval</th><th>EN</th><th>H</th><th>Ep</th><th>Time</th></tr></thead>
+<tbody>
+<tr><td>10-channel + Hue + Sobel C</td><td><strong>58.7%</strong></td><td>17</td><td>128</td><td>8</td><td>357s</td></tr>
+<tr><td>10-channel (no H/C)</td><td>57.2%</td><td>7</td><td>128</td><td>10</td><td>124s</td></tr>
+<tr><td>6-channel (opponent blocks)</td><td>56.9%</td><td>6</td><td>128</td><td>10</td><td>107s</td></tr>
+<tr><td>4-channel baseline</td><td>56.6%</td><td>16</td><td>128</td><td>10</td><td>193s</td></tr>
+</tbody>
+</table>
+</div>
+
+<div class="highlight-box">
+<strong>Best known config:</strong><br>
+<code>./cifar-mlp-bin32-otto-trn-xnor.exe --hiddenN 128 --ensembleN 17 --epochsN 8 --encoding g=up8,bl=down8,bm=sig,bp=sig,b=up8,al=down8,am=sig,ap=sig,h=up8,c=log8 --target-err 0.4</code>
+</div>
+
+<h3 style="margin-top:2rem;">4.3 Bit-Mass Scaling Law</h3>
+<p><strong>Doubling the bit-mass yields ~0.3pp. Logarithmic scaling, as predicted by information theory.</strong></p>
+<div class="table-wrapper">
+<table class="compare-table">
+<thead><tr><th>H_eff (H×EN)</th><th>MNIST eval</th><th>Δ</th></tr></thead>
+<tbody>
+<tr><td>512</td><td>96.9%</td><td>—</td></tr>
+<tr><td>1024</td><td>97.3-97.4%</td><td>+0.4pp</td></tr>
+<tr><td>2048</td><td>97.6-97.7%</td><td>+0.3pp</td></tr>
+<tr><td>4096 (extrapolated)</td><td>~97.9-98.0%</td><td>+0.3pp</td></tr>
+</tbody>
+</table>
+</div>
+
+<!-- ── 5. Key Insights ── -->
+<h2 style="margin-top:2.5rem;"><span class="accent-bar">&#8203;</span> 5. Key Insights</h2>
+
+<h3>5.1 W0 Diversity Is the Ensemble Feature</h3>
+<p>The random projection W0 is <strong>never trained</strong>. Its role is to create diverse binary fingerprints of the input. <strong><code>--seed-member const</code> (all members share identical W0) regresses to 89.9%</strong> — barely better than N=1.</p>
+
+<h3 style="margin-top:1.5rem;">5.2 Human Color Vision as Blueprint</h3>
+<p>The Otto Score channel set is directly inspired by the <strong>human visual system</strong>: three cone types (L=red, M=green, S=blue) transformed into opponent channels in the retina. See <a href="../docs/color-vision-opponent-channels.md">color-vision-opponent-channels.md</a>.</p>
+<div class="table-wrapper">
+<table class="compare-table">
+<thead><tr><th>Human Visual System</th><th>Otto Score Channel</th><th>Purpose</th></tr></thead>
+<tbody>
+<tr><td>L+M (luminance)</td><td><code>lum</code> / <code>al</code></td><td>Brightness, edges, texture</td></tr>
+<tr><td>L−M (red-green)</td><td><code>rg</code> / <code>am</code></td><td>Red vs Green opponent</td></tr>
+<tr><td>S−(L+M) (blue-yellow)</td><td><code>by</code> / <code>ap</code></td><td>Blue vs Yellow opponent</td></tr>
+<tr><td>R−B</td><td><code>bm</code></td><td>Red-Blue difference</td></tr>
+<tr><td>Spatial precision</td><td><code>h</code>, <code>c</code></td><td>Hue angle + Sobel edges</td></tr>
+</tbody>
+</table>
+</div>
+<p>The opponent transformation is <strong>critical</strong>: raw R,G,B are highly correlated (all rise with brightness). Opponent channels decorrelate brightness from color.</p>
+
+<h3 style="margin-top:1.5rem;">5.3 MAJ3 Is an Information Bottleneck</h3>
+<p>MAJ3 compresses NC_slice uint32 containers → 32 bits. For MNIST (NC=196) the compression is benign. For CIFAR (NC=768), the compression loses critical shade information — hence thermometer encoding is essential.</p>
+
+<h3 style="margin-top:1.5rem;">5.4 Per-Member Architecture</h3>
+<p>Every member has its own W0, target matrix, step counter, and error counter. This allows members processing different channels to converge at different rates.</p>
+
+<h3 style="margin-top:1.5rem;">5.5 True Random vs PRNG</h3>
+<p>True random W0 improves eval by <strong>+0.5pp</strong> over splitmix64 PRNG. Correlated PRNG values produce less diverse W0 → less diverse projections.</p>
+
+<!-- ── 6. Open Questions ── -->
+<h2 style="margin-top:2.5rem;"><span class="accent-bar">&#8203;</span> 6. Open Questions</h2>
+
+<h3>6.1 The Data Wall</h3>
+<p>The Otto Score is <strong>data-limited</strong>. Larger datasets (ImageNet-1K with 1.2M images, or a dedicated DRAM-scale dataset with 10M+ samples) would directly translate to higher accuracy.</p>
+
+<h3>6.2 Depth vs Ensemble</h3>
+<p>Deep MAJ3 stacks (2+ layers) lose information. The ensemble approach (parallel MAJ3 banks) is strictly better than depth at equal bit-mass.</p>
+
+<h3>6.3 CIFAR Gap to Float</h3>
+<p>Otto Score at 58.7% already matches float32 shallow nets. Deep nets (ResNet-18: 93%+) remain out of reach for the MAJ3 framework.</p>
+
+<!-- ── 7. Conclusion ── -->
+<h2 style="margin-top:2.5rem;"><span class="accent-bar">&#8203;</span> 7. Conclusion</h2>
+<p>Otto Score reaches <strong>99.0% on MNIST</strong> and <strong>58.7% on CIFAR-10</strong> using only <code>&amp;|~</code> + int32 at inference time. The method is data-limited: accuracy scales logarithmically with bit-mass and linearly with training data per evaluation sample.</p>
+<p>The core innovations are:</p>
+<ol class="bullet-list" style="margin-left:1.5rem;">
+<li><strong>Thermometer encoding</strong> — bridges the number-world/binary-world gap</li>
+<li><strong>Per-channel encoding selection</strong> — each channel type gets its optimal binary mapping</li>
+<li><strong>cos-time step decay</strong> — gentle error-independent step reduction prevents oscillation</li>
+<li><strong>Multi-encoding ensemble</strong> — <code>exp8+log8+sig8</code> provides complementary projections</li>
+<li><strong>Target-err convergence</strong> — soft stopping criterion based on error-rate target</li>
+<li><strong>Free parallelism</strong> — ensemble members run simultaneously on separate DRAM rows</li>
+</ol>
+
+<!-- ── Appendix A: MNIST ── -->
+<h2 style="margin-top:2.5rem;"><span class="accent-bar">&#8203;</span> Appendix A: MNIST Scoreboard (Top 20)</h2>
+<p><code>run-grep --sort eval,-time mnist | head -20</code></p>
+<pre style="background:#1a1a2e; color:#e0e0e0; padding:0.8rem; border-radius:8px; font-size:0.78rem; line-height:1.5; overflow-x:auto;">
+[2026-06-29_10-15-48] train=99.8% eval=99.0% err=30 lr=0.0500 time=39908ms → ./mnist-1/mnist-mlp-bin32-otto-trn-xnor.exe --hiddenN 128 --ensembleN 7 --epochsN 8 --step-err cos-time --encoding exp8,log8,sig8 --trainN 59900 --evalN 100
+[2026-06-29_10-14-37] train=99.6% eval=98.1% err=32 lr=0.0500 time=39418ms → ./mnist-1/mnist-mlp-bin32-otto-trn-xnor.exe --hiddenN 128 --ensembleN 7 --epochsN 8 --step-err cos-time --encoding exp8,log8,sig8 --trainN 59000 --evalN 1000
+[2026-06-29_09-38-14] train=100.0% eval=97.8% err=0 lr=0.0500 time=49370ms → ./mnist-1/mnist-mlp-bin32-otto-trn-xnor.exe --hiddenN 256 --ensembleN 3 --epochsN 10 --step-err cos-time --encoding exp8,log8,sig8 --encoding exp --step-power 0.01
+[2026-06-27_09-21-23] train=100.0% eval=97.7% err=1 lr=0.0500 time=31367ms → ./mnist-1/mnist-mlp-bin32-otto-trn-xnor.exe --hiddenN 512 --ensembleN 4 --epochsN 10 --encoding exp --step-power 0.01
+[2026-06-29_09-14-02] train=100.0% eval=97.7% err=23 lr=0.0500 time=36107ms → ./mnist-1/mnist-mlp-bin32-otto-trn-xnor.exe --hiddenN 128 --ensembleN 7 --epochsN 8 --step-err cos-time --encoding exp8,log8,sig8
+[2026-06-29_09-18-29] train=100.0% eval=97.6% err=9 lr=0.0500 time=29919ms → ./mnist-1/mnist-mlp-bin32-otto-trn-xnor.exe --hiddenN 256 --ensembleN 3 --epochsN 8 --step-err cos-time --encoding exp8,log8,sig8
+[2026-06-27_09-00-56] train=100.0% eval=97.6% err=6 lr=0.0500 time=31496ms → ./mnist-1/mnist-mlp-bin32-otto-trn-xnor.exe --hiddenN 256 --ensembleN 7 --epochsN 10 --encoding exp --step-power 0.1
+[2026-06-27_09-12-47] train=100.0% eval=97.6% err=5 lr=0.0500 time=31515ms → ./mnist-1/mnist-mlp-bin32-otto-trn-xnor.exe --hiddenN 256 --ensembleN 8 --epochsN 10 --encoding exp --step-power 0.1
+[2026-06-27_09-20-33] train=100.0% eval=97.6% err=0 lr=0.0500 time=31714ms → ./mnist-1/mnist-mlp-bin32-otto-trn-xnor.exe --hiddenN 256 --ensembleN 8 --epochsN 10 --encoding exp --step-power 0.01
+[2026-06-27_09-18-37] train=100.0% eval=97.6% err=7 lr=0.0500 time=32455ms → ./mnist-1/mnist-mlp-bin32-otto-trn-xnor.exe --hiddenN 128 --ensembleN 16 --epochsN 10 --encoding exp --step-power 0.1
+[2026-06-27_09-19-47] train=100.0% eval=97.6% err=1 lr=0.0500 time=33006ms → ./mnist-1/mnist-mlp-bin32-otto-trn-xnor.exe --hiddenN 128 --ensembleN 16 --epochsN 10 --encoding exp --step-power 0.01
+[2026-06-29_09-55-24] train=100.0% eval=97.6% err=20 lr=0.0500 time=35978ms → ./mnist-1/mnist-mlp-bin32-otto-trn-xnor.exe --hiddenN 128 --ensembleN 7 --epochsN 8 --step-err cos-time --encoding exp8,log8,sig8 --seed-file assets/random.bin
+[2026-06-29_09-37-21] train=100.0% eval=97.6% err=1 lr=0.0500 time=39146ms → ./mnist-1/mnist-mlp-bin32-otto-trn-xnor.exe --hiddenN 256 --ensembleN 3 --epochsN 8 --step-err cos-time --encoding exp8,log8,sig8 --encoding exp --step-power 0.01
+[2026-06-29_09-52-56] train=100.0% eval=97.6% err=0 lr=0.0500 time=49415ms → ./mnist-1/mnist-mlp-bin32-otto-trn-xnor.exe --hiddenN 256 --ensembleN 3 --epochsN 10 --step-err cos-time --encoding exp8,log8,sig8 --encoding exp --step-power 0.01 --seed-file assets/random.bin
+[2026-06-29_09-40-10] train=100.0% eval=97.6% err=7 lr=0.0500 time=58752ms → ./mnist-1/mnist-mlp-bin32-otto-trn-xnor.exe --hiddenN 512 --ensembleN 3 --epochsN 8 --step-err cos-time --encoding exp8,log8,sig8
+[2026-06-29_09-42-27] train=100.0% eval=97.6% err=20 lr=0.0500 time=87202ms → ./mnist-1/mnist-mlp-bin32-otto-trn-xnor.exe --hiddenN 128 --ensembleN 17 --epochsN 8 --step-err cos-time --encoding exp8,log8,sig8
+[2026-06-29_09-14-51] train=100.0% eval=97.5% err=9 lr=0.0500 time=19772ms → ./mnist-1/mnist-mlp-bin32-otto-trn-xnor.exe --hiddenN 512 --ensembleN 1 --epochsN 8 --step-err cos-time --encoding exp8,log8,sig8
+[2026-06-27_11-32-28] train=100.0% eval=97.5% err=5 lr=0.0500 time=28216ms → ./mnist-1/mnist-mlp-bin32-otto-trn-xnor.exe --hiddenN 512 --ensembleN 3 --epochsN 10 --encoding exp8 --step-power 0.009
+[2026-06-27_11-33-29] train=100.0% eval=97.5% err=10 lr=0.0500 time=28331ms → ./mnist-1/mnist-mlp-bin32-otto-trn-xnor.exe --hiddenN 512 --ensembleN 3 --epochsN 10 --encoding exp8 --step-power 0.09
+[2026-06-27_09-17-36] train=100.0% eval=97.5% err=7 lr=0.0500 time=32426ms → ./mnist-1/mnist-mlp-bin32-otto-trn-xnor.exe --hiddenN 512 --ensembleN 4 --epochsN 10 --encoding exp --step-power 0.1
+</pre>
+
+<!-- ── Appendix B: CIFAR ── -->
+<h2 style="margin-top:2.5rem;"><span class="accent-bar">&#8203;</span> Appendix B: CIFAR-10 Scoreboard (Top 20)</h2>
+<p><code>run-grep --sort eval,-time cifar | head -20</code></p>
+<pre style="background:#1a1a2e; color:#e0e0e0; padding:0.8rem; border-radius:8px; font-size:0.78rem; line-height:1.5; overflow-x:auto;">
+[2026-06-28_16-07-07] train=83.4% eval=58.7% err=8296 lr=0.0100 time=357125ms → ./cifar-1/cifar-mlp-bin32-otto-trn-xnor.exe --hiddenN 128 --ensembleN 17 --epochsN 8 --encoding g=up8,bl=down8,bm=sig,bp=sig,b=up8,al=down8,am=sig,ap=sig,h=up8,c=log8 --target-err 0.4
+[2026-06-28_15-44-06] train=84.7% eval=57.4% err=7635 lr=0.0100 time=52568ms → ./cifar-1/cifar-mlp-bin32-otto-trn-xnor.exe --hiddenN 128 --ensembleN 2 --epochsN 10 --encoding g=up8,bl=down8,bm=sig,bp=sig,b=up8,al=down8,am=sig,ap=sig,h=up8,c=log8 --target-err 0.4
+[2026-06-28_15-48-15] train=85.0% eval=57.3% err=7512 lr=0.1000 time=52643ms → ./cifar-1/cifar-mlp-bin32-otto-trn-xnor.exe --hiddenN 128 --ensembleN 2 --epochsN 10 --encoding g=up8,bl=down8,bm=sig,bp=sig,b=up8,al=down8,am=sig,ap=sig,h=up8,c=log8 --target-err 0.4 --lr 0.1
+[2026-06-28_11-38-51] train=89.0% eval=57.2% err=5486 lr=0.1000 time=124230ms → ./cifar-1/cifar-mlp-bin32-otto-trn-xnor.exe --hiddenN 128 --ensembleN 7 --epochsN 10 --encoding al=down8,am=sig,ap=sig,bl=down8,bm=sig,bp=sig --lr 0.1 --step-err cos-time
+[2026-06-28_12-35-33] train=89.0% eval=57.2% err=5504 lr=0.1000 time=166985ms → ./cifar-1/cifar-mlp-bin32-otto-trn-xnor.exe --hiddenN 128 --ensembleN 7 --epochsN 10 --encoding g=up8,bl=down8,bm=sig,bp=sig,b=up8,al=down8,am=sig,ap=sig --lr 0.1 --step-err cos-time --batchN 64
+[2026-06-28_12-31-24] train=83.6% eval=57.1% err=8198 lr=0.1000 time=150303ms → ./cifar-1/cifar-mlp-bin32-otto-trn-xnor.exe --hiddenN 128 --ensembleN 7 --epochsN 10 --encoding g=up8,bl=down8,bm=sig,bp=sig,b=up8,al=down8,am=sig,ap=sig --lr 0.1 --step-err cos-time
+[2026-06-28_12-27-13] train=83.8% eval=57.0% err=8117 lr=0.0900 time=146618ms → ./cifar-1/cifar-mlp-bin32-otto-trn-xnor.exe --hiddenN 128 --ensembleN 7 --epochsN 10 --encoding g=up8,bl=down8,bm=sig,bp=sig,b=up8,al=down8,am=sig,ap=sig --lr 0.09 --step-err cos-time
+[2026-06-28_11-25-43] train=88.6% eval=56.9% err=5692 lr=0.1000 time=106503ms → ./cifar-1/cifar-mlp-bin32-otto-trn-xnor.exe --hiddenN 128 --ensembleN 6 --epochsN 10 --encoding al=down8,am=sig,ap=sig,bl=down8,bm=sig,bp=sig --lr 0.1 --step-err cos-time
+[2026-06-28_11-21-01] train=88.2% eval=56.7% err=5922 lr=0.1000 time=88618ms → ./cifar-1/cifar-mlp-bin32-otto-trn-xnor.exe --hiddenN 128 --ensembleN 5 --epochsN 10 --encoding al=down8,am=sig,ap=sig,bl=down8,bm=sig,bp=sig --lr 0.1 --step-err cos-time
+[2026-06-27_21-40-29] train=88.8% eval=56.6% err=5586 lr=0.1000 time=192821ms → ./cifar-1/cifar-mlp-bin32-otto-trn-xnor.exe --hiddenN 128 --ensembleN 16 --epochsN 10 --encoding b=down,lum=lin8,by=sig,rg=sig --lr 0.1 --step-err cos-time
+[2026-06-27_21-24-49] train=85.9% eval=56.2% err=7045 lr=0.1000 time=198089ms → ./cifar-1/cifar-mlp-bin32-otto-trn-xnor.exe --hiddenN 128 --ensembleN 16 --epochsN 10 --encoding b=down,lum=lin8,by=sig,rg=sig --lr 0.1 --step-power 5
+[2026-06-28_11-24-08] train=87.8% eval=56.1% err=6120 lr=0.1000 time=70777ms → ./cifar-1/cifar-mlp-bin32-otto-trn-xnor.exe --hiddenN 128 --ensembleN 4 --epochsN 10 --encoding al=down8,am=sig,ap=sig,bl=down8,bm=sig,bp=sig --lr 0.1 --step-err cos-time
+[2026-06-27_22-01-22] train=92.3% eval=55.9% err=3861 lr=0.1000 time=203612ms → ./cifar-1/cifar-mlp-bin32-otto-trn-xnor.exe --hiddenN 128 --ensembleN 8 --epochsN 20 --encoding b=down,lum=lin8,by=sig,rg=sig --lr 0.1 --step-err cos-time
+[2026-06-27_20-11-55] train=85.2% eval=55.7% err=7394 lr=0.1000 time=97352ms → ./cifar-1/cifar-mlp-bin32-otto-trn-xnor.exe --hiddenN 128 --ensembleN 8 --epochsN 10 --encoding b=down,lum=lin8,by=sig,rg=sig --lr 0.1 --step-power 5
+[2026-06-28_18-32-46] train=78.6% eval=55.6% err=10684 lr=0.0100 time=20424ms → ./cifar-1/cifar-mlp-bin32-otto-trn-xnor.exe --hiddenN 128 --ensembleN 1 --epochsN 8 --encoding g=up8,bl=down8,bm=sig,bp=sig,b=up8,al=down8,am=sig,ap=sig,h=up8,c=log8 --target-err 0.4 --seed-file assets/2026-06-18.bin
+[2026-06-27_21-46-51] train=87.8% eval=55.6% err=6091 lr=0.1000 time=97040ms → ./cifar-1/cifar-mlp-bin32-otto-trn-xnor.exe --hiddenN 128 --ensembleN 8 --epochsN 10 --encoding b=down,lum=lin8,by=sig,rg=sig --lr 0.1 --step-err cos-time
+[2026-06-27_21-21-40] train=87.4% eval=55.5% err=6294 lr=0.1000 time=127119ms → ./cifar-1/cifar-mlp-bin32-otto-trn-xnor.exe --hiddenN 128 --ensembleN 8 --epochsN 10 --batchN 32 --encoding b=down,lum=lin8,by=sig,rg=sig --lr 0.1 --step-power 5
+[2026-06-28_11-34-09] train=90.5% eval=55.4% err=4753 lr=0.1000 time=70632ms → ./cifar-1/cifar-mlp-bin32-otto-trn-xnor.exe --hiddenN 256 --ensembleN 2 --epochsN 10 --encoding al=down8,am=sig,ap=sig,bl=down8,bm=sig,bp=sig --lr 0.1 --step-err cos-time
+[2026-06-27_18-48-11] train=85.0% eval=55.4% err=7513 lr=0.1000 time=83512ms → ./cifar-1/cifar-mlp-bin32-otto-trn-xnor.exe --hiddenN 128 --ensembleN 7 --epochsN 10 --encoding b=down,lum=lin8,by=sig,rg=sig --lr 0.1 --step-power 5
+[2026-06-27_18-29-32] train=85.0% eval=55.4% err=7513 lr=0.1000 time=84175ms → ./cifar-1/cifar-mlp-bin32-otto-trn-xnor.exe --hiddenN 128 --ensembleN 7 --epochsN 10 --encoding b=down,lum=lin8,by=sig,rg=sig --lr 0.1 --step-power 5
+</pre>
+
+</div>
+</main>
+
+<footer>
+    <div class="container" style="text-align:center; padding:2rem 0; font-size:0.8rem; color:var(--mid-gray);">
+        <p>BitNeuron Research — Andreas Otto — June 2026</p>
+        <p><a href="https://forward-prop.nhi1.de/">forward-prop.nhi1.de</a> &nbsp;|&nbsp; <a href="https://github.com/aotto1968/forward-prop" target="_blank">GitHub</a></p>
+    </div>
+</footer>
+
+</body>
+</html>

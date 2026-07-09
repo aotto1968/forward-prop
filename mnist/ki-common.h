@@ -128,6 +128,9 @@ static inline int ki_color_parse(const char *tok) {
         {"s",     COLOR_S},
         {"c",     COLOR_C},
 
+        {"edge",  COLOR_EDGE},
+        {"bin",   COLOR_BIN},
+
         {"cl",    COLOR_CL},
         {"cm",    COLOR_CM},
         {"cp",    COLOR_CP},
@@ -180,38 +183,7 @@ static inline int ki_color_parse(const char *tok) {
  * k-last layout: scores[k] += target[...k] iterates k=0..9 →
  * KI_NCLASSES contiguous int32_t = 40 bytes = 1 cache line.
  * Was [KI_NCLASSES][H][32] — caused 55% D1 cache misses. */
-#ifndef TGT_IDX
-#define TGT_IDX(k, h, v, H, V) \
-    ((size_t)(h) * (size_t)(V) * KI_NCLASSES + (size_t)(v) * KI_NCLASSES + (size_t)(k))
-#endif
 
-/* ── VN-Dispatch-Makro: erzeugt switch über alle 6 splitVN-Werte ──
- * Jeder Zweig ruft func_vn<N> mit den restlichen args auf.
- * func muss als _vn1, _vn2, _vn4, _vn8, _vn16, _vn32 existieren. */
-#define VN_DISPATCH(func, G, args...) do {                          \
-    switch (G) {                                                    \
-        case 1:  func ## _vn1(args); break;                         \
-        case 2:  func ## _vn2(args); break;                         \
-        case 4:  func ## _vn4(args); break;                         \
-        case 8:  func ## _vn8(args); break;                         \
-        case 16: func ## _vn16(args); break;                        \
-        case 32: func ## _vn32(args); break;                        \
-        default: fprintf(stderr, "[FATAL] invalid --splitVN %d\n", G); exit(1); \
-    }                                                               \
-} while (0)
-#define VN_DISPATCH_R(func, G, args...) ({                          \
-    __typeof__(func ## _vn1 args) _r;                               \
-    switch (G) {                                                    \
-        case 1:  _r = func ## _vn1(args); break;                    \
-        case 2:  _r = func ## _vn2(args); break;                    \
-        case 4:  _r = func ## _vn4(args); break;                    \
-        case 8:  _r = func ## _vn8(args); break;                    \
-        case 16: _r = func ## _vn16(args); break;                   \
-        case 32: _r = func ## _vn32(args); break;                   \
-        default: fprintf(stderr, "[FATAL] invalid --splitVN %d\n", G); exit(1); \
-    }                                                               \
-    _r;                                                             \
-})
 
 /* ═══════════════════════════════════════════════════════════════════════
  * ARGS — CLI Parameters (Otto Score only)
@@ -237,6 +209,7 @@ typedef struct {
     unsigned int seed;      /* Random seed (--seed, default: 42) */
     char   exportD[256];    /* --export DIR: export directory */
     char   predictions[256]; /* --predictions FILE: export per-sample predictions (for vis-errors) */
+    char   save_scores[256]; /* --save-scores DIR: save per-member scores to archive files */
     float  lr;              /* Step size (--lr, default: 0.05) */
     float  lr_min;          /* Min LR fraction (--lr-min, default: 0.1) */
     int    lr_step;         /* round(aa.lr * (1<<OT_PRECISION)) */
@@ -274,6 +247,8 @@ typedef struct {
     int    debug_class_voting_all; /* --debug-class-voting-all: every epoch */
     int    debug_confusion;    /* --debug-confusion-matrix: confusion matrix (end only) */
     int    debug_confusion_all; /* --debug-confusion-matrix-all: every epoch */
+    char   filter_str[128];    /* --filter "0,1,airplan,cat": raw string */
+    int    filter_mask;        /* computed bitmask from filter_str (0 = no filter) */
 } ki_Args;
 /* ── Global args (defined in each main .c file) ────────────── */
 extern ki_Args aa;
@@ -346,6 +321,8 @@ static inline void ki_parse_args(int argc, char *argv[]) {
             printf("                    h             : hue (Farbwinkel, atan2-basiert)\n");
             printf("                    s             : saturation (Farbsättigung, max-min)\n");
             printf("                    c             : contrast (Sobel-Kanten auf LUM)\n");
+            printf("                    edge          : edges via Sobel on Y luminance (like MNIST, for CIFAR)\n");
+            printf("                    bin           : Otsu-binarized Y luminance (filled black/white regions)\n");
             printf("                    mnist         : single grayscale.\n");
             printf("  --encoding [raw|lin7|lin8|down|up|mid|log|exp|sig]                              (default: %s)\n", enc_str());
             printf("                    OR <color>=<enc>[width] per-block: r=exp16,g=lin8   \n");
@@ -363,9 +340,11 @@ static inline void ki_parse_args(int argc, char *argv[]) {
             printf("                    exp    exponential,\n");
             printf("                    sig    sigmoid.\n");
             printf("                    raw    no encoding (raw 8-bit bytes).\n");
+            printf("  --save-scores DIR  Save per-member scores to archive files for merge-ensemble      (default: none)\n");
             printf("  --export DIR      Export directory                                              (default: none)\n");
             printf("  --import DIR      Load model for inference                                      (default: none)\n");
-            printf("  --predictions FILE Export per-sample predictions (for vis-errors, eval only)     (default: none)\n");
+            printf("  --predictions FILE                                                              (default: none)\n");
+            printf("                    Export per-sample predictions (for vis-errors, eval only)\n");
             printf("  --optional target-norm  Vote normalisierung (equal voting power)                (default: off)\n");
             printf("  --?no-?multi-correct  Only punish argmax, not all over true_k                   (default: multi-correct)\n");
             printf("  ---------------------------------------------------------------------------------------------\n");
@@ -374,10 +353,14 @@ static inline void ki_parse_args(int argc, char *argv[]) {
             printf("  --qq              5000 train / 2000 eval / 3 epochs\n");
             printf("  --debug           Verbose output                                                (default: off)\n");
             printf("  --debug-h0        Per-neuron debug                                              (default: off)\n");
-            printf("  --debug-class-voting  Member × Class accuracy table (end only)                    (default: off)\n");
-            printf("  --debug-class-voting-all  Member × Class every epoch                               (default: off)\n");
-            printf("  --debug-confusion-matrix  Confusion matrix table (end only)                        (default: off)\n");
-            printf("  --debug-confusion-matrix-all  Confusion matrix every epoch                          (default: off)\n");
+            printf("  --debug-class-voting?-all?  Member × Class accuracy table (end only)            (default: off)\n");
+            printf("  --debug-confusion-matrix?-all?  Confusion matrix table (end only)               (default: off)\n");
+            printf("  --filter #,#,... or name,name,...  Restrict to specific classes only            (default: none)\n");
+            printf("                    Examples: --filter 0,1 or --filter name1,name2\n");
+            printf("                    Available:");
+            for (int _k = 0; _k < KI_NCLASSES; _k++)
+                printf(" %s(%d)", ki_class_names[_k], _k);
+            printf("\n");
             printf("  --shuffle         Shuffle data before train/eval split                          (default: off)\n");
             exit(0);
         } else if (strcmp(argv[i], "--dry-run") == 0) {
@@ -456,6 +439,10 @@ static inline void ki_parse_args(int argc, char *argv[]) {
         } else if (strcmp(argv[i], "--predictions") == 0 && i + 1 < argc) {
             strncpy(aa.predictions, argv[++i], sizeof(aa.predictions) - 1);
             aa.predictions[sizeof(aa.predictions) - 1] = '\0';
+        } else if (strcmp(argv[i], "--save-scores") == 0 && i + 1 < argc) {
+            if (i + 1 >= argc) { fprintf(stderr, "[ERROR] --save-scores DIR\n"); exit(1); }
+            strncpy(aa.save_scores, argv[++i], sizeof(aa.save_scores) - 1);
+            aa.save_scores[sizeof(aa.save_scores) - 1] = '\0';
         } else if (strcmp(argv[i], "--import") == 0 || strcmp(argv[i], "--import") == 0) {
             if (i + 1 >= argc) { fprintf(stderr, "[ERROR] --import DIR\n"); exit(1); }
             strncpy(aa.importD, argv[++i], sizeof(aa.importD) - 1);
@@ -470,6 +457,50 @@ static inline void ki_parse_args(int argc, char *argv[]) {
             aa.debug_confusion = 1;
         } else if (strcmp(argv[i], "--debug-confusion-matrix-all") == 0) {
             aa.debug_confusion_all = 1;
+        } else if (strcmp(argv[i], "--filter") == 0 && i + 1 < argc) {
+            const char *val = argv[++i];
+            strncpy(aa.filter_str, val, sizeof(aa.filter_str) - 1);
+            aa.filter_str[sizeof(aa.filter_str) - 1] = '\0';
+            if (aa.filter_str[0] == '\0') {
+                fprintf(stderr, "[ERROR] --filter: empty string\n");
+                exit(1);
+            }
+            /* Parse sofort in Bitmask — benötigt ki_class_names[] (verfügbar
+             * da ki-local.h vor ki_parse_args inkludiert). */
+            aa.filter_mask = 0;
+            char fbuf[128];
+            strncpy(fbuf, aa.filter_str, sizeof(fbuf) - 1);
+            fbuf[sizeof(fbuf) - 1] = '\0';
+            for (char *tok = strtok(fbuf, ","); tok; tok = strtok(NULL, ",")) {
+                while (*tok == ' ' || *tok == '\t') tok++;
+                if (*tok == '\0') continue;
+                char *end = NULL;
+                long c = strtol(tok, &end, 10);
+                if (end != tok && *end == '\0') {
+                    if (c < 0 || c >= KI_NCLASSES) {
+                        fprintf(stderr, "[ERROR] --filter: invalid class index %ld (0..%d)\n",
+                                c, KI_NCLASSES - 1);
+                        exit(1);
+                    }
+                    aa.filter_mask |= (1 << (int)c);
+                    continue;
+                }
+                int found = 0;
+                for (int _k = 0; _k < KI_NCLASSES; _k++) {
+                    if (strcasecmp(tok, ki_class_names[_k]) == 0) {
+                        aa.filter_mask |= (1 << _k);
+                        found = 1; break;
+                    }
+                }
+                if (!found) {
+                    fprintf(stderr, "[ERROR] --filter: unknown class '%s'.\n", tok);
+                    exit(1);
+                }
+            }
+            if (aa.filter_mask == 0) {
+                fprintf(stderr, "[ERROR] --filter: at least one class required\n");
+                exit(1);
+            }
         } else if (strcmp(argv[i], "--shuffle") == 0) {
             aa.shuffle = 1;
         } else if (strcmp(argv[i], "--ensembleN") == 0 && i + 1 < argc) {
@@ -477,9 +508,9 @@ static inline void ki_parse_args(int argc, char *argv[]) {
             if (aa.ensembleN < 1) aa.ensembleN = 1;
         } else if (strcmp(argv[i], "--splitVN") == 0 && i + 1 < argc) {
             aa.splitVN = atoi(argv[++i]);
-            if (aa.splitVN != 1 && aa.splitVN != 2 && aa.splitVN != 4
+            if (aa.splitVN != 1 && aa.splitVN != 2 && aa.splitVN != 3 && aa.splitVN != 4
                 && aa.splitVN != 8 && aa.splitVN != 16 && aa.splitVN != 32) {
-                fprintf(stderr, "[ERROR] --splitVN: expected 1,2,4,8,16,32, got %d\n", aa.splitVN);
+                fprintf(stderr, "[ERROR] --splitVN: expected 1,2,3,4,8,16,32, got %d\n", aa.splitVN);
                 exit(1);
             }
         } else if (strcmp(argv[i], "--splitHN") == 0 && i + 1 < argc) {
@@ -899,31 +930,7 @@ static const char *enc_str(void) {
  * Schreibt per `#pragma omp atomic` direkt auf shared target
  * (im Gegensatz zu ki_batch_correct, das Thread-Caches nutzt).
  */
-static inline void ki_correct_target(int32_t *target, const uint32_t *h0_s,
-                                      int H, int true_k, int pred, int step) {
-    int V = VN_GROUPS_, G = aa.splitVN, TH = VN_THRESH_;
-    for (int h = 0; h < H; h++) {
-        uint32_t h0 = h0_s[h];
-        uint32_t gbits;
-        if (G == 1) {
-            gbits = h0;
-        } else {
-            gbits = 0;
-            for (int v = 0; v < V; v++) {
-                uint32_t slice = (h0 >> (v * G)) & ((1u << G) - 1u);
-                if (__builtin_popcount(slice) > TH) gbits |= (1u << v);
-            }
-        }
-        while (gbits) {
-            int v = __builtin_ctz(gbits);
-            #pragma omp atomic
-            target[TGT_IDX(true_k, h, v, H, V)] += step;
-            #pragma omp atomic
-            target[TGT_IDX(pred, h, v, H, V)] -= step;
-            gbits &= gbits - 1;
-        }
-    }
-}
+
 
 
 /* ═══════════════════════════════════════════════════════════════════════
@@ -947,389 +954,8 @@ static inline void *ki_xcalloc(size_t nmemb, size_t size) {
 /* ═══════════════════════════════════════════════════════════════════════
  * VIRTUAL NEURON (VN) KERNELS — compile-time-optimized per splitVN
  * ═══════════════════════════════════════════════════════════════════════
- *
- * Jeder splitVN-Wert (1,2,4,8,16,32) hat eigene Konstanten G, V, TH
- * zur Compile-Zeit → Loop-Unrolling, konstanter Mask-Shift, kein
- * Switch innerhalb der Sample/Neuron-Loops.
- *
- * Verwendet von: ki_batch_correct, scores_otto, ki_build_target
- *
- *   VN_SCORE(h0, h, H, target, scores):
- *       Accumuliert target[][h][v][] in scores[] für ein Neuron.
- *   VN_CORRECT(h0, h, H, dc, true_k, pred_k, step_i):
- *       Wendet step_i auf dc[true_k] und dc[pred_k] an.
+ * (Makros sind in mlp-bin32-otto-trn.c definiert)
  */
-
-#define VN_SCORE_1(h0, h, H, TGT, SC) do { \
-    uint32_t _b = (h0); \
-    while (_b) { int _v = __builtin_ctz(_b); \
-        for (int _k = 0; _k < KI_NCLASSES; _k++) \
-            (SC)[_k] += (TGT)[TGT_IDX(_k, (h), _v, H, 32)]; \
-        _b &= _b - 1; } \
-} while (0)
-
-#define VN_CORRECT_1(h0, h, H, DC, TK, PK, SI) do { \
-    uint32_t _b = (h0); \
-    while (_b) { int _v = __builtin_ctz(_b); \
-        (DC)[TGT_IDX((TK), (h), _v, H, 32)] += (SI); \
-        (DC)[TGT_IDX((PK), (h), _v, H, 32)] -= (SI); \
-        _b &= _b - 1; } \
-} while (0)
-
-/* ── VN=2: 16 groups of 2 bits, TH=1 ───────────────────────── */
-#define VN_SCORE_2(h0, h, H, TGT, SC) do { \
-    uint32_t _gb = 0; \
-    _gb |= (__builtin_popcount((h0) & 0x3u) > 1) ? 0x0001u : 0; \
-    _gb |= (__builtin_popcount(((h0)>>2) & 0x3u) > 1) ? 0x0002u : 0; \
-    _gb |= (__builtin_popcount(((h0)>>4) & 0x3u) > 1) ? 0x0004u : 0; \
-    _gb |= (__builtin_popcount(((h0)>>6) & 0x3u) > 1) ? 0x0008u : 0; \
-    _gb |= (__builtin_popcount(((h0)>>8) & 0x3u) > 1) ? 0x0010u : 0; \
-    _gb |= (__builtin_popcount(((h0)>>10) & 0x3u) > 1) ? 0x0020u : 0; \
-    _gb |= (__builtin_popcount(((h0)>>12) & 0x3u) > 1) ? 0x0040u : 0; \
-    _gb |= (__builtin_popcount(((h0)>>14) & 0x3u) > 1) ? 0x0080u : 0; \
-    _gb |= (__builtin_popcount(((h0)>>16) & 0x3u) > 1) ? 0x0100u : 0; \
-    _gb |= (__builtin_popcount(((h0)>>18) & 0x3u) > 1) ? 0x0200u : 0; \
-    _gb |= (__builtin_popcount(((h0)>>20) & 0x3u) > 1) ? 0x0400u : 0; \
-    _gb |= (__builtin_popcount(((h0)>>22) & 0x3u) > 1) ? 0x0800u : 0; \
-    _gb |= (__builtin_popcount(((h0)>>24) & 0x3u) > 1) ? 0x1000u : 0; \
-    _gb |= (__builtin_popcount(((h0)>>26) & 0x3u) > 1) ? 0x2000u : 0; \
-    _gb |= (__builtin_popcount(((h0)>>28) & 0x3u) > 1) ? 0x4000u : 0; \
-    _gb |= (__builtin_popcount(((h0)>>30) & 0x3u) > 1) ? 0x8000u : 0; \
-    while (_gb) { int _v = __builtin_ctz(_gb); \
-        for (int _k = 0; _k < KI_NCLASSES; _k++) \
-            (SC)[_k] += (TGT)[TGT_IDX(_k, (h), _v, H, 16)]; \
-        _gb &= _gb - 1; } \
-} while (0)
-
-#define VN_CORRECT_2(h0, h, H, DC, TK, PK, SI) do { \
-    uint32_t _gb = 0; \
-    _gb |= (__builtin_popcount((h0) & 0x3u) > 1) ? 0x0001u : 0; \
-    _gb |= (__builtin_popcount(((h0)>>2) & 0x3u) > 1) ? 0x0002u : 0; \
-    _gb |= (__builtin_popcount(((h0)>>4) & 0x3u) > 1) ? 0x0004u : 0; \
-    _gb |= (__builtin_popcount(((h0)>>6) & 0x3u) > 1) ? 0x0008u : 0; \
-    _gb |= (__builtin_popcount(((h0)>>8) & 0x3u) > 1) ? 0x0010u : 0; \
-    _gb |= (__builtin_popcount(((h0)>>10) & 0x3u) > 1) ? 0x0020u : 0; \
-    _gb |= (__builtin_popcount(((h0)>>12) & 0x3u) > 1) ? 0x0040u : 0; \
-    _gb |= (__builtin_popcount(((h0)>>14) & 0x3u) > 1) ? 0x0080u : 0; \
-    _gb |= (__builtin_popcount(((h0)>>16) & 0x3u) > 1) ? 0x0100u : 0; \
-    _gb |= (__builtin_popcount(((h0)>>18) & 0x3u) > 1) ? 0x0200u : 0; \
-    _gb |= (__builtin_popcount(((h0)>>20) & 0x3u) > 1) ? 0x0400u : 0; \
-    _gb |= (__builtin_popcount(((h0)>>22) & 0x3u) > 1) ? 0x0800u : 0; \
-    _gb |= (__builtin_popcount(((h0)>>24) & 0x3u) > 1) ? 0x1000u : 0; \
-    _gb |= (__builtin_popcount(((h0)>>26) & 0x3u) > 1) ? 0x2000u : 0; \
-    _gb |= (__builtin_popcount(((h0)>>28) & 0x3u) > 1) ? 0x4000u : 0; \
-    _gb |= (__builtin_popcount(((h0)>>30) & 0x3u) > 1) ? 0x8000u : 0; \
-    while (_gb) { int _v = __builtin_ctz(_gb); \
-        (DC)[TGT_IDX((TK), (h), _v, H, 16)] += (SI); \
-        (DC)[TGT_IDX((PK), (h), _v, H, 16)] -= (SI); \
-        _gb &= _gb - 1; } \
-} while (0)
-
-/* ── VN=4: 8 groups of 4 bits, TH=2 ────────────────────────── */
-#define VN_SCORE_4(h0, h, H, TGT, SC) do { \
-    uint32_t _gb = 0; \
-    _gb |= (__builtin_popcount((h0) & 0xFu) > 2) ? 1u<<0 : 0; \
-    _gb |= (__builtin_popcount(((h0)>>4) & 0xFu) > 2) ? 1u<<1 : 0; \
-    _gb |= (__builtin_popcount(((h0)>>8) & 0xFu) > 2) ? 1u<<2 : 0; \
-    _gb |= (__builtin_popcount(((h0)>>12) & 0xFu) > 2) ? 1u<<3 : 0; \
-    _gb |= (__builtin_popcount(((h0)>>16) & 0xFu) > 2) ? 1u<<4 : 0; \
-    _gb |= (__builtin_popcount(((h0)>>20) & 0xFu) > 2) ? 1u<<5 : 0; \
-    _gb |= (__builtin_popcount(((h0)>>24) & 0xFu) > 2) ? 1u<<6 : 0; \
-    _gb |= (__builtin_popcount(((h0)>>28) & 0xFu) > 2) ? 1u<<7 : 0; \
-    while (_gb) { int _v = __builtin_ctz(_gb); \
-        for (int _k = 0; _k < KI_NCLASSES; _k++) \
-            (SC)[_k] += (TGT)[TGT_IDX(_k, (h), _v, H, 8)]; \
-        _gb &= _gb - 1; } \
-} while (0)
-
-#define VN_CORRECT_4(h0, h, H, DC, TK, PK, SI) do { \
-    uint32_t _gb = 0; \
-    _gb |= (__builtin_popcount((h0) & 0xFu) > 2) ? 1u<<0 : 0; \
-    _gb |= (__builtin_popcount(((h0)>>4) & 0xFu) > 2) ? 1u<<1 : 0; \
-    _gb |= (__builtin_popcount(((h0)>>8) & 0xFu) > 2) ? 1u<<2 : 0; \
-    _gb |= (__builtin_popcount(((h0)>>12) & 0xFu) > 2) ? 1u<<3 : 0; \
-    _gb |= (__builtin_popcount(((h0)>>16) & 0xFu) > 2) ? 1u<<4 : 0; \
-    _gb |= (__builtin_popcount(((h0)>>20) & 0xFu) > 2) ? 1u<<5 : 0; \
-    _gb |= (__builtin_popcount(((h0)>>24) & 0xFu) > 2) ? 1u<<6 : 0; \
-    _gb |= (__builtin_popcount(((h0)>>28) & 0xFu) > 2) ? 1u<<7 : 0; \
-    while (_gb) { int _v = __builtin_ctz(_gb); \
-        (DC)[TGT_IDX((TK), (h), _v, H, 8)] += (SI); \
-        (DC)[TGT_IDX((PK), (h), _v, H, 8)] -= (SI); \
-        _gb &= _gb - 1; } \
-} while (0)
-
-/* ── VN=8: 4 groups of 8 bits, TH=4 ────────────────────────── */
-#define VN_SCORE_8(h0, h, H, TGT, SC) do { \
-    uint32_t _gb = 0; \
-    _gb |= (__builtin_popcount((h0) & 0xFFu) > 4) ? 1u<<0 : 0; \
-    _gb |= (__builtin_popcount(((h0)>>8) & 0xFFu) > 4) ? 1u<<1 : 0; \
-    _gb |= (__builtin_popcount(((h0)>>16) & 0xFFu) > 4) ? 1u<<2 : 0; \
-    _gb |= (__builtin_popcount(((h0)>>24) & 0xFFu) > 4) ? 1u<<3 : 0; \
-    while (_gb) { int _v = __builtin_ctz(_gb); \
-        for (int _k = 0; _k < KI_NCLASSES; _k++) \
-            (SC)[_k] += (TGT)[TGT_IDX(_k, (h), _v, H, 4)]; \
-        _gb &= _gb - 1; } \
-} while (0)
-
-#define VN_CORRECT_8(h0, h, H, DC, TK, PK, SI) do { \
-    uint32_t _gb = 0; \
-    _gb |= (__builtin_popcount((h0) & 0xFFu) > 4) ? 1u<<0 : 0; \
-    _gb |= (__builtin_popcount(((h0)>>8) & 0xFFu) > 4) ? 1u<<1 : 0; \
-    _gb |= (__builtin_popcount(((h0)>>16) & 0xFFu) > 4) ? 1u<<2 : 0; \
-    _gb |= (__builtin_popcount(((h0)>>24) & 0xFFu) > 4) ? 1u<<3 : 0; \
-    while (_gb) { int _v = __builtin_ctz(_gb); \
-        (DC)[TGT_IDX((TK), (h), _v, H, 4)] += (SI); \
-        (DC)[TGT_IDX((PK), (h), _v, H, 4)] -= (SI); \
-        _gb &= _gb - 1; } \
-} while (0)
-
-/* ── VN=16: 2 groups of 16 bits, TH=8 ──────────────────────── */
-#define VN_SCORE_16(h0, h, H, TGT, SC) do { \
-    uint32_t _gb = 0; \
-    if (__builtin_popcount((h0) & 0xFFFFu) > 8) _gb |= 1u<<0; \
-    if (__builtin_popcount((h0) >> 16) > 8) _gb |= 1u<<1; \
-    while (_gb) { int _v = __builtin_ctz(_gb); \
-        for (int _k = 0; _k < KI_NCLASSES; _k++) \
-            (SC)[_k] += (TGT)[TGT_IDX(_k, (h), _v, H, 2)]; \
-        _gb &= _gb - 1; } \
-} while (0)
-
-#define VN_CORRECT_16(h0, h, H, DC, TK, PK, SI) do { \
-    uint32_t _gb = 0; \
-    if (__builtin_popcount((h0) & 0xFFFFu) > 8) _gb |= 1u<<0; \
-    if (__builtin_popcount((h0) >> 16) > 8) _gb |= 1u<<1; \
-    while (_gb) { int _v = __builtin_ctz(_gb); \
-        (DC)[TGT_IDX((TK), (h), _v, H, 2)] += (SI); \
-        (DC)[TGT_IDX((PK), (h), _v, H, 2)] -= (SI); \
-        _gb &= _gb - 1; } \
-} while (0)
-
-/* ── VN=32: 1 group of 32 bits, TH=16 ──────────────────────── */
-#define VN_SCORE_32(h0, h, H, TGT, SC) do { \
-    if (__builtin_popcount(h0) > 16) { \
-        for (int _k = 0; _k < KI_NCLASSES; _k++) \
-            (SC)[_k] += (TGT)[TGT_IDX(_k, (h), 0, H, 1)]; \
-    } \
-} while (0)
-
-#define VN_CORRECT_32(h0, h, H, DC, TK, PK, SI) do { \
-    if (__builtin_popcount(h0) > 16) { \
-        (DC)[TGT_IDX((TK), (h), 0, H, 1)] += (SI); \
-        (DC)[TGT_IDX((PK), (h), 0, H, 1)] -= (SI); \
-    } \
-} while (0)
-static inline int ki_omp_nthreads(void) {
-    int n = 1;
-    #pragma omp parallel
-    #pragma omp single
-    n = omp_get_num_threads();
-    return n;
-}
-
-static inline int32_t **ki_cache_alloc(int n_threads, size_t tgt_sz) {
-    int32_t **cache = (int32_t **)malloc((size_t)n_threads * sizeof(int32_t *));
-    if (!cache) { fprintf(stderr, "[FATAL] ki_cache_alloc(%d) failed\n", n_threads); exit(1); }
-    for (int t = 0; t < n_threads; t++)
-        cache[t] = (int32_t *)ki_xcalloc(tgt_sz, sizeof(int32_t));
-    return cache;
-}
-
-static inline void ki_cache_apply_free(int32_t **cache, int n_threads,
-                                        int32_t *target, size_t tgt_sz) {
-    for (int t = 0; t < n_threads; t++) {
-        int32_t *ct = cache[t];
-        for (size_t i = 0; i < tgt_sz; i++)
-            target[i] += ct[i];
-        free(ct);
-    }
-    free(cache);
-}
-
-/* ═══════════════════════════════════════════════════════════════════════
- * BATCH CORRECTION — parallel + deterministisch via Mini-Batches
- * ═══════════════════════════════════════════════════════════════════════
- *
- * Phasen pro Batch:
- *   1. Parallel: Scores aus target berechnen, Deltas in Thread-Cache
- *   2. Sequentiell: Deltas auf target anwenden → nächster Batch sieht Änderung
- *
- * Schrittgrösse pro Sample:
- *   gap = sc[pred] - sc[true_k]   (Member-eigener Score-Abstand)
- *   gap > 0 → Korrektur, step skaliert proportional: step × gap / F
- *   gap ≥ F → vollen Schritt
- *   gap ≤ 0 → kein Update (Member lag richtig)
- *
- * target:     Ziel-Target (mit Offset für Ensemble)
- * H:          Anzahl Neuronen
- * class_offset: Offset pro Klasse
- * h0_all:     Vorberechnete H0-Werte [N × H]
- * y:          Labels
- * N:          Anzahl Trainings-Samples
- * step:       Basis-Schritt (Obergrenze, Member skaliert via gap)
- * tgt_sz:     Grösse des Target-Arrays (H × KI_NCLASSES × V)
- *
- * Returns:    Anzahl Korrekturen
- */
-static inline int ki_batch_correct(int32_t *target, int H,
-                                    const int64_t *class_offset,
-                                    const uint32_t *h0_all,
-                                    const uint8_t *y,
-                                    int N, int step, size_t tgt_sz) {
-    int n_threads = ki_omp_nthreads();
-    int32_t **dc = ki_cache_alloc(n_threads, tgt_sz);
-    int corrections = 0;
-
-    for (int b_start = 0; b_start < N; b_start += aa.batchN) {
-        int b_end = b_start + aa.batchN;
-        if (b_end > N) b_end = N;
-        int batch_corr = 0;
-        int batch_multi = 0;  /* Samples mit >1 Gegner (nur multi-correct) */
-
-        #pragma omp parallel for reduction(+:batch_corr,batch_multi) schedule(static)
-        for (int s = b_start; s < b_end; s++) {
-            int tid = omp_get_thread_num();
-            int true_k = (int)y[s];
-            const uint32_t *h0_s = h0_all + (size_t)s * (size_t)H;
-            int64_t sc[KI_NCLASSES];
-            for (int k = 0; k < KI_NCLASSES; k++) sc[k] = class_offset[k];
-
-            /* ── Score mit VN-Grouping ──────────────────────────── */
-            for (int h = 0; h < H; h++) {
-                uint32_t h0 = h0_s[h];
-                switch (aa.splitVN) {
-                    case 1:  VN_SCORE_1(h0, h, H, target, sc); break;
-                    case 2:  VN_SCORE_2(h0, h, H, target, sc); break;
-                    case 4:  VN_SCORE_4(h0, h, H, target, sc); break;
-                    case 8:  VN_SCORE_8(h0, h, H, target, sc); break;
-                    case 16: VN_SCORE_16(h0, h, H, target, sc); break;
-                    case 32: VN_SCORE_32(h0, h, H, target, sc); break;
-                }
-            }
-
-            int pred = 0;
-            for (int k = 1; k < KI_NCLASSES; k++)
-                if (sc[k] > sc[pred]) pred = k;
-
-            if (pred != true_k) {
-                int64_t gap = sc[pred] - sc[true_k];
-                if (gap > 0) {
-                    int step_i;
-                    if (gap < (int64_t)OT_F) {
-                        int64_t scaled = ((int64_t)step * gap) >> OT_PRECISION;
-                        step_i = (int)scaled;
-                        if (step_i < 1) step_i = 1;
-                    } else {
-                        step_i = step;
-                    }
-                    if (aa.multi_correct) {
-                        /* ── Multi-Class Target Correction ─────────────
-                         * Alle Klassen mit sc[k] > sc[true_k] bestrafen.
-                         * Winner (pred) kriegt vollen step_i,
-                         * Secondary Opponents teilen sich den Rest
-                         * proportional zu ihrem gap.
-                         * true_k += step, pred -= step_w, 2nd -= step_2nd */
-                        int n_over = 0;
-                        int over_k[KI_NCLASSES];
-                        int64_t over_gap[KI_NCLASSES];
-                        int64_t total_gap = 0;
-
-                        for (int k = 0; k < KI_NCLASSES; k++) {
-                            if (k == true_k) continue;
-                            int64_t g = sc[k] - sc[true_k];
-                            if (g > 0) {
-                                over_k[n_over] = k;
-                                over_gap[n_over] = g;
-                                total_gap += g;
-                                n_over++;
-                            }
-                        }
-
-                        if (n_over > 0) {
-                            batch_corr++;
-                            if (n_over > 1) {
-                                batch_multi++;
-                                /* total_gap > winner_gap → größeres Budget
-                                 * nötig.  step_i neu auf total_gap basieren. */
-                                if (total_gap < (int64_t)OT_F) {
-                                    int64_t scaled = ((int64_t)step * total_gap) >> OT_PRECISION;
-                                    if (scaled > (int64_t)step) scaled = step;
-                                    step_i = (int)scaled;
-                                    if (step_i < 1) step_i = 1;
-                                } else {
-                                    step_i = step;
-                                }
-                            }
-                            /* Step proportional auf ALLE Gegner verteilen
-                             * (inkl. pred).  true_k += step (summiert über
-                             * alle VN_CORRECT-Aufrufe), jeder Gegner −step_k.
-                             * Letzter Gegner kriegt Rest (Rundungsausgleich). */
-                            int64_t assigned = 0;
-                            for (int oi = 0; oi < n_over; oi++) {
-                                int k = over_k[oi];
-                                int64_t step_k = (oi == n_over - 1)
-                                    ? (int64_t)step_i - assigned
-                                    : ((int64_t)step_i * over_gap[oi]) / total_gap;
-                                if (step_k < 1) step_k = 1;
-                                if (assigned + step_k > step_i)
-                                    step_k = step_i - assigned;
-                                assigned += step_k;
-                                if (step_k > 0) {
-                                    for (int h = 0; h < H; h++) {
-                                        uint32_t h0 = h0_s[h];
-                                        switch (aa.splitVN) {
-                                            case 1:  VN_CORRECT_1(h0, h, H, dc[tid], true_k, k, (int)step_k); break;
-                                            case 2:  VN_CORRECT_2(h0, h, H, dc[tid], true_k, k, (int)step_k); break;
-                                            case 4:  VN_CORRECT_4(h0, h, H, dc[tid], true_k, k, (int)step_k); break;
-                                            case 8:  VN_CORRECT_8(h0, h, H, dc[tid], true_k, k, (int)step_k); break;
-                                            case 16: VN_CORRECT_16(h0, h, H, dc[tid], true_k, k, (int)step_k); break;
-                                            case 32: VN_CORRECT_32(h0, h, H, dc[tid], true_k, k, (int)step_k); break;
-    }
-}
-                                }
-                            }
-                        }
-                    } else {
-                        /* ── Original Single-Class Correction ──────────
-                         * Nur den Argmax-Gegner bestrafen (wie vor 2026-06-30). */
-                        batch_corr++;
-                        for (int h = 0; h < H; h++) {
-                            uint32_t h0 = h0_s[h];
-                            switch (aa.splitVN) {
-                                case 1:  VN_CORRECT_1(h0, h, H, dc[tid], true_k, pred, step_i); break;
-                                case 2:  VN_CORRECT_2(h0, h, H, dc[tid], true_k, pred, step_i); break;
-                                case 4:  VN_CORRECT_4(h0, h, H, dc[tid], true_k, pred, step_i); break;
-                                case 8:  VN_CORRECT_8(h0, h, H, dc[tid], true_k, pred, step_i); break;
-                                case 16: VN_CORRECT_16(h0, h, H, dc[tid], true_k, pred, step_i); break;
-                                case 32: VN_CORRECT_32(h0, h, H, dc[tid], true_k, pred, step_i); break;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        /* Apply + clear cache */
-        for (int t = 0; t < n_threads; t++) {
-            int32_t *ct = dc[t];
-            for (size_t i = 0; i < tgt_sz; i++) {
-                int d = ct[i];
-                if (d != 0) target[i] += d;
-            }
-            memset(ct, 0, tgt_sz * sizeof(int32_t));
-        }
-        corrections += batch_corr;
-/*
-        if (aa.debug && batch_multi > 1)
-            printf("  [MULTI] batch=%d corr=%d multi=%d\n",
-                   (int)((b_end - b_start)), batch_corr, batch_multi);
-*/
-    }
-
-    for (int t = 0; t < n_threads; t++) free(dc[t]);
-    free(dc);
-    return corrections;
-}
-
 
 /* ═══════════════════════════════════════════════════════════════════════
  * INPUT LOADING — pack uint8 pixels into uint32 containers
@@ -1449,34 +1075,187 @@ static void print_confusion_debug(const uint8_t *y_true, const uint8_t *y_pred,
             cm[t][p]++;
     }
 
+    /* Nur Klassen mit Samples anzeigen (wichtig bei --filter) */
+    int active_cols[KI_NCLASSES], n_active = 0;
+    for (int k = 0; k < KI_NCLASSES; k++) {
+        int has = 0;
+        for (int r = 0; r < KI_NCLASSES && !has; r++)
+            if (cm[r][k] > 0 || cm[k][r] > 0) has = 1;
+        if (has) active_cols[n_active++] = k;
+    }
+    if (n_active == 0) return;
+
     printf("\n  ── Confusion Matrix %s ─────────────────────────────\n", is_final ? "(final)" : "(per epoch)");
     if (!is_final)
         printf("  Ep %d\n", ep + 1);
     else
         (void)ep;
     printf("  %-12s", "true \\ pred");
-    for (int k = 0; k < KI_NCLASSES; k++)
-        printf("  %-7s", ki_class_names[k]);
+    for (int ai = 0; ai < n_active; ai++)
+        printf("  %-7s", ki_class_names[active_cols[ai]]);
     printf("  %-7s\n", "err%");
 
     printf("  %-12s", "────────────");
-    for (int k = 0; k < KI_NCLASSES; k++)
+    for (int ai = 0; ai < n_active; ai++)
         printf("  %-7s", "───────");
     printf("  %-7s\n", "───────");
 
-    for (int r = 0; r < KI_NCLASSES; r++) {
+    for (int ri = 0; ri < n_active; ri++) {
+        int r = active_cols[ri];
         int row_tot = 0, row_err = 0;
-        for (int cc = 0; cc < KI_NCLASSES; cc++) {
+        for (int ci = 0; ci < n_active; ci++) {
+            int cc = active_cols[ci];
             row_tot += cm[r][cc];
             if (cc != r) row_err += cm[r][cc];
         }
-        float err_pct = row_tot > 0 ? (float)row_err * 100.0f / (float)row_tot : 0.0f;
+        if (row_tot == 0) continue;  /* nur Zeilen mit Samples anzeigen */
+        float err_pct = (float)row_err * 100.0f / (float)row_tot;
         printf("  %-12s", ki_class_names[r]);
-        for (int cc = 0; cc < KI_NCLASSES; cc++)
-            printf("  %-7d", cm[r][cc]);
-        printf("  %6.0f%%\n", (double)err_pct);
+        for (int ci = 0; ci < n_active; ci++) {
+            int cc = active_cols[ci];
+            float col_pct = (float)cm[r][cc] * 100.0f / (float)row_tot;
+            printf("  %6.1f%%", (double)col_pct);
+        }
+        printf("  %6.1f%%\n", (double)err_pct);
     }
     printf("  ─────────────────────────────────────────────────────\n\n");
+    fflush(stdout);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+ * FILTER DATASET — Restrict to specific classes only
+ * ═══════════════════════════════════════════════════════════════════════
+ * Called AFTER ki_dataset_read(). Compacts data->y[], data->X_raw[],
+ * and data->X[] (if present) to contain only samples whose labels
+ * are in aa.filter_mask. Updates data->num_images and clamps
+ * aa.trainN/aa.evalN to the filtered count.
+ */
+__attribute__((unused))
+static inline void ki_filter_dataset(ki_Dataset *data) {
+    if (aa.filter_str[0] == '\0') return;  /* no filter → no-op */
+    if (aa.dry_run) return;           /* dry-run: no pixel data loaded yet */
+    if (!data->y || data->num_images <= 0) return;  /* safety: no labels loaded */
+
+    /* ── Parse aa.filter_str into a bitmask ─────────────────────
+     * Accepts both numeric indices (0,1,2) and class names
+     * (airplan,cat,deer). Case-insensitive for names. */
+    int mask = 0;
+    char buf[128];
+    strncpy(buf, aa.filter_str, sizeof(buf) - 1);
+    buf[sizeof(buf) - 1] = '\0';
+    for (char *tok = strtok(buf, ","); tok; tok = strtok(NULL, ",")) {
+        while (*tok == ' ' || *tok == '\t') tok++;
+        if (*tok == '\0') continue;
+
+        /* Try numeric first (atoi with full-string validation) */
+        char *end = NULL;
+        long c = strtol(tok, &end, 10);
+        if (end != tok && *end == '\0') {
+            if (c < 0 || c >= KI_NCLASSES) {
+                fprintf(stderr, "[ERROR] --filter: invalid class index %ld (valid: 0..%d)\n",
+                        c, KI_NCLASSES - 1);
+                exit(1);
+            }
+            mask |= (1 << (int)c);
+            continue;
+        }
+
+        /* Try class name match (case-insensitive) */
+        int found = 0;
+        for (int k = 0; k < KI_NCLASSES; k++) {
+            if (strcasecmp(tok, ki_class_names[k]) == 0) {
+                mask |= (1 << k);
+                found = 1;
+                break;
+            }
+        }
+        if (!found) {
+            fprintf(stderr, "[ERROR] --filter: unknown class '%s'. Valid:", tok);
+            for (int k = 0; k < KI_NCLASSES; k++)
+                fprintf(stderr, " %s(%d)", ki_class_names[k], k);
+            fprintf(stderr, "\n");
+            exit(1);
+        }
+    }
+
+    if (mask == 0) {
+        fprintf(stderr, "[ERROR] --filter: at least one class required\n");
+        exit(1);
+    }
+    aa.filter_mask = mask;  /* store computed mask for print_setup etc. */
+
+    int total = data->num_images;
+    int *idx = (int *)malloc((size_t)total * sizeof(int));
+    if (!idx) { fprintf(stderr, "[FATAL] ki_filter_dataset OOM\n"); exit(1); }
+    int nf = 0;
+    for (int i = 0; i < total; i++) {
+        int lbl = (int)data->y[i];
+        if (lbl >= 0 && lbl < KI_NCLASSES && ((mask >> lbl) & 1))
+            idx[nf++] = i;
+    }
+
+    if (nf == 0) {
+        fprintf(stderr, "[ERROR] --filter: no samples found for classes in mask 0x%02X\n", mask);
+        free(idx); exit(1);
+    }
+
+    /* Compact labels */
+    uint8_t *new_y = (uint8_t *)malloc((size_t)nf);
+    if (!new_y) { fprintf(stderr, "[FATAL] ki_filter_dataset OOM\n"); free(idx); exit(1); }
+    for (int i = 0; i < nf; i++) new_y[i] = data->y[idx[i]];
+    free(data->y);
+    data->y = new_y;
+
+    /* Compact X_raw (always present after ki_dataset_read) */
+    size_t px = (size_t)data->pixels;
+    uint8_t *new_Xr = (uint8_t *)malloc((size_t)nf * px);
+    if (!new_Xr) { fprintf(stderr, "[FATAL] ki_filter_dataset OOM\n"); free(idx); exit(1); }
+    for (int i = 0; i < nf; i++)
+        memcpy(new_Xr + (size_t)i * px, data->X_raw + (size_t)idx[i] * px, px);
+    free(data->X_raw);
+    data->X_raw = new_Xr;
+
+    /* Compact X (float, only present for some trainers like Adam) */
+    if (data->X) {
+        float *new_Xf = (float *)malloc((size_t)nf * px * sizeof(float));
+        if (!new_Xf) { fprintf(stderr, "[FATAL] ki_filter_dataset OOM\n"); free(idx); exit(1); }
+        for (int i = 0; i < nf; i++)
+            memcpy(new_Xf + (size_t)i * px, data->X + (size_t)idx[i] * px, px * sizeof(float));
+        free(data->X);
+        data->X = new_Xf;
+    }
+
+    data->num_images = nf;
+    free(idx);
+
+    /* ── Preserve original eval ratio when clamping ─────────────
+     * If original split was 50000/10000 (17% eval), after filter
+     * with 5923 samples, eval should be 5923×10000/60000 = 987
+     * (NOT 5923-50000 = 0). */
+    int total_desired = aa.trainN + aa.evalN;
+    if (total_desired > nf) {
+        if (total_desired <= 0) {
+            aa.trainN = nf;
+            aa.evalN = 0;
+        } else {
+            int new_eval = (int)((long long)aa.evalN * (long long)nf / (long long)total_desired);
+            if (new_eval > aa.evalN) new_eval = aa.evalN;  /* never exceed original evalN */
+            if (new_eval < 1 && nf >= 10) new_eval = 1;    /* at least 1 eval if enough samples */
+            int new_train = nf - new_eval;
+            if (new_train < 1) { new_train = 1; new_eval = nf - 1; }
+            if (new_eval < 0) new_eval = 0;
+            aa.trainN = new_train;
+            aa.evalN = new_eval;
+        }
+    }
+
+    /* Print class names from filter mask */
+    printf("  [FILTER] Classes:");
+    for (int k = 0; k < KI_NCLASSES; k++) {
+        if ((mask >> k) & 1)
+            printf(" %s", ki_class_names[k]);
+    }
+    printf("  → %d samples  split=%d/%d\n", nf, aa.trainN, aa.evalN);
     fflush(stdout);
 }
 

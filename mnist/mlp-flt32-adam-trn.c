@@ -239,6 +239,7 @@ int main(int argc, char *argv[]) {
     /* ── Load dataset ─────────────────────────────────────────── */
     ki_Dataset data = { .dry_run = aa.dry_run };
     if (ki_dataset_read(&data) != 0) return 1;
+    /* NOTE: --filter wirkt NUR auf Training */
     int total_all = data.num_images;
     int total_train = aa.trainN;
     int total_eval  = aa.evalN;

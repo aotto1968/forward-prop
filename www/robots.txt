@@ -1,0 +1,6 @@
+User-agent: *
+Allow: /
+Disallow: /data/
+Disallow: /assets/
+
+Sitemap: https://forward-prop.nhi1.de/sitemap.xml

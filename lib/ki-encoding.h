@@ -273,7 +273,10 @@ enum ki_color_bit {
     COLOR_CM    = 19,  /* G-B opponent */
     COLOR_CP    = 20,  /* R-(G+B)/2 opponent */
 
-    COLOR_NB    = 21   /* Anzahl Farben */
+    COLOR_EDGE  = 21,  /* Sobel-Kanten auf Y-Luminanz (für --channels edge) */
+    COLOR_BIN   = 22,  /* Otsu-binarisiertes Y (filled black/white) */
+
+    COLOR_NB    = 23   /* Anzahl Farben */
 };
 
 /* ── Block-Namen für Display ────────────────────────────────── */
@@ -300,6 +303,8 @@ static inline const char *ki_color_name(int bit) {
         [COLOR_CL]    = "CL",
         [COLOR_CM]    = "CM",
         [COLOR_CP]    = "CP",
+        [COLOR_EDGE]  = "edge",
+        [COLOR_BIN]   = "bin",
     };
     if ((unsigned)bit < COLOR_NB) return names[bit];
     return "?";
@@ -353,8 +358,12 @@ static inline void ki_blocks_from_rgb(int r, int g, int b, uint8_t blocks[COLOR_
         if (b > mx) { mx = b; } if (b < mn) { mn = b; }
         blocks[COLOR_S] = (uint8_t)(mx - mn);
     }
-    /* Contrast */
+    /* Contrast (wird nach Sobel in load_input berechnet — hier Platzhalter) */
     blocks[COLOR_C] = (uint8_t)r;
+    /* Edge (wird nach Sobel in load_input berechnet — hier Platzhalter) */
+    blocks[COLOR_EDGE] = 0;
+    /* Binary (wird nach Otsu in load_input berechnet — hier Platzhalter) */
+    blocks[COLOR_BIN] = 0;
 
     blocks[COLOR_CL] = (uint8_t)((g + b) >> 1);
     blocks[COLOR_CM] = (uint8_t)ki_clamp_u8(128 + (g - b));
@@ -391,6 +400,122 @@ static inline void ki_print_member_structure(const int *colors,
     }
     if (ens > 1) printf("  × EN=%d", ens);
     printf("\n");
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+ * EDGE DETECTION — Sobel 3×3 auf Y-Luminanz
+ * ═══════════════════════════════════════════════════════════════════════
+ * Erwartet: px[COLOR_NB][1024] mit gültigem COLOR_Y (ITU-601 Y).
+ * Berechnet: COLOR_EDGE (Sobel-Magnitude) + COLOR_C (Sobel auf AL).
+ * px wird IN PLACE aktualisiert. Aufruf NACH ki_blocks_from_rgb().
+ * w=32, h=32 (CIFAR-10 Auflösung).
+ */
+__attribute__((unused))
+static inline void ki_compute_edge(uint8_t px[COLOR_NB][1024], int w, int h) {
+    /* Sobel auf Y (ITU-601) → COLOR_EDGE */
+    {   int yn[1024];
+        for (int p = 0; p < w * h; p++) yn[p] = px[COLOR_Y][p];
+        for (int y = 1; y < h - 1; y++) {
+            for (int x = 1; x < w - 1; x++) {
+                int i = y * w + x;
+                int gx = -yn[i-w-1] + yn[i-w+1]
+                         -2*yn[i-1]  + 2*yn[i+1]
+                         -yn[i+w-1] + yn[i+w+1];
+                int gy = -yn[i-w-1] -2*yn[i-w] -yn[i-w+1]
+                         +yn[i+w-1] +2*yn[i+w] +yn[i+w+1];
+                int mag = (int)(sqrtf((float)(gx*gx + gy*gy)) / 6.0f + 0.5f);
+                if (mag > 255) mag = 255;
+                px[COLOR_EDGE][i] = (uint8_t)mag;
+            }
+        }
+        /* Border-Pixel: nächsten Wert kopieren */
+        for (int y = 0; y < h; y++) {
+            px[COLOR_EDGE][y*w]     = px[COLOR_EDGE][y*w+1];
+            px[COLOR_EDGE][y*w+w-1] = px[COLOR_EDGE][y*w+w-2];
+        }
+        for (int x = 0; x < w; x++) {
+            px[COLOR_EDGE][x]       = px[COLOR_EDGE][w+x];
+            px[COLOR_EDGE][(h-1)*w + x] = px[COLOR_EDGE][(h-2)*w + x];
+        }
+    }
+    /* Sobel auf AL (R+G)/2 → COLOR_C (bessere Skalierung) */
+    {   int ln[1024];
+        for (int p = 0; p < w * h; p++) ln[p] = px[COLOR_AL][p];
+        for (int y = 1; y < h - 1; y++) {
+            for (int x = 1; x < w - 1; x++) {
+                int i = y * w + x;
+                int gx = -ln[i-w-1] + ln[i-w+1]
+                         -2*ln[i-1]  + 2*ln[i+1]
+                         -ln[i+w-1] + ln[i+w+1];
+                int gy = -ln[i-w-1] -2*ln[i-w] -ln[i-w+1]
+                         +ln[i+w-1] +2*ln[i+w] +ln[i+w+1];
+                int mag = (int)(sqrtf((float)(gx*gx + gy*gy)) / 4.0f + 0.5f);
+                if (mag > 255) mag = 255;
+                px[COLOR_C][i] = (uint8_t)mag;
+            }
+        }
+        /* Border-Pixel: nächsten Wert kopieren */
+        for (int y = 0; y < h; y++) {
+            px[COLOR_C][y*w]     = px[COLOR_C][y*w+1];
+            px[COLOR_C][y*w+w-1] = px[COLOR_C][y*w+w-2];
+        }
+        for (int x = 0; x < w; x++) {
+            px[COLOR_C][x]       = px[COLOR_C][w+x];
+            px[COLOR_C][(h-1)*w + x] = px[COLOR_C][(h-2)*w + x];
+        }
+    }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+ * BINARY THRESHOLD — Otsu auf Y-Luminanz → filled black/white
+ * ═══════════════════════════════════════════════════════════════════════
+ * Erwartet: px[COLOR_NB][1024] mit gültigem COLOR_Y (ITU-601 Y).
+ * Berechnet: COLOR_BIN (Otsu-binarisiert: 0 oder 255).
+ * px wird IN PLACE aktualisiert. Aufruf NACH ki_blocks_from_rgb().
+ * w=32, h=32 (CIFAR-10 Auflösung).
+ *
+ * Otsu's Method: Findet den Threshold T der die intra-class Varianz
+ * minimiert (bzw. inter-class Varianz maximiert). Liefert ein
+ * "filled" Schwarz/Weiss-Bild — Objekt-Regionen sind 255, Hintergrund 0.
+ */
+__attribute__((unused))
+static inline void ki_compute_binary(uint8_t px[COLOR_NB][1024], int w, int h) {
+    int N = w * h;
+    /* Histogram der Y-Werte (0..255) */
+    int hist[256] = {0};
+    for (int p = 0; p < N; p++)
+        hist[px[COLOR_Y][p]]++;
+
+    /* Otsu: Finde Threshold T der sigma_b^2 maximiert */
+    int total = N;
+    float sum = 0.0f;
+    for (int i = 0; i < 256; i++) sum += (float)i * (float)hist[i];
+
+    float sumB = 0.0f;
+    int wB = 0, wF = 0;
+    float max_var = 0.0f;
+    int threshold = 128;  /* fallback */
+
+    for (int i = 0; i < 256; i++) {
+        wB += hist[i];
+        if (wB == 0) continue;
+        wF = total - wB;
+        if (wF == 0) break;
+
+        sumB += (float)i * (float)hist[i];
+        float mB = sumB / (float)wB;
+        float mF = (sum - sumB) / (float)wF;
+
+        float var = (float)wB * (float)wF * (mB - mF) * (mB - mF);
+        if (var > max_var) {
+            max_var = var;
+            threshold = i;
+        }
+    }
+
+    /* Binarisieren: Y > threshold → 255, sonst 0 */
+    for (int p = 0; p < N; p++)
+        px[COLOR_BIN][p] = (px[COLOR_Y][p] > threshold) ? 255 : 0;
 }
 
 #ifdef __cplusplus

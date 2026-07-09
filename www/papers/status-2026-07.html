@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Status Report July 2026 — DRAM-Native Bit-Logic Classification</title>
+    <meta name="description" content="Target init invariance, thermometer encoding mandatory for bin32, 60% CIFAR-10 barrier, repository consolidation.">
+    <meta name="author" content="Andreas Otto">
+    <meta name="robots" content="index, follow">
+    <meta name="googlebot" content="index, follow">
+    <link rel="icon" type="image/svg+xml" href="../assets/favicon.svg">
+    <link rel="stylesheet" href="../style.css">
+    <link rel="canonical" href="https://forward-prop.nhi1.de/papers/status-2026-07.html">
+    <meta property="og:title" content="Status Report July 2026 — DRAM-Native Classification">
+    <meta property="og:description" content="Target init invariance, thermometer encoding mandatory for bin32, 60% CIFAR-10 barrier, repository consolidation under otto-score-ifc/.">
+    <meta property="og:type" content="article">
+    <meta property="og:url" content="https://forward-prop.nhi1.de/papers/status-2026-07.html">
+    <meta property="og:image" content="https://forward-prop.nhi1.de/assets/og-image.png">
+    <meta property="og:site_name" content="Forward-Prop Research">
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="Status Report July 2026 — DRAM-Native Bit-Logic">
+    <meta name="twitter:description" content="Target init, mandatory thermometer encoding, 60% CIFAR-10 barrier, repo consolidation.">
+    <meta name="twitter:image" content="https://forward-prop.nhi1.de/assets/og-image.png">
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "ScholarlyArticle",
+      "headline": "Status Report July 2026: DRAM-native Classification via Bit-Logic",
+      "description": "Target initialization does not affect final accuracy. Thermometer encoding is mandatory for bin32 classifiers. 60% CIFAR-10 is a fundamental barrier without dataset-specific prior knowledge.",
+      "author": { "@type": "Person", "name": "Andreas Otto" },
+      "datePublished": "2026-07-04",
+      "about": { "@type": "Thing", "name": "DRAM-native bit-logic classifier", "description": "Research on DRAM-native classification using only &amp;|~ operations." }
+    }
+    </script>
+</head>
+<body>
+
+<header>
+    <div class="header-inner">
+        <div class="header-brand">
+            <span class="header-logo">Otto Score</span>
+            <span class="header-subtitle">DRAM-Native &amp;|~ Classification</span>
+        </div>
+        <nav>
+            <ul>
+                <li><a href="../index.html">Home</a></li>
+                <li><a href="status-2026-07.html">Status Report</a></li>
+                <li><a href="https://github.com/aotto1968/forward-prop">Source</a></li>
+            </ul>
+        </nav>
+    </div>
+</header>
+
+<main>
+    <div class="container" style="max-width:900px;">
+
+<h1 style="font-size:2rem; color:var(--navy); margin-bottom:0.25rem;">Status Report — July 2026</h1>
+<p style="font-size:1.1rem; color:var(--mid-gray); margin-bottom:2rem;"><em>DRAM-native Classification via Bit-Logic Operations</em></p>
+
+<h2 style="margin-top:2.5rem;"><span class="accent-bar">&#8203;</span> 1. Target Initialization: Classical vs Random — Identical Convergence</h2>
+
+<p><strong>Question:</strong> Does the initial value of the trained target/offset matrix affect final accuracy?</p>
+<p><strong>Experiment:</strong> Compare two init strategies for CIFAR-10 Otto Score (H=256, 5 ep):</p>
+
+<table class="compare-table">
+<tr><th>Init</th><th>Description</th></tr>
+<tr><td><strong>Bayesian</strong></td><td><code>build_target()</code> computes log-odds from class frequencies, <code>logit_convert()</code> + <code>center_target()</code></td></tr>
+<tr><td><strong>Random</strong></td><td><code>target_ens[i] = (int32_t)(w0_random() &gt;&gt; OT_PRECISION)</code> &mdash; correction builds from scratch</td></tr>
+</table>
+
+<p><strong>Result:</strong> Both converge to the <strong>same final accuracy</strong> (~55%). Bayesian init gives a head start in epoch 1 (~30% vs ~10%), but by epoch 5 both are within 0.5pp. Pure zero initialization does <strong>NOT</strong> work — the correction loop needs a non-zero starting point to break symmetry.</p>
+
+<p><strong>Conclusion:</strong> The correction process is robust — target initialization does not determine the ceiling. The 55-57% barrier is architectural, not initialization-dependent.</p>
+
+<h2 style="margin-top:2.5rem;"><span class="accent-bar">&#8203;</span> 1b. Correction Distribution: Central vs Per-Sample — Same Ceiling</h2>
+
+<p><strong>Question:</strong> Does distributing the log-odds correction across individual misclassifications (instead of one aggregated step) improve convergence?</p>
+
+<table class="compare-table">
+<tr><th>Mode</th><th>Description</th></tr>
+<tr><td><strong>Central (batch)</strong></td><td>Collect all misclassifications in one epoch, compute average correction vector, apply one single step</td></tr>
+<tr><td><strong>Distributed (per-sample)</strong></td><td>For each misclassified sample, apply the correction immediately — multiple small steps per epoch</td></tr>
+</table>
+
+<p><strong>Result:</strong> Both converge to the <strong>same final accuracy</strong> (~55%). The distributed approach shows slightly less oscillation during training (smoother accuracy curve), but at significantly higher computational cost. The ceiling is identical.</p>
+
+<p><strong>Conclusion:</strong> The correction architecture determines the ceiling, not how the correction is scheduled. The distributed mode's reduced oscillation does not translate to higher final accuracy — confirming that the 55-57% barrier is fundamental and not an optimization artifact.</p>
+
+<h2 style="margin-top:2.5rem;"><span class="accent-bar">&#8203;</span> 2. Encoding is Mandatory for Continuous Data — MNIST is the Exception</h2>
+
+<p><strong>Finding:</strong> Binary neural networks (uint32 containers, XNOR+popcount operations) on <strong>continuous data</strong> (photographs: CIFAR-10) require a <strong>thermometer encoding</strong> of pixel values. MNIST is the <strong>exception</strong>: handwritten digits are binary by nature (ink/no-ink), so raw packing works directly.</p>
+
+<h3>MNIST — Special case: binary by nature</h3>
+
+<table class="compare-table">
+<tr><th>Approach</th><th>Encoding</th><th>Accuracy</th><th>Note</th></tr>
+<tr><td>Otto Score</td><td>raw, down, sig, lin8, exp</td><td><strong>97.0%</strong></td><td>Works WITHOUT encoding — binary pixels</td></tr>
+</table>
+
+<p>MNIST digits are inherently binary (&gt;128 = ink, &lt;128 = paper, slight anti-aliasing). Four binary pixels packed into one uint32 preserve the bit-level pattern — XNOR+popcount has structure to exploit. <strong>Encoding is optional for MNIST, not mandatory.</strong></p>
+
+<h3 style="margin-top:1.5rem;">CIFAR-10 — Continuous data REQUIRES encoding</h3>
+
+<table class="compare-table">
+<tr><th>Encoding</th><th>Approach</th><th>Members</th><th>Accuracy</th><th>Note</th></tr>
+<tr><td>Raw (R|G|B plane)</td><td>Hebbian</td><td>1</td><td>10.0%</td><td>Random — no bit-level structure</td></tr>
+<tr><td>exp8 on RGB</td><td>Hebbian</td><td>1</td><td>23.1%</td><td>Encoding creates structure</td></tr>
+<tr><td><code>--encoding latest</code></td><td>Hebbian</td><td><strong>11</strong></td><td><strong>32.4%</strong></td><td>Multi-member vote</td></tr>
+<tr><td><code>--encoding latest</code></td><td>Otto Score</td><td><strong>11</strong></td><td><strong>55.0%</strong></td><td>Same encoding, stronger learner</td></tr>
+</table>
+
+<p>CIFAR-10 pixels are continuous 8-bit color values (0..255 per channel, 16M colors). Four adjacent pixels packed into uint32 have <strong>no bit-level correlation</strong> with visual similarity — XNOR between two random-looking containers yields random popcounts. Thermometer encoding restores the concept of &ldquo;nearness&rdquo; in bit space.</p>
+
+<p><strong>Why encoding matters:</strong> exp8 maps brightness to bit patterns where <code>popcount(encode(pv)) &prop; pv</code>. Pixel values 127 and 128 produce nearly identical bit patterns (differ by one bit) instead of completely unrelated ones. XNOR+popcount can exploit this structure — without it, the binary operations have no semantic gradient.</p>
+
+<h2 style="margin-top:2.5rem;"><span class="accent-bar">&#8203;</span> 3. Repository Structure</h2>
+
+<p>Current state (<code>master</code> branch):</p>
+
+<pre style="background:#1a1a2e; color:#e0e0e0; padding:1rem; border-radius:8px; font-size:0.82rem;">
+otto-score-ifc/          ← Public distribution root
+├── mnist/               ← MNIST trainers (Otto + Hebbian, unified)
+├── cifar/               ← CIFAR trainers (symlinks → mnist/)
+├── reference/           ← AdamW baselines
+├── lib/                 ← Shared headers (maj3.h, ki-encoding.h, w0_random.h)
+└── models/              ← Cached trained models</pre>
+
+<p style="font-size:0.9rem; color:var(--mid-gray);"><em>Only <code>otto-score-ifc/</code> is part of the public distribution on GitHub. Local research directories (<code>mnist-1/</code>, <code>cifar-1/</code>, <code>www/</code>, etc.) are not in the remote repository.</em></p>
+
+<h3 style="margin-top:1.5rem;">Key architectural decisions</h3>
+
+<ul>
+  <li>Every trainer binary doubles as inference via <code>--import</code> — no separate IFC source files</li>
+  <li>Encoding infrastructure in <code>lib/ki-encoding.h</code> — self-contained, no <code>ki_Args</code> dependency</li>
+  <li>Hebbian uses the same multi-member architecture as Otto Score</li>
+  <li>All 6 approaches are comparable at equal H and epochs</li>
+</ul>
+
+<p><strong>GitHub:</strong> <a href="https://github.com/aotto1968/forward-prop">github.com/aotto1968/forward-prop</a> (master branch)</p>
+
+<h2 style="margin-top:2.5rem;"><span class="accent-bar">&#8203;</span> 4. The 60% CIFAR-10 Barrier — A Fundamental Limit</h2>
+
+<p><strong>Claim:</strong> 60% accuracy on CIFAR-10 is a fundamental limit for DRAM-native bit-logic classifiers that use <strong>no dataset-specific prior knowledge</strong>.</p>
+
+<h3 style="margin-top:1.5rem;">Evidence</h3>
+
+<ol>
+  <li><strong>Single frozen random projection</strong> (Otto Score, Hebbian, AdamW all use this):
+    <ul>
+      <li>Best Otto Score result: <strong>58.7%</strong> (June 2026, extensive encoding sweep)</li>
+      <li>Current Otto Score: <strong>55.0%</strong> (H=256, latest encoding, 5 ep)</li>
+      <li>No configuration tested exceeded 59%</li>
+    </ul>
+  </li>
+  <li><strong>Scaling does not help beyond ~59%</strong>:
+    <ul>
+      <li>Larger H (256→512): marginal gains (+0.3pp)</li>
+      <li>More ensemble members (1→16): marginal gains</li>
+      <li>More epochs (5→20): marginal gains</li>
+      <li>Encoding sweeps (all 9 types × widths): plateau at ~58-59%</li>
+    </ul>
+  </li>
+  <li><strong>Target init invariance</strong>: Bayesian, random — all converge to same ceiling</li>
+  <li><strong>Comparison with published results &gt;60%</strong>:</li>
+</ol>
+
+<table class="compare-table">
+<tr><th>Source</th><th>Accuracy</th><th>Note</th></tr>
+<tr><td>This work (Otto Score)</td><td>55-59%</td><td>Pure &amp;|~ + int32</td></tr>
+<tr><td>Kaggle CIFAR-10 leaderboard</td><td>&gt;90%</td><td>Deep CNNs, augmentation, transfer learning</td></tr>
+<tr><td>Binary networks (XNOR-Net, etc.)</td><td>85-90%</td><td>Backprop + STE, batch norm, no DRAM constraints</td></tr>
+</table>
+
+<p>Every published result &gt;60% uses at least one of:</p>
+<ul>
+  <li>Multiple passes over the data (backprop through W0)</li>
+  <li>Data augmentation (random crops, flips, color jitter)</li>
+  <li>Dataset-specific channel normalization</li>
+  <li>Transfer learning from larger datasets (ImageNet)</li>
+  <li>Batch normalization or similar adaptive scaling</li>
+  <li><strong>These techniques encode prior knowledge about natural images</strong></li>
+</ul>
+
+<h3 style="margin-top:1.5rem;">Why 60% is the wall</h3>
+
+<ul>
+  <li>CIFAR-10 has 10 classes with 6000 images each</li>
+  <li>A frozen random projection + MAJ3 + linear classifier has ~500K parameters</li>
+  <li>The random projection destroys fine-grained spatial information</li>
+  <li>MAJ3 further compresses 768 containers to 32 bits per neuron — severe information loss</li>
+  <li>Without dataset-specific preprocessing, the model cannot distinguish classes that share coarse color/texture statistics</li>
+</ul>
+
+<h3 style="margin-top:1.5rem;">Position</h3>
+
+<blockquote style="border-left:4px solid var(--accent); padding:0.8rem 1.2rem; margin:1.2rem 0; background:var(--light-bg); border-radius:4px;">
+  <p>We consider any CIFAR-10 result above 60% that does not disclose its full training pipeline (including data augmentation, transfer learning, and architecture search) to be potentially influenced by dataset-specific prior knowledge. The Kaggle CIFAR-10 leaderboard is not a valid comparison for DRAM-native classifiers because those entries use GPU-optimized deep learning with extensive prior knowledge built into the architecture.</p>
+</blockquote>
+
+<h2 style="margin-top:2.5rem;"><span class="accent-bar">&#8203;</span> Summary</h2>
+
+<table class="compare-table">
+<tr><th>Finding</th><th>Status</th></tr>
+<tr><td>Target init does not affect final accuracy</td><td>✅ Confirmed</td></tr>
+<tr><td>Thermometer encoding is mandatory for continuous data (CIFAR)</td><td>✅ MNIST works without (binary by nature)</td></tr>
+<tr><td>60% CIFAR-10 is a fundamental barrier</td><td>🧪 Evidence supports this claim</td></tr>
+<tr><td>Multi-member Hebbian works (like Otto)</td><td>✅ 11 members, <code>--encoding latest</code></td></tr>
+<tr><td>Repository consolidated under <code>otto-score-ifc/</code></td><td>✅ Complete</td></tr>
+</table>
+
+<p style="margin-top:2rem;"><em>Andreas Otto — July 2026</em><br>
+<a href="https://github.com/aotto1968/forward-prop">github.com/aotto1968/forward-prop</a></p>
+
+    </div>
+</main>
+
+<footer>
+    <div class="container" style="text-align:center; padding:2rem 0; font-size:0.8rem; color:var(--mid-gray);">
+        <p>BitNeuron Research — Andreas Otto — July 2026</p>
+        <p><a href="https://forward-prop.nhi1.de/">forward-prop.nhi1.de</a> &nbsp;|&nbsp; <a href="https://github.com/aotto1968/forward-prop" target="_blank">GitHub</a></p>
+    </div>
+</footer>
+
+</body>
+</html>

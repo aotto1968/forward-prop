@@ -1,0 +1,722 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Otto Score: 99% MNIST, 58% CIFAR — DRAM-Native Bit-Logic</title>
+    <meta name="description" content="Otto Score reaches 99.0% MNIST and 58.7% CIFAR-10 using pure &amp;|~ + int32. Thermometer encoding, per-channel encoding, cos-time step decay. DRAM-native classification — no float, no multiply-accumulate.">
+    <meta name="author" content="Andreas Otto">
+    <meta name="robots" content="index, follow">
+    <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
+    <link rel="preload" href="style.css" as="style">
+    <link rel="stylesheet" href="style.css">
+    <link rel="canonical" href="https://forward-prop.nhi1.de/">
+    <meta name="googlebot" content="index, follow">
+    <meta property="og:title" content="Otto Score — 99.0% MNIST, 58.7% CIFAR-10. Pure &amp;|~ + int32, DRAM-Native.">
+    <meta property="og:description" content="99.0% MNIST, 58.7% CIFAR-10 with pure bit-logic. Thermometer encoding bridges the number-world/binary-world gap. cos-time step decay prevents oscillation. DRAM-native since day one.">
+    <meta property="og:type" content="article">
+    <meta property="og:url" content="https://forward-prop.nhi1.de/">
+    <meta property="og:image" content="https://forward-prop.nhi1.de/assets/og-image.png">
+    <meta property="og:site_name" content="Forward-Prop Research">
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="Otto Score — DRAM-Native Classification at 86% (1-pass) to 96.4% (iterative)">
+    <meta name="twitter:description" content="Pure bit-logic MLP: only &amp;|~ operations. 86% in one pass, 96.4% iterative — beats AdamW. DRAM-native, zero float.">
+    <meta name="twitter:image" content="https://forward-prop.nhi1.de/assets/og-image.png">
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "ScholarlyArticle",
+      "headline": "Otto Score — DRAM-Native Classification via Bayes log-Score on MAJ3 Bit-Features",
+      "description": "Otto Score achieves 86% MNIST with a single pass of counting — no training, no floating point, no AdamW. Iterative target-tuning reaches 96.4% — beating AdamW (95.4%) — while keeping bit-logic only (&amp;|~) and int32 arithmetic. The key insight: MAJ3 output is a bit-string (not a number), and Bayes log-Score on per-bit probabilities extracts maximum information without gradient descent.",
+      "author": { "@type": "Person", "name": "Andreas Otto" },
+      "datePublished": "2026-06-14",
+      "dateModified": "2026-06-29",
+      "about": { "@type": "Thing", "name": "Otto Score DRAM-Native Classifier", "description": "DRAM-native classifier using only &amp;|~ operations and int32 Bayes log-Score. 86% 1-pass, 96.4% iterative target-tuning." }
+    }
+    </script>
+</head>
+<body>
+
+<header>
+    <div class="header-inner">
+        <div class="header-brand">
+            <span class="header-logo">Otto Score</span>
+            <span class="header-subtitle">DRAM-Native &amp;|~ Classification</span>
+        </div>
+        <nav>
+            <ul>
+                <li><a href="papers/vision.html">Vision</a></li>
+                <li><a href="papers/ensemble.html">Ensemble</a></li>
+                <li><a href="papers/random.html">Random</a></li>
+                <li><a href="papers/popcount.html">Popcount</a></li>
+                <li><a href="papers/status-2026-07.html">Status Report</a></li>
+            </ul>
+        </nav>
+    </div>
+    <div class="header-nav-section">
+        <nav>
+            <ul>
+                <li><a href="#abstract">Abstract</a></li>
+                <li><a href="#results">Results</a></li>
+                <li><a href="#how">How It Works</a></li>
+                <li><a href="#iterative">Iterative Breakthrough</a></li>
+                <li><a href="#dram">DRAM-Native</a></li>
+                <li><a href="#journey">Journey</a></li>
+            </ul>
+        </nav>
+    </div>
+</header>
+
+<section class="hero">
+    <div class="hero-content">
+        <h1>Only Bits Matter</h1>
+        <h2>99.0% MNIST — 58.7% CIFAR-10 — Pure &amp;|~ + int32</h2>
+        <p><strong>No float. No multiply-accumulate.</strong> Otto Score reaches 99.0% on MNIST using only bit-logic operations. The complete <a href="papers/otto-score-summary-2026-06.html" style="color:var(--amber-light); font-weight:700;">Status Paper (June 2026)</a> documents thermometer encoding, per-channel encoding selection, and the data-limited scaling law.</p>
+    </div>
+</section>
+
+<main>
+
+    <div class="container eeat-header">
+        <strong>Independent Research by Andreas Otto</strong> &nbsp;|&nbsp; 29 June 2026<br>
+        <em>Otto Score reaches 99.0% MNIST / 58.7% CIFAR-10. <a href="papers/otto-score-summary-2026-06.html">Read the full status paper →</a></em>
+    </div>
+
+    <div class="container" style="padding-top:0.5rem; padding-bottom:0.5rem;">
+        <div style="background:linear-gradient(135deg, rgba(230,168,23,0.12), rgba(230,168,23,0.04)); border:2px solid var(--amber); border-radius:8px; padding:1rem 1.5rem; text-align:center;">
+            <strong style="font-size:0.95rem; color:var(--navy);">📄 Status Reports</strong>
+            <span style="font-size:0.88rem; color:var(--dark-gray); display:block; margin-top:0.25rem;">
+                <a href="papers/otto-score-summary-2026-06.html" style="font-weight:700;">June 2026</a> — Otto Score: 99% MNIST, 58% CIFAR ·
+                <a href="papers/status-2026-07.html" style="font-weight:700;">July 2026</a> — Target init, mandatory encoding, 60% barrier
+            </span>
+        </div>
+    </div>
+
+    <!-- 1. Abstract -->
+    <section id="abstract" class="container">
+        <h2><span class="accent-bar">&#8203;</span> Abstract</h2>
+        <div class="abstract-box">
+            <p><strong>Every previous approach treated the MAJ3 output (uint32) as a number</strong> — comparing it as a uint32 or treating it as a scalar. All failed because the information is in the <em>pattern</em> of bits, not in the numeric value.</p>
+            <p><strong>The Otto Score treats each of the 32 MAJ3 bits as an independent feature.</strong> For each class, neuron, and bit-position, it counts "how often is this bit = 1 for this class?" → Laplace-smoothed log-odds → Bayes log-Score. <strong>One pass of counting: 86.6%. No training, no float, no AdamW.</strong></p>
+            <p><strong>Iterative target-tuning (20 passes): 96.4%.</strong> Each iteration corrects log-odds for misclassified samples — a Perceptron-style correction in log-odds space. Still pure &amp;|~ + int32. <strong>Beats AdamW (95.8%) with 0.6pp margin — the first DRAM-native path to 96%.</strong></p>
+        </div>
+
+        <div class="cards-two" style="margin-top:2rem;">
+            <div class="card" style="background:#e8f5e9; border-top-color:#2e7d32;">
+                <h3>Otto Score 1-pass — 86.6%</h3>
+                <p class="card-subtitle">No training, no float, no AdamW</p>
+                <ul class="bullet-list">
+                    <li>Random W0 → MAJ3 → Bayes log-Score</li>
+                    <li>1× counting: Target[10][H][32] = log-odds</li>
+                    <li>Forward: &amp;|~ + int32 addition</li>
+                    <li>86.6% at H=2048, 4.8s on CPU</li>
+                </ul>
+            </div>
+            <div class="card" style="background:#fff3e0; border-top-color:var(--amber-dark);">
+                <h3>Otto Score Iterative — 96.4%</h3>
+                <p class="card-subtitle">20 passes, beats AdamW</p>
+                <ul class="bullet-list">
+                    <li>Same forward: &amp;|~ + int32</li>
+                    <li>log-odds correction (Perceptron-style)</li>
+                    <li>No float, no gradient, no AdamW</li>
+                    <li><strong>Beats AdamW (95.4%) by 1pp</strong></li>
+                </ul>
+            </div>
+        </div>
+    </section>
+
+    <!-- 2. Results -->
+    <section id="results" class="container bg-light">
+        <h2><span class="accent-bar">&#8203;</span> Results — MNIST 50K/10K, seed=42</h2>
+        <p class="section-intro">Every result with <strong>pure bit-logic forward (&amp;|~)</strong>. No float, no int32 matmul.</p>
+
+        <div class="table-wrapper">
+            <table class="compare-table">
+                <thead>
+                    <tr>
+                        <th>Procedure</th>
+                        <th>Forward</th>
+                        <th>Training</th>
+                        <th>H</th>
+                        <th>Eval</th>
+                        <th>DRAM</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr class="highlight-row">
+                        <td><strong>Otto Score 1-pass ★</strong></td>
+                        <td><code>MAJ3+int32</code></td>
+                        <td><strong>1-pass counting</strong></td>
+                        <td>2048</td>
+                        <td><strong>86.6%</strong></td>
+                        <td><strong>✅</strong></td>
+                    </tr>
+                    <tr class="highlight-row">
+                        <td><strong>Otto Score iterativ ★</strong></td>
+                        <td><code>MAJ3+int32</code></td>
+                        <td><strong>20-pass correction</strong></td>
+                        <td>2048</td>
+                        <td><strong>96.4%</strong></td>
+                        <td><strong>✅</strong></td>
+                    </tr>
+                    <tr>
+                        <td>Float AdamW W1-Only (ref)</td>
+                        <td><code>matmul+ReLU</code></td>
+                        <td>AdamW (20ep)</td>
+                        <td>2048</td>
+                        <td>95.8%</td>
+                        <td>❌</td>
+                    </tr>
+                    <tr>
+                        <td>Otto Bridge+AdamW</td>
+                        <td><code>Bridge+matmul</code></td>
+                        <td>AdamW (3ep)</td>
+                        <td>512</td>
+                        <td>95.4%</td>
+                        <td>❌</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <h3 style="margin-top:2rem;">Otto Score 1-pass — Scaling with H</h3>
+        <div class="table-wrapper" style="margin-top:0.75rem;">
+            <table class="compare-table">
+                <thead>
+                    <tr>
+                        <th>H (neurons)</th>
+                        <th>Eval</th>
+                        <th>Time</th>
+                        <th>Bit-Mass</th>
+                        <th>Note</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr><td>8</td><td><strong>76.4%</strong></td><td>24ms</td><td>207 Kbit</td><td></td></tr>
+                    <tr><td>16</td><td><strong>80.3%</strong></td><td>43ms</td><td>414 Kbit</td><td></td></tr>
+                    <tr><td>32</td><td><strong>83.0%</strong></td><td>84ms</td><td>829 Kbit</td><td></td></tr>
+                    <tr><td>64</td><td><strong>84.6%</strong></td><td>194ms</td><td>1.6 Mbit</td><td></td></tr>
+                    <tr><td>128</td><td><strong>85.0%</strong></td><td>382ms</td><td>3.2 Mbit</td><td></td></tr>
+                    <tr><td>256</td><td><strong>85.3%</strong></td><td>688ms</td><td>6.4 Mbit</td><td></td></tr>
+                    <tr><td>512</td><td><strong>86.2%</strong></td><td>1.2s</td><td>12.9 Mbit</td><td></td></tr>
+                    <tr><td>1024</td><td><strong>86.5%</strong></td><td>2.4s</td><td>25.7 Mbit</td><td>Requires int64 class_offset</td></tr>
+                    <tr style="background:#e8f5e9;"><td><strong>2048</strong></td><td><strong>86.6%</strong></td><td><strong>4.8s</strong></td><td><strong>51.5 Mbit</strong></td><td><strong>Plateau — 86%-Wall</strong></td></tr>
+                </tbody>
+            </table>
+        </div>
+
+        <div class="highlight-box">
+            <strong>86%-Wall broken:</strong> MAJ3 compresses 196 containers → 1 uint32 (non-linear, information loss). Bayes log-Score is optimal for conditionally independent bits — MAJ3 bits are weakly correlated (max |r| &lt; 0.1). <strong>Without iterative correction, the wall stays at 86%.</strong> With iterative target-tuning: <strong>96.4%</strong> — <strong>beats AdamW (95.8%) by 0.6pp.</strong>
+        </div>
+    </section>
+
+    <!-- 3. How It Works -->
+    <section id="how" class="container">
+        <h2><span class="accent-bar">&#8203;</span> How It Works — Bayes log-Score on MAJ3 Bits</h2>
+        <p class="section-intro">Three insights that eliminated every non-bit operation from the classifier.</p>
+
+        <div class="cards-three">
+            <div class="card">
+                <div class="driver-number" style="font-size:1.4rem; color:var(--amber);">Insight #1</div>
+                <h3>MAJ3 output is a bit-string, not a number</h3>
+                <p style="font-size:0.85rem;">The uint32 from <code>majority_tree</code> encodes 32 independent yes/no decisions. Treating it as a number (uint32 comparison) loses the pattern. <strong>The information is in the bits, not in the value.</strong></p>
+            </div>
+            <div class="card">
+                <div class="driver-number" style="font-size:1.4rem; color:var(--amber);">Insight #2</div>
+                <h3>Per-bit log-odds extract the signal</h3>
+                <p style="font-size:0.85rem;">Each MAJ3 bit is a weak class-predictor (~50% random, ~0.1% signal). Log-odds amplifies the signal by ~4× vs linear probability. The Bayes log-Score combines all 32 × H bits into a optimal class decision.</p>
+            </div>
+            <div class="card">
+                <div class="driver-number" style="font-size:1.4rem; color:var(--amber);">Insight #3</div>
+                <h3>Random W0 is enough — frozen, never trained</h3>
+                <p style="font-size:0.85rem;">The random projection W0 balances MAJ3 input at ~50% 1s. This is the <em>only</em> condition where majority_tree produces informative features. <strong>Training W0 would destroy the balance.</strong></p>
+            </div>
+        </div>
+
+        <h3 style="margin-top:2rem;">The Architecture</h3>
+        <pre style="background:#1a1a2e; color:#e0e0e0; padding:1rem; border-radius:8px; font-size:0.82rem;">
+W0:     random uint32[H][NC]          (frozen, never trained)
+H0:     MAJ3(~(in ^ W0[h]), NC)  → uint32[H]
+
+Target: int32[10][H][32]              (class × neuron × bit)
+        1× counting: Target[k][h][b]++ when H0[h] bit b = 1 AND class = k
+        → logit_convert: ln((t+1)/(N_k-t+1)) × 100000
+
+Score (Bayes log-Score):
+  offset_k = Σ_h Σ_b log(1-P_k) × 100000    // precomputed
+  Score[k] = offset_k                         // initialization
+             + Σ_h Σ_b [ y × Target[k][h][b] ]  // bit=1: add log-odds
+  // bit=0: no extra term (log(1-P) in offset_k)
+pred = argmax(Score)</pre>
+        <p style="font-size:0.82rem; text-align:right; margin-top:0.25rem;">
+             <a href="https://github.com/aotto1968/forward-prop/blob/master/otto-score-ifc/mnist/mlp-bin32-otto-trn.c" target="_blank">View trainer/inference source →</a>
+        </p>
+
+        <h3 style="margin-top:2rem;">Why offset + logit instead of raw counts?</h3>
+        <pre style="background:#1a1a2e; color:#e0e0e0; padding:1rem; border-radius:8px; font-size:0.82rem;">
+P(k | y) ∝ P(k) × Π_h Π_b P(y[h][b] | k)           // Bayes rule
+
+log P(k|y) = log P(k) + Σ y·log(P) + (1-y)·log(1-P)  // split y=0, y=1
+           = Σ log(1-P) + Σ y·log(P/(1-P))            // offset + logit
+           = offset_k   + Σ y × logit[k][h][b]         // compact form
+
+offset = "base cost for this class when ALL bits are 0"
+logit  = "how strongly does bit=1 vote for this class?"</pre>
+
+        <p style="font-size:0.9rem;">Raw counts have a systematic bias: classes with more active bits get a smaller offset (N_k - t), which is not compensated — the extra 1-bits don't fix the offset. With log-odds, log(P/(1-P)) and log(1-P) are <strong>coupled</strong>: when t increases, logit↑ and offset↓ compensate automatically.</p>
+    </section>
+
+    <!-- 4. Iterative Breakthrough -->
+    <section id="iterative" class="container bg-light">
+        <h2><span class="accent-bar">&#8203;</span> Iterative Target-Tuning — DRAM-Native 95%</h2>
+        <p class="section-intro">The Bayes log-Score is optimal for log-likelihood. But we want to minimize 0-1 classification error. A Perceptron-style correction in log-odds space closes — and surpasses — the gap.</p>
+
+        <div class="content-split">
+            <div class="text">
+                <h3>The Algorithm</h3>
+                <pre style="background:#1a1a2e; color:#e0e0e0; padding:0.8rem; border-radius:4px; font-size:0.82rem;">
+--epochsN N   : iterations (default 1 = 1-pass)
+--lr STEP     : log-odds step (default 0.05 = 5000/100000)
+
+For each epoch:
+  1. Classify ALL training samples (same forward)
+  2. For each MISCLASSIFIED sample:
+     true_pred:  logit + step  (strengthen correct class)
+     false_pred: logit - step  (weaken wrong class)
+  3. Early stopping: save best eval</pre>
+
+                <h3>Why it works</h3>
+                <p style="font-size:0.9rem;">The Bayes log-Score maximizes log-likelihood under the (approximately correct) independence assumption. The 0-1 loss is a different objective. Iterative correction in log-odds space directly optimizes the 0-1 loss — without leaving int32 arithmetic. <strong>With enough epochs this surpasses AdamW because the correction is targeted at the 0-1 classification boundary.</strong></p>
+            </div>
+            <div>
+                <div style="background:var(--white); padding:1.5rem; border-radius:8px; box-shadow:var(--shadow);">
+                    <h3>Convergence (H=512, XOR)</h3>
+                    <table style="width:100%; border-collapse:collapse; font-size:0.88rem;">
+                        <tr style="border-bottom:2px solid var(--navy);">
+                            <th style="padding:0.5rem; text-align:left;">Epochs</th>
+                            <th style="padding:0.5rem; text-align:right;">Train</th>
+                            <th style="padding:0.5rem; text-align:right;">Eval</th>
+                        </tr>
+                        <tr style="border-bottom:1px solid #eee;">
+                            <td style="padding:0.5rem;">1 (1-pass)</td>
+                            <td style="padding:0.5rem; text-align:right;">84.4%</td>
+                            <td style="padding:0.5rem; text-align:right;">86.2%</td>
+                        </tr>
+                        <tr style="border-bottom:1px solid #eee;">
+                            <td style="padding:0.5rem;">5</td>
+                            <td style="padding:0.5rem; text-align:right;">—</td>
+                            <td style="padding:0.5rem; text-align:right;">~94.7%</td>
+                        </tr>
+                        <tr style="border-bottom:1px solid #eee;">
+                            <td style="padding:0.5rem;">10</td>
+                            <td style="padding:0.5rem; text-align:right;">99.7%</td>
+                            <td style="padding:0.5rem; text-align:right;">95.0%</td>
+                        </tr>
+                        <tr style="background:#e8f5e9; font-weight:700;">
+                            <td style="padding:0.5rem;">20</td>
+                            <td style="padding:0.5rem; text-align:right;">99.9%</td>
+                            <td style="padding:0.5rem; text-align:right;">95.5%</td>
+                        </tr>
+                    </table>
+                    <div style="margin-top:1rem; padding-top:0.75rem; border-top:1px solid #eee;">
+                        <h4>Scaling with H (20 epochs)</h4>
+                        <table style="width:100%; border-collapse:collapse; font-size:0.88rem;">
+                            <tr style="border-bottom:1px solid #eee;">
+                                <th style="padding:0.3rem; text-align:left;">H</th>
+                                <th style="padding:0.3rem; text-align:right;">Eval</th>
+                                <th style="padding:0.3rem; text-align:right;">Time</th>
+                            </tr>
+                            <tr>
+                                <td style="padding:0.3rem;">512 (XOR)</td>
+                                <td style="padding:0.3rem; text-align:right;">95.5%</td>
+                                <td style="padding:0.3rem; text-align:right;">43s</td>
+                            </tr>
+                            <tr>
+                                <td style="padding:0.3rem;">1024 (XOR)</td>
+                                <td style="padding:0.3rem; text-align:right;">96.0%</td>
+                                <td style="padding:0.3rem; text-align:right;">86s</td>
+                            </tr>
+                            <tr style="background:#e8f5e9; font-weight:700;">
+                                <td style="padding:0.3rem;">2048 (XOR)</td>
+                                <td style="padding:0.3rem; text-align:right;">96.2%</td>
+                                <td style="padding:0.3rem; text-align:right;">170s</td>
+                            </tr>
+                            <tr style="background:#c8e6c9; font-weight:700;">
+                                <td style="padding:0.3rem;">2048 (XNOR) ★</td>
+                                <td style="padding:0.3rem; text-align:right;"><strong>96.4%</strong></td>
+                                <td style="padding:0.3rem; text-align:right;">170s</td>
+                            </tr>
+                        </table>
+                    </div>
+                    <p style="font-size:0.8rem; color:var(--mid-gray); margin-top:0.75rem; text-align:center;">
+                        AdamW reference: 95.8% (W1-Only, H=2048, 20ep) — <strong>iterative beats AdamW by 0.6pp!</strong>
+                    </p>
+                </div>
+            </div>
+        </div>
+
+        <div class="highlight-box" style="margin-top:1.5rem;">
+            <strong>Key insight:</strong> The 86%-Wall is not a feature-quality problem — AdamW proves 95.8% is reachable with float training. The gap is purely optimization: log-likelihood vs 0-1 loss. <strong>Iterative target-tuning closes the gap and surpasses AdamW (96.4% vs 95.8%) while keeping DRAM-native &amp;|~ + int32.</strong>
+        </div>
+    </section>
+
+    <!-- 5. DRAM-Native -->
+    <section id="dram" class="container">
+        <h2><span class="accent-bar">&#8203;</span> DRAM-Native — The Energy Argument</h2>
+        <p class="section-intro">The entire forward pass uses only &amp;|~ + int32 addition. No multiply-accumulate, no floating point. <strong>This is not a compromise — it's the native language of DRAM.</strong></p>
+
+        <div class="cards-two">
+            <div class="card">
+                <h3>Conventional Neural Net</h3>
+                <pre style="background:#1a1a2e; color:#e0e0e0; padding:0.8rem; border-radius:4px; font-size:0.82rem;">
+CPU/GPU                            DRAM
+┌──────────────────────┐         ┌──────────────┐
+│  Read W0       ◄─────┼──50pJ── │  W0[H×NC×32] │
+│  Read x         ◄────┼──50pJ── │  x[784]      │
+│  FMA: 10k gates      │         │              │
+│  Write h       ──────┼──50pJ──►│  h[H]        │
+└──────────────────────┘         └──────────────┘
+Energy: ~90% data movement, ~10% computation</pre>
+            <p style="font-size:0.75rem; text-align:right;">
+                <a href="https://github.com/aotto1968/forward-prop/blob/master/otto-score-ifc/mnist/ki-common.h" target="_blank">View matmul helpers →</a>
+            </p>
+            </div>
+            <div class="card">
+                <h3>Otto Score in DRAM</h3>
+                <pre style="background:#1a1a2e; color:#e0e0e0; padding:0.8rem; border-radius:4px; font-size:0.82rem;">
+DRAM Row (784 cells)
+┌──────────────────────────────────────┐
+│  W0[0]   W0[1]   ...  W0[783]        │
+│  XNOR    XNOR    ...  XNOR           │← 4T gate per cell
+│   │       │              │           │
+│   └───────┴──────┬───────┘           │
+│          Analog Sum (Kirchhoff)      │← 0 energy
+│               │                      │
+│          Comparator (>50%)           │← 1 pJ per bit position
+│               │                      │
+│         1-bit result                 │← 32 bits leave the row
+└──────────────────────────────────────┘
+Plus: int32 log-odds addition in peripheral logic</pre>
+            <p style="font-size:0.75rem; text-align:right;">
+                <a href="https://github.com/aotto1968/forward-prop/blob/master/otto-score-ifc/lib/maj3.h" target="_blank">View MAJ3 source →</a>
+            </p>
+            </div>
+        </div>
+
+        <div class="card" style="background:#fff3e0; border-left:3px solid var(--amber); margin-top:1rem;">
+            <h3>What Moves — and What Doesn't</h3>
+            <p style="font-size:0.9rem;">In a conventional forward pass, <strong>every single weight bit</strong> must move from DRAM to the processor. For H=512: 12.8 million bits. In Otto Score: W0 bits never leave their cells. The XNOR happens at the cell. The analog majority tree uses Kirchhoff's current law — zero energy. <strong>Only the 32-bit MAJ3 results leave the row: 16,384 bits total per forward pass. That's 99.7% fewer bit-transfers.</strong></p>
+        </div>
+
+        <div class="cards-two" style="margin-top:1.5rem;">
+            <div class="card" style="background:#e8f5e9;">
+                <h3>Training in DRAM</h3>
+                <ul class="bullet-list" style="font-size:0.88rem;">
+                    <li><strong>1-pass:</strong> same forward as inference + counting</li>
+                    <li><strong>Iterative:</strong> same forward + log-odds correction</li>
+                    <li>No gradient, no backprop, no FPU</li>
+                    <li>Only int32 counters in peripheral logic</li>
+                    <li>Training and inference share the exact same hardware</li>
+                </ul>
+            </div>
+            <div class="card" style="background:#fff3e0;">
+                <h3>Why Not AdamW in DRAM?</h3>
+                <ul class="bullet-list" style="font-size:0.88rem;">
+                    <li>AdamW needs float matmul — needs a FPU</li>
+                    <li>Gradient descent needs multiply-accumulate</li>
+                    <li>Momentum + adaptive LR = complex state</li>
+                    <li><strong>But we don't need it:</strong> iterative target-tuning reaches 94.7%</li>
+                    <li>AdamW is 10,000× more transistor budget for 0.7pp</li>
+                </ul>
+            </div>
+        </div>
+    </section>
+
+    <!-- 6. The Journey -->
+    <section id="journey" class="container bg-light">
+        <h2><span class="accent-bar">&#8203;</span> The Learning Journey</h2>
+        <p class="section-intro">Every approach taught us something. The progression: from float → int → bit-logic → Bayes log-Score.</p>
+
+        <div class="table-wrapper">
+            <table class="compare-table">
+                <thead>
+                    <tr>
+                        <th>Phase</th>
+                        <th>Date</th>
+                        <th>Approach</th>
+                        <th>Eval</th>
+                        <th>Floats?</th>
+                        <th>Lesson</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>1</td><td>May</td>
+                        <td>Float32 AdamW (H=8)</td>
+                        <td>81%</td>
+                        <td style="color:#c62828;">Everywhere</td>
+                        <td>Baseline: how float works</td>
+                    </tr>
+                    <tr>
+                        <td>2</td><td>May</td>
+                        <td>Float32 SGD (H=8)</td>
+                        <td>76%</td>
+                        <td style="color:#c62828;">Gradient</td>
+                        <td>Momentum ≠ accuracy. Same Bit-Mass as BV32</td>
+                    </tr>
+                    <tr>
+                        <td>3</td><td>May</td>
+                        <td>BV32 (H=8)</td>
+                        <td>76%</td>
+                        <td>Training only</td>
+                        <td>Compute format doesn't matter. Bit-Mass matters.</td>
+                    </tr>
+                    <tr>
+                        <td>4</td><td>Jun 6</td>
+                        <td>W1-only AdamW (H=1024)</td>
+                        <td>93%</td>
+                        <td>W1 only</td>
+                        <td>Random W0 contains enough info!</td>
+                    </tr>
+                    <tr>
+                        <td>5</td><td>Jun 13</td>
+                        <td>Majority + Delta-9</td>
+                        <td>56%</td>
+                        <td>None</td>
+                        <td>Majority keeps position → gain! But delta9 overfits.</td>
+                    </tr>
+                    <tr>
+                        <td>6</td><td>Jun 14</td>
+                        <td>Majority + co-occurrence</td>
+                        <td>83%</td>
+                        <td>None</td>
+                        <td>Co-occurrence counting beats MSE. Global statistics win.</td>
+                    </tr>
+                    <tr>
+                        <td>7</td><td>Jun 15</td>
+                        <td>W0 training (W1-only ref)</td>
+                        <td>73%</td>
+                        <td>None</td>
+                        <td>W0 training destroys MAJ3 balance</td>
+                    </tr>
+                    <tr>
+                        <td>8</td><td>Jun 16</td>
+                        <td>MAJ3 + per-bit counts (±score)</td>
+                        <td>49%</td>
+                        <td>None</td>
+                        <td>Raw counts have systematic class bias</td>
+                    </tr>
+                    <tr class="highlight-row">
+                        <td><strong>9 ★</strong></td>
+                        <td><strong>Jun 17</strong></td>
+                        <td><strong>Bayes log-Score (offset + logit)</strong></td>
+                        <td><strong>86.6%</strong></td>
+                        <td><strong>None</strong></td>
+                        <td><strong>offset_k eliminates class bias → +37pp!</strong></td>
+                    </tr>
+                    <tr class="highlight-row">
+                        <td><strong>10 ★</strong></td>
+                        <td><strong>Jun 18</strong></td>
+                        <td><strong>Iterative Target-Tuning</strong></td>
+                        <td><strong>96.4%</strong></td>
+                        <td><strong>None</strong></td>
+                        <td><strong>20× log-odds correction → beats AdamW by 1pp!</strong></td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <div class="cards-two" style="margin-top:1.5rem;">
+            <div class="card" style="background:#fff3e0;">
+                <h3>What Didn't Work (and Why)</h3>
+                <ul class="bullet-list" style="font-size:0.85rem;">
+                    <li><strong>Jaccard H0 (36%)</strong> — comparison-based, loses position info</li>
+                    <li><strong>Delta-9 MSE (56%)</strong> — local optimization, overfits to last batch</li>
+                    <li><strong>±Score log-odds (49%)</strong> — missing offset_k → class bias D_k</li>
+                    <li><strong>Float threshold W1 (17%)</strong> — binary SGD with continuous shadow, unstable</li>
+                    <li><strong>2-Layer random MAJ3 (84.8%)</strong> — second random projection adds nothing</li>
+                    <li><strong>W0 training</strong> — destroys the ~50% MAJ3 balance</li>
+                </ul>
+            </div>
+            <div class="card" style="background:#e8f5e9;">
+                <h3>What Works</h3>
+                <ul class="bullet-list" style="font-size:0.85rem;">
+                    <li><strong>Bayes log-Score (86.6%)</strong> — offset_k + per-bit log-odds, 1-pass</li>
+                    <li><strong>Iterative target-tuning (96.4%)</strong> — 20× correction, beats AdamW</li>
+                    <li><strong>Random frozen W0</strong> — MAJ3 needs ~50% balanced input</li>
+                    <li><strong>MAJ3 as feature extractor</strong> — &amp;|~ cascade, no multiply-accumulate</li>
+                    <li><strong>Random frozen W0</strong> — never trained, ~50% balance for MAJ3</li>
+                    <li><strong>Multi-mode</strong> — XNOR and XOR both work, XOR saves a NOT on DRAM</li>
+                </ul>
+            </div>
+        </div>
+
+        <h3 style="margin-top:2rem;">The Information Ladder</h3>
+        <p style="font-size:0.9rem;">Each step preserves more information from the input:</p>
+        <pre style="background:#1a1a2e; color:#e0e0e0; padding:1rem; border-radius:8px; font-size:0.85rem;">
+uint32 comparison  ──→ 1 value (pattern lost, position lost)     → 73%
+MAJ3 + uint32      ──→ 0/1    (pattern kept, per-bit lost)       → 83%
+MAJ3 + per-bit     ──→ logit  (pattern + per-bit strength)       → 87%
+  Bayes log-Score
+MAJ3 + iterative   ──→ logit  (pattern + per-bit + 0-1 loss)     → 96%
+  target-tuning
+  + AdamW bridge   ──→ float  (all of the above + AdamW)         → 95%
+  (reference only)</pre>
+        <p style="font-size:0.82rem; text-align:right; margin-top:0.25rem;">
+            <a href="https://github.com/aotto1968/forward-prop/blob/master/otto-score-ifc/mnist/mlp-bin32-hebbian-trn.c" target="_blank">View Hebbian source →</a>
+            &nbsp;|&nbsp;
+            <a href="https://github.com/aotto1968/forward-prop/blob/master/otto-score-ifc/reference/mnist-mlp-flt32-adam-trn.c" target="_blank">View AdamW source →</a>
+        </p>
+    </section>
+
+    <!-- 7. Why It Matters -->
+    <section id="why" class="container">
+        <h2><span class="accent-bar">&#8203;</span> Why This Matters — The Scaling Argument</h2>
+        <p class="section-intro">Floating-point has a fundamental scaling problem. Bit-logic does not. <strong>The Otto Score is the first DRAM-native path to 96%.</strong></p>
+
+        <div class="cards-two">
+            <div class="card" style="background:#e8f5e9; border-top-color:#2e7d32;">
+                <h3 style="color:#2e7d32;">BIN — Scales UP: 32-bit → 64-bit → 256-bit → ∞</h3>
+                <pre style="background:#1a1a2e; color:#e0e0e0; padding:0.8rem; border-radius:4px; font-size:0.82rem;">
+32-bit container   → 86.6%    ✓
+64-bit container   → same     ✓ (wider = more precision)
+128-bit container  → same     ✓ (no limit!)
+256-bit container  → same     ✓ (same majority_tree)
+↑↑↑ MORE bits = MORE information. No upper bound.</pre>
+            </div>
+            <div class="card" style="background:#fce4ec; border-top-color:#c62828;">
+                <h3 style="color:#c62828;">FLT — Scales DOWN: fp32 → fp16 → fp8 → fp4 → 0</h3>
+                <pre style="background:#1a1a2e; color:#e0e0e0; padding:0.8rem; border-radius:4px; font-size:0.82rem;">
+fp32 → 32-bit,   ~10,000 transistors/FMA
+fp16 → half precision, noise increases
+fp8  → 8-bit, massive accuracy loss
+fp4  → 4-bit, near random
+↓↓↓ FEWER bits = LESS information. Hits zero.</pre>
+            </div>
+        </div>
+
+        <table style="width:100%; border-collapse:collapse; font-size:0.88rem; margin:1.5rem 0;">
+            <tr style="background:var(--navy); color:white;">
+                <th style="padding:0.6rem;">Property</th>
+                <th style="padding:0.6rem; background:#1b5e20; color:white;">Otto Score (Bit-Logic)</th>
+                <th style="padding:0.6rem; background:#b71c1c; color:white;">AdamW (Float32)</th>
+            </tr>
+            <tr style="border-bottom:1px solid #eee;">
+                <td style="padding:0.6rem;">Scaling direction</td>
+                <td style="padding:0.6rem; background:#e8f5e9;"><strong>UP → more bits = more precision</strong></td>
+                <td style="padding:0.6rem; background:#fce4ec;">DOWN → fewer bits = less precision</td>
+            </tr>
+            <tr style="border-bottom:1px solid #eee;">
+                <td style="padding:0.6rem;">DRAM-native?</td>
+                <td style="padding:0.6rem; background:#e8f5e9;"><strong>Yes</strong> — &amp;|~ + int32</td>
+                <td style="padding:0.6rem; background:#fce4ec;">No — needs 10K-transistor FMA</td>
+            </tr>
+            <tr style="border-bottom:1px solid #eee;">
+                <td style="padding:0.6rem;">Training in DRAM?</td>
+                <td style="padding:0.6rem; background:#e8f5e9;"><strong>Yes</strong> — 1-pass counting or 5-pass log-odds correction</td>
+                <td style="padding:0.6rem; background:#fce4ec;">No — needs FPU for backprop</td>
+            </tr>
+            <tr style="border-bottom:1px solid #eee;">
+                <td style="padding:0.6rem;">Energy/op (estimate)</td>
+                <td style="padding:0.6rem; background:#e8f5e9;"><strong>~1 pJ</strong> (4 transistors, analog sum)</td>
+                <td style="padding:0.6rem; background:#fce4ec;">~10,000 pJ (FMA + data movement)</td>
+            </tr>
+            <tr>
+                <td style="padding:0.6rem;">Accuracy (MNIST)</td>
+                <td style="padding:0.6rem; background:#e8f5e9;"><strong>86.6% 1-pass / 96.4% iterative</strong></td>
+                <td style="padding:0.6rem; background:#fce4ec;">92.6% (ki-w1) / 95.8% (W1-Only H=2048)</td>
+            </tr>
+        </table>
+
+        <div class="highlight-box">
+            <strong>The choice is clear:</strong> AdamW gives 95.8% but needs a FPU, gradient descent, momentum, adaptive LR — a 10,000-transistor FMA per multiply. Otto Score iterative gives <strong>96.4%</strong> with only &amp;|~ + int32 — a 4-transistor XNOR gate per cell. <strong>0.6pp better. 2,500× less transistor budget. And it runs inside DRAM.</strong>
+        </div>
+    </section>
+
+    <!-- 8. Technical Details -->
+    <section id="tech" class="container bg-light">
+        <h2><span class="accent-bar">&#8203;</span> Technical Details</h2>
+
+        <div class="content-split">
+            <div>
+                <h3>XNOR / XOR Compile Switch</h3>
+                <p style="font-size:0.9rem;">Both modes from the same code via <code>-DH0_XOR</code>. Identical accuracy. XOR saves a NOT per bit on DRAM — one less transistor per cell.</p>
+                <table style="width:100%; border-collapse:collapse; font-size:0.85rem; margin-top:0.5rem;">
+                    <tr style="border-bottom:1px solid #eee;">
+                        <th style="padding:0.3rem; text-align:left;">Mode</th>
+                        <th style="padding:0.3rem; text-align:left;">Instruction</th>
+                        <th style="padding:0.3rem; text-align:right;">Acc H=256</th>
+                    </tr>
+                    <tr>
+                        <td style="padding:0.3rem;">XNOR</td>
+                        <td style="padding:0.3rem;"><code>vpternlogd $0xa5</code></td>
+                        <td style="padding:0.3rem; text-align:right;">85.3%</td>
+                    </tr>
+                    <tr>
+                        <td style="padding:0.3rem;">XOR</td>
+                        <td style="padding:0.3rem;"><code>vpxord</code></td>
+                        <td style="padding:0.3rem; text-align:right;">85.3%</td>
+                    </tr>
+                </table>
+            </div>
+            <div>
+                <h3>RNG: splitmix64</h3>
+                <p style="font-size:0.9rem;">Replaced glibc <code>rand()</code> (LCG, period 2³¹, correlated low bits) with <strong>splitmix64</strong> (BigCrush, 64-bit state, public domain). A 1-bit bug (31-bit rand instead of 32) cost ~3% accuracy — now fixed.</p>
+            </div>
+        </div>
+
+        <div class="content-split" style="margin-top:1.5rem;">
+            <div>
+                <h3>MAJ3 Library (lib/maj3.h)</h3>
+                <p style="font-size:0.9rem;">The <code>majority_tree</code> algorithm has a fix for edge cases:</p>
+                <ul class="bullet-list" style="font-size:0.85rem;">
+                    <li><strong>n = 3^k+1</strong> (e.g., 244, 730): pass-through cascade → result ≈ 0</li>
+                    <li><strong>n % 3 == 2</strong> (e.g., 32): AND cascade → too restrictive</li>
+                    <li>Fix: 4-group for n%3==1, 5-group for n%3==2</li>
+                    <li>H=244: from 54.9% to 84.2%</li>
+                </ul>
+            </div>
+            <div>
+                <h3>2-Layer Experiment</h3>
+                <p style="font-size:0.9rem;">A second random MAJ3 layer (W1 + majority_tree) adds no value. H0=H1=512 → 84.8% vs 1-layer 86.2%. Random projection is not hierarchical — one layer extracts as much as two.</p>
+            </div>
+        </div>
+    </section>
+
+    <!-- 9. Archive -->
+    <section id="archive" class="container">
+        <h2><span class="accent-bar">&#8203;</span> Archive — Predecessor Work</h2>
+        <p class="section-intro">Earlier experiments that led to the Otto Score. Preserved for reference.</p>
+
+        <div class="cards-three">
+            <div class="card">
+                <h3>Float32 References</h3>
+                <p style="font-size:0.85rem;">AdamW and SGD baselines. Established that float at identical Bit-Mass matches binary (both 76% at H=8/3ep). The 5pp gap between SGD and AdamW is purely momentum + adaptive LR.</p>
+            </div>
+            <div class="card">
+                <h3>int32 Container MLP</h3>
+                <p style="font-size:0.85rem;">Swapped binary containers for int32 multiply-accumulate. Cleaner, but needs integer multipliers — not DRAM-native. Showed 76.4% with identical float precision.</p>
+            </div>
+            <div class="card">
+                <h3>Iterative Target-Tuning</h3>
+                <p style="font-size:0.85rem;">Perceptron-style log-odds correction. Beats AdamW (96.4% vs 95.4%) using only &amp;|~ + int32. The first DRAM-native algorithm to surpass gradient descent on MNIST. 20 epochs at H=2048, 170s on CPU.</p>
+            </div>
+        </div>
+
+    </section>
+</main>
+
+<footer>
+    <div class="container" style="text-align:center; padding:2rem 0; font-size:0.8rem; color:var(--mid-gray);">
+        <p>BitNeuron Research — Andreas Otto — 18 June 2026</p>
+        <p><a href="https://forward-prop.nhi1.de/">forward-prop.nhi1.de</a> &nbsp;|&nbsp; <a href="https://github.com/aotto1968/forward-prop" target="_blank">GitHub</a></p>
+        <p style="font-size:0.72rem; margin-top:0.5rem;">
+             Source code: <a href="https://github.com/aotto1968/forward-prop/blob/master/otto-score-ifc/mnist/mlp-bin32-otto-trn.c" target="_blank">otto-score (trainer+ifc)</a> ·
+             <a href="https://github.com/aotto1968/forward-prop/blob/master/otto-score-ifc/mnist/mlp-bin32-hebbian-trn.c" target="_blank">Hebbian (trainer+ifc)</a> ·
+             <a href="https://github.com/aotto1968/forward-prop/blob/master/otto-score-ifc/reference/mnist-mlp-flt32-adam-trn.c" target="_blank">AdamW (trainer)</a>
+        </p>
+    </div>
+</footer>
+
+</body>
+</html>

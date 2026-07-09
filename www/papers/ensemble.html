@@ -1,0 +1,383 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>W0 Randomness &amp; Ensemble Effects — Otto Score | Forward-Prop</title>
+    <meta name="description" content="How random W0 diversity makes ensembles work in Otto Score. Small MAJ3 banks with independent random projections outperform one large bank — proven by seed-mode experiments.">
+    <meta name="author" content="Andreas Otto">
+    <meta name="robots" content="index, follow">
+    <link rel="icon" type="image/svg+xml" href="../assets/favicon.svg">
+    <link rel="preload" href="../style.css" as="style">
+    <link rel="stylesheet" href="../style.css">
+    <link rel="canonical" href="https://forward-prop.nhi1.de/papers/ensemble.html">
+    <meta name="googlebot" content="index, follow">
+    <meta property="og:title" content="Small + Many Beats Large + One — W0 Randomness &amp; Ensemble Effects">
+    <meta property="og:description" content="Seed-mode experiment proves W0 diversity drives the ensemble effect in Otto Score. Identical W0 collapses ensemble to 89.9%. Independent random projections reach 95.1%.">
+    <meta property="og:type" content="article">
+    <meta property="og:url" content="https://forward-prop.nhi1.de/papers/ensemble.html">
+    <meta property="og:image" content="https://forward-prop.nhi1.de/assets/og-image.png">
+    <meta property="og:site_name" content="Forward-Prop Research">
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="Small + Many Beats Large + One — W0 Randomness &amp; Ensemble Effects">
+    <meta name="twitter:description" content="Seed-mode experiment: identical W0 across ensemble members costs 5pp. Random diversity is the actual feature.">
+    <meta name="twitter:image" content="https://forward-prop.nhi1.de/assets/og-image.png">
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "ScholarlyArticle",
+      "headline": "Small + Many Beats Large + One — How W0 Randomness Makes Ensembles Work in Otto Score",
+      "description": "Experimental proof that W0 diversity drives the ensemble effect in DRAM-native Otto Score classifier. Identical W0 collapses accuracy by 5pp. Seed-mode comparison across PRNG, true random, and const/incr strategies.",
+      "author": { "@type": "Person", "name": "Andreas Otto" },
+      "datePublished": "2026-06-19",
+      "about": { "@type": "Thing", "name": "Otto Score Ensemble Effects", "description": "How random W0 diversity drives ensemble accuracy in DRAM-native MAJ3-based classifier." }
+    }
+    </script>
+    <style>
+        .paper-section { margin-bottom: 2.5rem; }
+        .paper-section h2 { margin-top: 2rem; border-bottom: 2px solid var(--amber, #ffb300); padding-bottom: 0.3rem; }
+        .paper-section h3 { margin-top: 1.5rem; color: var(--navy, #1a1a2e); }
+        .paper-section p, .paper-section li { line-height: 1.7; }
+        table { width: 100%; border-collapse: collapse; margin: 1rem 0; font-size: 0.9rem; }
+        th, td { padding: 0.5rem 0.75rem; text-align: left; border-bottom: 1px solid #ddd; }
+        th { background: var(--navy, #1a1a2e); color: white; }
+        tr.highlight-row { background: #e8f5e9; }
+        .abstract-box { background: #f5f5f5; border-left: 4px solid var(--amber, #ffb300); padding: 1.2rem 1.5rem; border-radius: 4px; margin: 1rem 0; }
+        .abstract-box p { margin: 0; }
+        code { background: #f0f0f0; padding: 0.1rem 0.3rem; border-radius: 3px; font-size: 0.85rem; }
+        pre { background: #1a1a2e; color: #e0e0e0; padding: 0.8rem 1rem; border-radius: 6px; font-size: 0.82rem; overflow-x: auto; }
+        .content-split { display: flex; gap: 2rem; margin: 1.5rem 0; }
+        .content-split > * { flex: 1; }
+        @media (max-width: 768px) { .content-split { flex-direction: column; } }
+    </style>
+</head>
+<body>
+
+<header id="top">
+    <div class="header-inner">
+        <div class="header-brand">
+            <a href="../index.html" style="color:inherit; text-decoration:none;"><span class="header-logo">Otto Score</span></a>
+            <span class="header-subtitle">DRAM-Native &amp;|~ Classification</span>
+        </div>
+        <nav>
+            <ul>
+                <li><a href="../index.html">Top</a></li>
+                <li><a href="vision.html">Vision</a></li>
+                <li><a href="#top" style="color:var(--amber);">Ensemble</a></li>
+                <li><a href="random.html">Random</a></li>
+                <li><a href="popcount.html">Popcount</a></li>
+            </ul>
+        </nav>
+    </div>
+</header>
+
+<main>
+    <div class="container" style="max-width: 800px; margin-top: 2rem;">
+        <h1>Small + Many Beats Large + One</h1>
+        <p style="font-size: 1.1rem; color: #555; margin-bottom: 0.25rem;">
+            How W0 Randomness Makes Ensembles Work in Otto Score
+        </p>
+        <p style="font-size: 0.9rem; color: #888; margin-bottom: 2rem;">
+            Andreas Otto — 19 June 2026
+        </p>
+
+        <div class="abstract-box">
+            <p>In the Otto Score classifier, a frozen random projection W0 followed by MAJ3 majority
+            extracts 32-bit feature strings from MNIST inputs. We demonstrate that <strong>an ensemble of
+            small W0s consistently beats a single large W0 at the same total bit budget</strong>, and that
+            this effect depends critically on W0 diversity. The seed-mode experiment proves the
+            mechanism: identical W0 across members collapses the ensemble to 89.9% — barely better
+            than a single model. Independent random projections reach 95.1%. The architectural
+            implication for DRAM: <strong>many small MAJ3 banks with diverse random projections outperform
+            one large bank at lower total cost.</strong></p>
+        </div>
+
+        <!-- Table of Contents -->
+        <div style="background: #f9f9f9; padding: 1rem 1.5rem; border-radius: 6px; margin: 1.5rem 0;">
+            <strong>Contents</strong>
+            <ul style="margin: 0.5rem 0 0 1.2rem; font-size: 0.9rem;">
+                <li><a href="#observation">1. The Observation</a></li>
+                <li><a href="#mechanism">2. The Mechanism</a></li>
+                <li><a href="#seed-experiment">3. The Seed Experiment</a></li>
+                <li><a href="#theory">4. Theoretical Framework</a></li>
+                <li><a href="#dram-architecture">5. Architectural Implication for DRAM</a></li>
+                <li><a href="#guidance">6. Practical Guidance</a></li>
+                <li><a href="#conclusion">7. Conclusion</a></li>
+            </ul>
+        </div>
+
+        <!-- 1. The Observation -->
+        <section id="observation" class="paper-section">
+            <h2>1. The Observation</h2>
+            <p>A single Otto Score model with H=512 reaches <strong>95.1% MNIST in 43s</strong>.
+            An ensemble of H=64 × N=5 reaches <strong>95.3% in 6.5s</strong> — 6.6× faster
+            and slightly more accurate.</p>
+
+            <table>
+                <tr><th>Configuration</th><th>Bit Mass (W0)</th><th>Eval</th><th>Time</th></tr>
+                <tr><td>H=512, N=1</td><td>3.2 Mbit</td><td>95.1%</td><td>43s</td></tr>
+                <tr class="highlight-row"><td><strong>H=64, N=5</strong></td><td><strong>1.0 Mbit</strong></td><td><strong>95.3%</strong></td><td><strong>6.5s</strong></td></tr>
+            </table>
+
+            <p><strong>10× less bit mass, faster, and better.</strong> This is counter-intuitive: each H=64 MAJ3
+            projects onto only 64 random vectors, vs 512 for the large model. Five independent
+            64-vector projections should extract less total information than one 512-vector
+            projection — yet they outperform it.</p>
+        </section>
+
+        <!-- 2. The Mechanism -->
+        <section id="mechanism" class="paper-section">
+            <h2>2. The Mechanism</h2>
+
+            <h3>2.1 Why Single Large W0 Plateaus</h3>
+            <p>A single W0 defines one fixed set of H random projection vectors. The MAJ3 output
+            of each neuron is a 32-bit string encoding the majority vote across 196 containers.
+            These 32 bits are weakly correlated (max |r| &lt; 0.1) but not independent. The Bayes
+            log-Score assumes independence and is optimal under that assumption — but the
+            assumption is approximate. With a single W0, the approximation errors are systematic:
+            certain feature patterns are never represented, certain class confusions recur.</p>
+            <p>This is why the 1-pass Bayes accuracy plateaus at 86% (H=2048) and the iterative
+            accuracy plateaus around 96.4% — the feature set is fixed at W0 initialization
+            and no amount of target-tuning can create features that aren't there.</p>
+
+            <h3>2.2 Ensemble as Multiple Feature Samplers</h3>
+            <p>An ensemble with N independent W0s samples N different random projections. Each
+            member sees a different set of 32-bit feature patterns. The Bayes log-Score per
+            member makes different mistakes — different class confusions, different failure
+            modes.</p>
+            <p>Score-summing across members exploits this. The total score for class k is:</p>
+            <pre>total[k] = Σ_m Σ_h Σ_b y_m[h][b] × logit_m[k][h][b] + offset_m[k]</pre>
+            <p>Where m indexes ensemble members. Crucially, each member has its <strong>own</strong> logit
+            and offset — there is no shared weight matrix. The ensemble is not voting on a
+            common representation; each member computes an independent posterior and the
+            scores are summed.</p>
+
+            <h3>2.3 Why Score-Summing, Not Majority Vote</h3>
+            <p>Hard majority vote (each member votes for one class, ties broken arbitrarily)
+            loses information. Two members predicting class 3 with scores [3: +500, 7: +490]
+            vs [3: +490, 7: +500] cancel to a weak overall signal. Score-summing preserves
+            the margins: the total for class 3 becomes +990 vs +990 for class 7 → correctly
+            ambiguous.</p>
+            <p>More importantly, score-summing handles <strong>correlated members</strong> naturally. If all
+            members have high scores for class 7 on a given sample, the total is high.
+            If members disagree, the totals are close. This is exactly what a product of
+            experts does: agreement amplifies, disagreement averages.</p>
+        </section>
+
+        <!-- 3. The Seed Experiment -->
+        <section id="seed-experiment" class="paper-section">
+            <h2>3. The Seed Experiment</h2>
+            <p>To test whether W0 diversity is the active mechanism, we compared four seeding
+            strategies for an H=64, N=5, ep=5 ensemble:</p>
+
+            <table>
+                <tr><th>Mode</th><th>W0 Generation</th><th>Eval</th><th>Δ from default</th></tr>
+                <tr class="highlight-row"><td><strong>default</strong></td><td>Seed once, fill all N members sequentially</td><td><strong>95.1%</strong></td><td>—</td></tr>
+                <tr style="background:#fce4ec;"><td><code>--ensemble-seed const</code></td><td>Same seed for all members → identical W0</td><td><strong>89.9%</strong></td><td><strong>−5.2pp</strong></td></tr>
+                <tr><td><code>--ensemble-seed incr</code></td><td>Per-member seeds: seed + m</td><td>94.7%</td><td>−0.4pp</td></tr>
+                <tr><td><code>--seed-file</code></td><td>True random from random.org</td><td>94.9%</td><td>−0.2pp</td></tr>
+            </table>
+
+            <h3>3.1 Const Mode: The Smoking Gun</h3>
+            <p>With <code>--ensemble-seed const</code>, every member gets the <strong>exact same W0</strong>. The ensemble
+            still has N independent target matrices (trained independently from different random
+            initializations), but the features are identical. The result: <strong>89.9%</strong> — barely
+            better than a single N=1 model (89.2%).</p>
+            <p>This is the smoking gun: <strong>W0 diversity is the ensemble feature, not the number of
+            members.</strong> When all members see the same features, they make the same mistakes.
+            The ensemble collapses to a single model with redundant targets.</p>
+
+            <h3>3.2 Incr Mode: Tweaking Seeds Doesn't Help</h3>
+            <p>With <code>--ensemble-seed incr</code>, each member reseeds the PRNG before generating W0:
+            <code>w0_srandom(seed + m)</code>. This produces different W0s, but they come from
+            <strong>separate PRNG streams</strong> starting at different points. The result: <strong>94.7%</strong> —
+            close to default but not better. The default mode (seed once, sequential)
+            is mathematically equivalent but avoids any risk of PRNG stream overlap.</p>
+
+            <h3>3.3 True Random: Overkill</h3>
+            <p>Using <code>--seed-file</code> with 64 KiB of true random data from random.org gives
+            <strong>94.9%</strong>. The PRNG-based modes (default 95.1%, incr 94.7%) are within noise
+            (±0.3pp from OpenMP scheduling). True random is not needed — splitmix64 passes
+            BigCrush and provides quality indistinguishable from hardware random.</p>
+
+            <h3>3.4 The Random Marker</h3>
+            <p>Each ensemble member prints a random marker <code>#&lt;uint32&gt;</code> to verify the seed state:</p>
+            <pre>Ensemble [1/5] - Target[64][10] = 80 KB (seed=42,#3032050943)
+Ensemble [2/5] - Target[64][10] = 80 KB (seed=42,#3939922274)</pre>
+            <p>In <code>const</code> mode, all markers are identical (same reseed + same first w0_random()
+            call). In default mode, markers differ because the PRNG stream advances through
+            W0 generation sequentially — member 2's marker is the first random number after
+            member 1's entire W0.</p>
+
+            <h3>3.5 The <code>err=</code> Diagnostic — Training Error Before Correction</h3>
+            <p>During training, each epoch prints <code>err=N</code> — the number of <strong>misclassified training
+            samples</strong> evaluated BEFORE the correction pass. This diagnostic reveals a characteristic
+            signature of under- and over-fitting:</p>
+            <p><strong>N=1 (single model, no ensemble):</strong> <code>err</code> <strong>jitters wildly</strong> between epochs. One run
+            of H=196, N=1 showed err oscillating between 2 and 569 across 20 epochs — a 250×
+            swing. The single model overfits to the correction signal, then forgets, then
+            re-learns. Training accuracy hits 100% but eval plateaus at 93%.</p>
+            <p><strong>N≥3 (ensemble):</strong> <code>err</code> <strong>stabilizes.</strong> The same H=196 bit budget with N=3 shows
+            err around 500-600 with smooth drift. Training accuracy stays at 97-99%, never
+            reaching 100%. The ensemble prevents individual members from overfitting because
+            the score-summing dilutes extreme corrections.</p>
+            <p><strong>Counter-intuitive finding:</strong> higher err ≠ worse accuracy. At C=196, N=4 has
+            err≈1100 (double N=3) but <strong>higher eval</strong> (94.6% vs 94.5%). The ensemble with
+            more members tolerates more training errors because the score distribution is
+            wider — each member's corrections are partially cancelled by others. This is a
+            feature, not a bug: the ensemble actively prevents over-confidence.</p>
+            <table>
+                <tr><th>H</th><th>N</th><th>err (final)</th><th>trn</th><th>Eval</th><th>err character</th></tr>
+                <tr><td>196</td><td>1</td><td>122</td><td>99.8%</td><td>93.2%</td><td><strong>jitter ×5</strong></td></tr>
+                <tr class="highlight-row"><td><strong>65</strong></td><td><strong>3</strong></td><td><strong>551</strong></td><td><strong>98.7%</strong></td><td><strong>94.5%</strong></td><td>✅ stable drift</td></tr>
+                <tr><td>49</td><td>4</td><td>1116</td><td>97.8%</td><td><strong>94.6%</strong></td><td>✅ very stable</td></tr>
+                <tr><td>33</td><td>6</td><td>1933</td><td>96.2%</td><td>94.2%</td><td>✅ stable</td></tr>
+            </table>
+            <p><strong>Practical rule:</strong> If <code>err</code> oscillates more than 2× between adjacent epochs,
+            increase <code>--ensembleN</code>. If <code>err</code> is stable but eval doesn't improve, increase
+            <code>--epochsN</code> or reduce <code>--lr</code>.</p>
+        </section>
+
+        <!-- 4. Theoretical Framework -->
+        <section id="theory" class="paper-section">
+            <h2>4. Theoretical Framework</h2>
+
+            <h3>4.1 W0 as Random Projection</h3>
+            <p>Each MAJ3 neuron computes:</p>
+            <pre>h0[h] = MAJ3( W0[h][c] ⊙ x[c]  for c=1..196 )</pre>
+            <p>Where ⊙ is XNOR (match) or XOR (mismatch). With random W0, roughly half the bits
+            match and half mismatch for any input — this is the <strong>balance condition</strong> that makes
+            MAJ3 informative. If W0 is trained or biased, the balance is destroyed and accuracy
+            collapses (73% in the failed W0 training experiment).</p>
+            <p>The 32-bit MAJ3 output is a lossy compression of 196 × 32 = 6272 input bits into
+            32 bits. Different random W0s compress differently — they preserve different
+            patterns and lose different information. An ensemble exploits the complementarity.</p>
+
+            <h3>4.2 Why Small + Many Works</h3>
+            <p>Consider the total number of MAJ3 operations:</p>
+            <ul>
+                <li>H=512, N=1: 512 MAJ3 evaluations per forward pass</li>
+                <li>H=64, N=5: 64 × 5 = <strong>320</strong> MAJ3 evaluations per forward pass</li>
+            </ul>
+            <p>The ensemble does <strong>fewer</strong> MAJ3 evaluations total, yet achieves higher accuracy.
+            The reason is <strong>feature diversity</strong>: 5 × 64 = 320 evaluations from <strong>different
+            projections</strong> cover more of the feature space than 512 evaluations from one
+            projection. Some features are redundant within a single W0; across different
+            W0s, redundancy is lower.</p>
+
+            <h3>4.3 The 37% Overlap Limit</h3>
+            <p>Analysis of failure sets across different W0s showed:</p>
+            <table>
+                <tr><th>Condition</th><th>Overlap</th><th>Interpretation</th></tr>
+                <tr><td>1-pass, 3 seeds</td><td><strong>75%</strong></td><td>Method limit: MAJ3 cannot separate regardless of W0</td></tr>
+                <tr><td>Iterative ep=10, 3 seeds</td><td><strong>37%</strong></td><td>Random limit: no W0 produces discriminative features</td></tr>
+            </table>
+            <p>The drop from 75% to 37% shows that iterative correction fixes the <strong>feature
+            coverage</strong> problem. The residual 37% are images where <strong>no W0 produces
+            discriminative features</strong> — these are the MAJ3 information limit.</p>
+
+            <h3>4.4 Scaling Law for Fixed Bit Budget</h3>
+            <p>Holding total MAJ3 budget K = H × N constant reveals the tradeoff:</p>
+            <table>
+                <tr><th>H</th><th>N</th><th>K=H×N</th><th>Eval</th><th>Character</th></tr>
+                <tr><td>192</td><td>1</td><td>192</td><td>93.3%</td><td>Overfit (err jitter)</td></tr>
+                <tr class="highlight-row"><td><strong>64</strong></td><td><strong>3</strong></td><td><strong>192</strong></td><td><strong>94.5%</strong></td><td><strong>Optimal tradeoff</strong></td></tr>
+                <tr><td>32</td><td>6</td><td>192</td><td>94.2%</td><td>Member too weak</td></tr>
+                <tr><td>16</td><td>12</td><td>192</td><td>92.7%</td><td>Collapse</td></tr>
+            </table>
+        </section>
+
+        <!-- 5. Architectural Implication for DRAM -->
+        <section id="dram-architecture" class="paper-section">
+            <h2>5. Architectural Implication for DRAM</h2>
+
+            <h3>5.1 Many Small Banks Instead of One Large One</h3>
+            <p>A DRAM implementation should have many small MAJ3 banks (each processing 196
+            containers) rather than one large bank processing all. Each bank has its own
+            W0 (random, frozen) and its own target memory (log-odds per bit per class).</p>
+            <pre>DRAM Chip:
+┌──────────────────────────────────────┐
+│ Row 0:  W0[0][0..195] + Target[0]    │  ─→ 32 bits + score
+│ Row 1:  W0[1][0..195] + Target[1]    │  ─→ 32 bits + score
+│ ...                                  │
+│ Row 63: W0[63][0..195] + Target[63]  │  ─→ 32 bits + score
+├──────────────────────────────────────┤
+│ Peripheral: Σ_h Σ_b log-odds → argmax│
+└──────────────────────────────────────┘
+Multiple chips (ensemble): independent rows, shared peripheral.</pre>
+            <p>Each chip holds one ensemble member (or several). The peripheral logic sums
+            the per-member scores and computes argmax. No communication between chips
+            during the forward pass — only the 10 × int64 final scores need to be
+            collected.</p>
+
+            <h3>5.2 W0 Diversity at the Chip Level</h3>
+            <p>The seeding experiment shows that the precise source of W0 randomness is
+            unimportant — any method that produces distinct W0s works. For manufacturing:</p>
+            <ul>
+                <li><strong>On-chip PRNG</strong> (splitmix64): one seed per chip, sequential W0 generation</li>
+                <li><strong>Fuse-based</strong>: each chip has a unique ID → derived seed</li>
+                <li><strong>True random</strong>: optional, not needed</li>
+            </ul>
+            <p>The <code>const</code> mode warning: identical W0 across chips would nullify the ensemble
+            benefit. If two DRAM chips have the same W0 (e.g., from the same mask), they
+            behave as one member with duplicated target — no accuracy gain.</p>
+        </section>
+
+        <!-- 6. Practical Guidance -->
+        <section id="guidance" class="paper-section">
+            <h2>6. Practical Guidance</h2>
+            <ol style="line-height: 1.9;">
+                <li><strong>Always use <code>--ensembleN N</code> with N ≥ 3</strong> — the sweet spot for DRAM cost vs accuracy</li>
+                <li><strong>Keep H ≥ 64</strong> — smaller H collapses feature quality per member</li>
+                <li><strong>Use default PRNG mode</strong> (seed once, sequential) — matches or beats all other seeding strategies</li>
+                <li><strong>Never use <code>--ensemble-seed const</code></strong> — identical W0 nullifies the ensemble benefit (−5.2pp)</li>
+                <li><strong>Skip true random</strong> — splitmix64 is sufficient; the seed source matters less than the diversity</li>
+                <li><strong>Score-summing, not majority vote</strong> — preserves margin information</li>
+            </ol>
+        </section>
+
+        <!-- 7. Conclusion -->
+        <section id="conclusion" class="paper-section">
+            <h2>7. Conclusion</h2>
+            <p>The ensemble effect in Otto Score is driven entirely by <strong>W0 diversity</strong>, not by
+            the number of ensemble members or the quality of the target tuning. A single fixed
+            random projection extracts a limited set of features; multiple independent projections
+            cover more of the feature space. The training signal (iterative log-odds correction)
+            distributes across diverse W0s, producing different classification boundaries that
+            complement each other.</p>
+            <p>The practical implication is decisive for DRAM architecture: <strong>many small MAJ3
+            banks with independent random W0s outperform one large bank at lower total
+            cost.</strong> The 37% residual failure overlap is the MAJ3 method limit — no amount of
+            scaling, ensembling, or tuning can surpass it within the bit-logic framework.</p>
+        </section>
+
+        <hr style="margin: 3rem 0 1.5rem;">
+        <p style="font-size: 0.85rem; color: #888;">
+            <strong>References</strong><br>
+            Otto Score main page: <a href="../index.html">forward-prop.nhi1.de</a><br>
+            Seed mode comparison: <code>mnist-1/README.md</code> — Key Findings section<br>
+            Constant bit-mass experiments: <code>mnist-1/README.md</code> — H×N=C series<br>
+            MAJ3 library: <code>lib/maj3.h</code> — majority tree implementation<br>
+            splitmix64: <code>lib/w0_random.h</code> — DRAM-native RNG
+        </p>
+        <p style="font-size:0.82rem; text-align:center;">
+            <a href="https://github.com/aotto1968/forward-prop/tree/master" target="_blank">📁 Demo source code (otto-score-ifc/)</a>
+            &nbsp;|&nbsp;
+             <a href="https://github.com/aotto1968/forward-prop/blob/master/otto-score-ifc/mnist/mlp-bin32-otto-trn.c" target="_blank">View ensemble trainer source →</a>
+        </p>
+    </div>
+</main>
+
+<footer>
+    <div class="container" style="text-align:center; padding:2rem 0; font-size:0.8rem; color:var(--mid-gray);">
+        <p>BitNeuron Research — Andreas Otto — 19 June 2026</p>
+        <p><a href="https://forward-prop.nhi1.de/">forward-prop.nhi1.de</a> &nbsp;|&nbsp; <a href="https://github.com/aotto1968/forward-prop">GitHub</a></p>
+        <p style="font-size:0.72rem; margin-top:0.3rem;">
+             Source: <a href="https://github.com/aotto1968/forward-prop/blob/master/otto-score-ifc/mnist/mlp-bin32-otto-trn.c" target="_blank">otto-score (trainer+ifc)</a> ·
+             <a href="https://github.com/aotto1968/forward-prop/blob/master/otto-score-ifc/lib/maj3.h" target="_blank">MAJ3</a>
+        </p>
+    </div>
+</footer>
+
+</body>
+</html>

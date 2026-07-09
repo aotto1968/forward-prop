@@ -22,9 +22,9 @@ LDLIBS   = -lm -lz
 
 MODEL_DIR = ../models
 
-.PHONY: all otto hebbian adam vis-errors clean setup model-otto model-hebb model-adam
+.PHONY: all otto hebbian adam vis-errors merge-ensemble convert-ensemble clean setup model-otto model-hebb model-adam
 
-all: otto hebbian adam vis-errors
+all: otto hebbian adam vis-errors merge-ensemble convert-ensemble
 
 # ── Dataset ────────────────────────────────────────────────
 setup:
@@ -101,6 +101,30 @@ VIS_SRC = mlp-otto-vis-errors.c
 vis-errors: mnist-mlp-otto-vis-errors.exe
 
 mnist-mlp-otto-vis-errors.exe: $(VIS_SRC) ki-common.h
+	$(CC) $(CFLAGS) \
+	  -Wno-sign-conversion -Wno-unused-parameter -Wno-unused-function \
+	  -o $@ $< $(LDLIBS)
+
+# ═══════════════════════════════════════════════════════════════
+# Merge-Ensemble — score archive merger
+# ═══════════════════════════════════════════════════════════════
+MERGE_SRC = merge-ensemble.c
+
+merge-ensemble: mnist-merge-ensemble.exe
+
+mnist-merge-ensemble.exe: $(MERGE_SRC)
+	$(CC) $(CFLAGS) \
+	  -Wno-sign-conversion -Wno-unused-parameter -Wno-unused-function \
+	  -o $@ $< $(LDLIBS)
+
+# ═══════════════════════════════════════════════════════════════
+# Convert-Ensemble — upgrade old archives to v4 format
+# ═══════════════════════════════════════════════════════════════
+CONV_SRC = convert-ensemble.c
+
+convert-ensemble: mnist-convert-ensemble.exe
+
+mnist-convert-ensemble.exe: $(CONV_SRC)
 	$(CC) $(CFLAGS) \
 	  -Wno-sign-conversion -Wno-unused-parameter -Wno-unused-function \
 	  -o $@ $< $(LDLIBS)

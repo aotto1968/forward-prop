@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>The Vision — DRAM-Native Intelligence | Forward-Prop</title>
+    <meta name="description" content="The computer of the future is memory. Why evolution never needed floating point — and why we don't either.">
+    <meta name="author" content="Andreas Otto">
+    <meta name="robots" content="index, follow">
+    <link rel="icon" type="image/svg+xml" href="../assets/favicon.svg">
+    <link rel="preload" href="../style.css" as="style">
+    <link rel="stylesheet" href="../style.css">
+    <link rel="canonical" href="https://forward-prop.nhi1.de/papers/vision.html">
+    <meta name="googlebot" content="index, follow">
+    <meta property="og:title" content="The Vision — DRAM-Native Intelligence">
+    <meta property="og:description" content="Evolution never needed floating point. The computer of the future is memory. 96.4% MNIST with pure &amp;|~.">
+    <meta property="og:type" content="article">
+    <meta property="og:url" content="https://forward-prop.nhi1.de/papers/vision.html">
+    <meta property="og:image" content="https://forward-prop.nhi1.de/assets/og-image.png">
+    <meta property="og:site_name" content="Forward-Prop Research">
+    <meta name="twitter:card" content="summary_large_image">    <meta name="twitter:title" content="The Vision — DRAM-Native Intelligence">
+    <meta name="twitter:description" content="The computer of the future is memory. 96.4% MNIST with pure &amp;|~.">
+    <meta name="twitter:image" content="https://forward-prop.nhi1.de/assets/og-image.png">
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "ScholarlyArticle",
+      "headline": "The Vision — DRAM-Native Intelligence: Evolution, Randomness, and the End of the von Neumann Bottleneck",
+      "description": "A philosophical and technical vision for DRAM-native AI: why evolution never needed floating point, how random projections plus Bayes log-score reach 96.4% MNIST, and why the computer of the future is memory itself.",
+      "author": { "@type": "Person", "name": "Andreas Otto" },
+      "datePublished": "2026-06-18",
+      "about": { "@type": "Thing", "name": "DRAM-Native Intelligence", "description": "Vision for bit-logic MLP architecture, DRAM-native computing, and the end of the von Neumann bottleneck." }
+    }
+    </script>
+    <style>
+        .paper-section { margin-bottom: 2.5rem; }
+        .paper-section h2 { margin-top: 2rem; border-bottom: 2px solid var(--amber, #ffb300); padding-bottom: 0.3rem; }
+        .paper-section h3 { margin-top: 1.5rem; color: var(--navy, #1a1a2e); }
+        .paper-section p, .paper-section li { line-height: 1.7; }
+        .abstract-box { background: #f5f5f5; border-left: 4px solid var(--amber, #ffb300); padding: 1.2rem 1.5rem; border-radius: 4px; margin: 1rem 0; }
+        .abstract-box p { margin: 0; }
+        code { background: #f0f0f0; padding: 0.1rem 0.3rem; border-radius: 3px; font-size: 0.85rem; }
+        pre { background: #1a1a2e; color: #e0e0e0; padding: 0.8rem 1rem; border-radius: 6px; font-size: 0.82rem; overflow-x: auto; }
+        .content-split { display: flex; gap: 2rem; margin: 1.5rem 0; }
+        .content-split > * { flex: 1; }
+        @media (max-width: 768px) { .content-split { flex-direction: column; } }
+    </style>
+</head>
+<body>
+
+<header id="top">
+    <div class="header-inner">
+        <div class="header-brand">
+            <a href="../index.html" style="color:inherit; text-decoration:none;"><span class="header-logo">Otto Score</span></a>
+            <span class="header-subtitle">The Vision</span>
+        </div>
+        <nav>
+            <ul>
+                <li><a href="../index.html">Top</a></li>
+                <li><a href="#top" style="color:var(--amber);">Vision</a></li>
+                <li><a href="ensemble.html">Ensemble</a></li>
+                <li><a href="random.html">Random</a></li>
+                <li><a href="popcount.html">Popcount</a></li>
+            </ul>
+        </nav>
+    </div>
+</header>
+
+<section class="hero">
+    <div class="hero-content">
+        <h1>The Processor Dies. Memory Lives.</h1>
+        <h2>96.4% MNIST with Pure &amp;|~ — No Float, No Gradient, No Backprop</h2>
+        <p>Evolution never needed a floating-point unit. Neither do we.</p>
+    </div>
+</section>
+
+<main>
+    <div class="container eeat-header">
+        <strong>Vision by Andreas Otto</strong> &nbsp;|&nbsp; 18 June 2026<br>
+        <em>The computer of the future is not a processor with memory attached. It is memory that can compute.</em>
+    </div>
+
+    <!-- Table of Contents -->
+    <div class="container" style="background: #f9f9f9; padding: 1rem 1.5rem; border-radius: 6px; margin: 1.5rem auto; max-width: 800px;">
+        <strong>Contents</strong>
+        <ul style="margin: 0.5rem 0 0 1.2rem; font-size: 0.9rem;">
+            <li><a href="#evolution">1. The Evolution of Life and Perfect Randomness</a></li>
+            <li><a href="#randomness">2. Randomness as the Architect</a></li>
+            <li><a href="#selection">3. The Counter as Selection</a></li>
+            <li><a href="#result">4. And Suddenly: 96%</a></li>
+            <li><a href="#wrong">5. The Wrong Path</a></li>
+            <li><a href="#promise">6. The Promise</a></li>
+            <li><a href="#future">7. The Computer of the Future is Memory</a></li>
+        </ul>
+    </div>
+
+    <!-- 1. Evolution -->
+    <section id="evolution" class="container paper-section">
+        <h2><span class="accent-bar">&#8203;</span> 1. The Evolution of Life and Perfect Randomness</h2>
+        <div class="abstract-box">
+            <p>We already have an artificial intelligence. Its name is <strong>Life</strong>.</p>
+            <p>Every brain on this planet — from the insect brain with 10,000 neurons to the human cortex — shares one thing: <strong>Not a single one uses a floating-point unit.</strong> No brain multiplies 32-bit floating-point numbers. No brain has ever computed a gradient. And yet: it can fly, hunt, love, write poetry.</p>
+            <p>Nature has no AdamW. Nature has no backpropagation. Nature has <strong>mutation + selection</strong>.</p>
+            <p>And that is exactly what we replicated.</p>
+        </div>
+    </section>
+
+    <!-- Randomness -->
+    <section id="randomness" class="container bg-light paper-section">
+        <h2><span class="accent-bar">&#8203;</span> 2. Randomness as the Architect</h2>
+        <div class="content-split">
+            <div class="text">
+                <p>We start with <strong>perfect randomness</strong>: <code>W0 = random()</code>. Thousands of random projections, all different, none trainable. This is our mutation — a vast field of meaningless, random perspectives on the world.</p>
+                <p>What does nature do with mutation? It tests, discards, retains. Millions of attempts, most meaningless, a few useful.</p>
+                <p>Our MAJ3 tree does the same. Each random projection is compressed into a 32-bit pattern — 32 yes/no decisions about whether a pixel pattern matches a neuron. Most patterns are noise. But a few carry information.</p>
+            </div>
+            <div class="text">
+                <p><strong>The key insight:</strong> We never train W0. It stays frozen — permanently random. The randomness itself is the feature space. The more random projections we have, the more likely we are to capture a useful perspective.</p>
+                <p>This mirrors evolution perfectly: <strong>random variation</strong> at massive scale, followed by selective retention of what works. No intelligent design, no gradient, no convergence — just enough randomness to cover the possibility space.</p>
+            </div>
+        </div>
+    </section>
+
+    <!-- Selection -->
+    <section id="selection" class="container paper-section">
+        <h2><span class="accent-bar">&#8203;</span> 3. The Counter as Selection</h2>
+        <div class="content-split">
+            <div class="text">
+                <p>Then comes the crucial step: we <strong>count</strong>. Not learn, not optimize, not backpropagate — just count.</p>
+                <p><em>"How often is this bit = 1 when the sample belongs to class 5?"</em></p>
+                <p>This is nothing but natural selection at a microscopic scale. A feature that frequently appears with a class becomes <strong>enriched</strong>. A feature that rarely appears becomes <strong>diluted</strong> (through the offset's negative evidence).</p>
+                <p><strong>No gradient. No derivative. No chain. Only: count what works.</strong></p>
+            </div>
+            <div class="card" style="background:#fff3e0;">
+                <h3>The Bayes Log-Score as Decision Organ</h3>
+                <p style="font-size:0.9rem;">The brain has no argmax. But it has something mathematically equivalent: <strong>evidence accumulation</strong>. Each neuron fires or does not fire. Each bit in the MAJ3 output fires or does not fire. Each firing is a vote.</p>
+                <p style="font-size:0.9rem;">The Bayes log-score is the mathematically optimal way to weight these votes. A bit that often fires for class 3 receives high log-odds for class 3. A bit that never fires receives a high offset (negative evidence for all classes).</p>
+                <p style="font-size:0.9rem;">Nature does not do this consciously — but evolution has programmed exactly this logic into every brain over billions of years.</p>
+            </div>
+        </div>
+    </section>
+
+    <!-- 96% -->
+    <section id="result" class="container bg-light paper-section">
+        <h2><span class="accent-bar">&#8203;</span> 4. And Suddenly: 96%</h2>
+        <div class="cards-two">
+            <div class="card" style="background:#e8f5e9;">
+                <h3>4.1 What We Achieved</h3>
+                <ul class="bullet-list">
+                    <li><strong>96.4% on MNIST</strong> — with nothing but random W0, an MAJ3 tree of <code>&amp;|~</code> gates, a counter, and a Bayes log-score</li>
+                    <li><strong>No float.</strong> <strong>No AdamW.</strong> <strong>No gradient.</strong> <strong>No backprop.</strong></li>
+                    <li>Only mutation (random W0) and selection (counting + log-odds)</li>
+                </ul>
+            </div>
+            <div class="card" style="background:#fff3e0;">
+                <h3>4.2 What It Means</h3>
+                <ul class="bullet-list">
+                    <li>Evolution took 3.5 billion years to build a brain that achieves 96% on MNIST</li>
+                    <li>It did so with the same tools: <strong>randomness, majority vote, and evidence accumulation</strong></li>
+                    <li>We have now translated this proof into silicon</li>
+                </ul>
+            </div>
+        </div>
+    </section>
+
+    <!-- Wrong Path -->
+    <section id="wrong" class="container paper-section">
+        <h2><span class="accent-bar">&#8203;</span> 5. The Wrong Path</h2>
+        <div class="cards-two">
+            <div class="card" style="background:#fce4ec; border-top-color:#c62828;">
+                <h3 style="color:#c62828;">5.1 The Industry — Scales DOWN</h3>
+                <pre style="background:#1a1a2e; color:#e0e0e0; padding:0.8rem; border-radius:4px; font-size:0.82rem;">
+FP32 → FP16 → FP8 → FP4 → ?
+Every step downward hurts.
+More precision? Build a smaller fab.
+More speed? Build wider buses.
+More efficiency? Move less data.
+<span style="color:#c62828;">Scaling down hits zero.</span></pre>
+            </div>
+            <div class="card" style="background:#e8f5e9; border-top-color:#2e7d32;">
+                <h3 style="color:#2e7d32;">5.2 Nature — Scales UP</h3>
+                <pre style="background:#1a1a2e; color:#e0e0e0; padding:0.8rem; border-radius:4px; font-size:0.82rem;">
+32 bit → 64 bit → 256 bit → more!
+Every step upward gives more information.
+The container grows, the principle stays.
+<code>&amp;|~</code>. Same gates. Wider registers.
+<span style="color:#2e7d32;">No end in sight.</span></pre>
+            </div>
+        </div>
+    </section>
+
+    <!-- Promise -->
+    <section id="promise" class="container bg-light paper-section">
+        <h2><span class="accent-bar">&#8203;</span> 6. The Promise</h2>
+        <div class="highlight-box" style="font-size:1.05rem;">
+            <p><strong>A DRAM chip that can only do <code>&amp;|~</code> — no FPU, no matmul, no ALU — will run a classifier achieving 96%. Memory is the processor. Randomness is the training. Time is the counter.</strong></p>
+            <p>Evolution has shown: <strong>Intelligence does not need multiplication.</strong> It only needs: many random perspectives, a majority mechanism, and a counter that retains what works.</p>
+            <p>We have now translated this proof into silicon.</p>
+        </div>
+    </section>
+
+    <!-- Future -->
+    <section id="future" class="container paper-section">
+        <h2><span class="accent-bar">&#8203;</span> 7. The Computer of the Future is Memory</h2>
+        <p class="section-intro">The IT industry has maneuvered itself into a dead end. Two fundamental problems, one solution.</p>
+
+        <div class="cards-two">
+            <div class="card">
+                <div class="driver-number" style="font-size:1.4rem; color:var(--amber);">7.1</div>
+                <h3>Massive Parallelism</h3>
+                <p style="font-size:0.9rem;">The limit of parallelism is not the number of transistors, but the <strong>width of the DRAM row</strong>. A single row of a modern DRAM chip contains ~16,000 cells. Each cell can simultaneously perform an XNOR operation. <strong>16,000 parallel bit operations in one cycle.</strong></p>
+                <p style="font-size:0.9rem;">No SIMD, no VLIW, no SMT. Just one row using its full width. And there are millions of rows.</p>
+            </div>
+            <div class="card">
+                <div class="driver-number" style="font-size:1.4rem; color:var(--amber);">7.2</div>
+                <h3>Local Energy</h3>
+                <p style="font-size:0.9rem;">The electron no longer moves through the computer. It stays <strong>local</strong>. The XNOR operation happens at the memory cell. The analog summer uses the natural current flow of the row (Kirchhoff's law). The comparator sits at the end of the row. <strong>The data never leaves the row.</strong></p>
+                <p style="font-size:0.9rem;">Energy drops from ~500 pJ (conventional) to ~1 pJ (DRAM-native). <strong>A factor of 500.</strong></p>
+            </div>
+        </div>
+
+        <div class="card" style="background:#fff3e0; border-left:3px solid var(--amber); margin-top:1.5rem;">
+            <h3>7.3 Memory Becomes the Computer</h3>
+            <p style="font-size:0.95rem;">The DRAM-native AI in its final form is <strong>no longer a processor with attached memory</strong>. It is memory that can compute. Each row is a rudimentary processor. Millions of rows work in parallel. The only thing that leaves the DRAM is the part of the information destined for the outside world — the classification, the decision, the command.</p>
+            <p style="font-size:0.95rem;">And with this command, memory can <strong>simulate a classical processor</strong> that executes algorithmic software. The virtual processor runs on DRAM, not on silicon. The real "processor" is the DRAM row itself, computing with <code>&amp;|~</code>.</p>
+        </div>
+
+        <div class="highlight-box" style="margin-top:1.5rem; font-size:1.1rem;">
+            <p><strong>The computer of the future has no von Neumann bottleneck — because there is no separation between processor and memory. There is only memory. Memory is the processor. Software is the wiring. Efficiency is the locality of the electron.</strong></p>
+            <p style="text-align:center; font-size:1.3rem; margin-top:1rem;"><strong>The processor dies. Memory lives.</strong></p>
+        </div>
+
+        <div style="margin-top:2rem;">
+            <p style="font-size:0.85rem; text-align:center;">
+                <a href="../index.html">← Research Results</a>
+            </p>
+        </div>
+    </section>
+</main>
+
+<footer>
+    <div class="container" style="text-align:center; padding:2rem 0; font-size:0.8rem; color:var(--mid-gray);">
+        <p>BitNeuron Research — Andreas Otto — 18 June 2026</p>
+        <p><a href="https://forward-prop.nhi1.de/papers/vision.html">forward-prop.nhi1.de/papers/vision.html</a> &nbsp;|&nbsp; <a href="https://github.com/aotto1968/forward-prop">GitHub</a></p>
+    </div>
+</footer>
+
+</body>
+</html>

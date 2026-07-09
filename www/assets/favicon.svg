@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <rect width="100" height="100" rx="12" fill="#0d1b2a"/>
+  <text x="50" y="68" font-family="Arial,sans-serif" font-size="52" font-weight="900" text-anchor="middle" fill="#e6a817">F</text>
+  <text x="50" y="86" font-family="Arial,sans-serif" font-size="16" font-weight="700" text-anchor="middle" fill="#f5d061">PROP</text>
+</svg>

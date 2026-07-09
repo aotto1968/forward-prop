@@ -94,6 +94,10 @@ static uint32_t *load_input(const uint8_t *X_raw, int n_samples) {
                 ki_blocks_from_rgb(r, g, b, blk);
                 for (int bj = 0; bj < COLOR_NB; bj++) px[bj][p] = blk[bj];
             }
+            /* Sobel-Kanten auf Y (ITU-601) + LUM */
+            ki_compute_edge(px, 32, 32);
+            /* Otsu-Binarisierung auf Y → filled black/white */
+            ki_compute_binary(px, 32, 32);
         }
         for (int ei = 0; ei < eff_enc; ei++) {
             int col = (int)aa.enc_array[ei].color;
@@ -375,7 +379,10 @@ int main(int argc, char *argv[]) {
         if (n_loaded == 0) { fprintf(stderr, "[FATAL] No members in %s\n", aa.importD); return 1; }
 
         ki_Dataset data = { .dry_run = aa.dry_run };
-        if (ki_dataset_read(&data) != 0 || data.pixels != KI_PX) return 1;
+        if (ki_dataset_read(&data) != 0) return 1;
+        /* NOTE: --filter wirkt NUR auf Training (in der Trainingsschleife),
+         * nicht auf Evaluation.  Kein ki_filter_dataset() nötig. */
+        if (data.pixels != KI_PX) return 1;
         uint32_t *X_all = load_input(data.X_raw, data.num_images);
         int te = aa.evalN > data.num_images ? data.num_images : aa.evalN;
         int off = data.num_images - te;
@@ -412,7 +419,9 @@ int main(int argc, char *argv[]) {
      * ═══════════════════════════════════════════════════════════════ */
     int total_all = aa.trainN + aa.evalN;
     ki_Dataset data = { .dry_run = aa.dry_run };
-    if (ki_dataset_read(&data) != 0 || data.pixels != KI_PX) return 1;
+    if (ki_dataset_read(&data) != 0) return 1;
+    /* NOTE: --filter wirkt NUR auf Training, nicht auf Evaluation */
+    if (data.pixels != KI_PX) return 1;
     if (total_all > data.num_images) total_all = data.num_images;
 
     uint32_t *X_all = NULL;

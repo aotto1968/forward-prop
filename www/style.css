@@ -1,0 +1,895 @@
+:root {
+    --navy: #0d1b2a;
+    --navy-light: #1b2838;
+    --navy-lighter: #243447;
+    --blue-dark: #0d1b2a;
+    --amber: #e6a817;
+    --amber-light: #f5d061;
+    --amber-dark: #b8860b;
+    --white: #ffffff;
+    --off-white: #f5f6f8;
+    --light-gray: #e2e4e8;
+    --mid-gray: #6b7280;
+    --dark-gray: #374151;
+    --text: #1f2937;
+    --border: #d1d5db;
+    --shadow: 0 2px 8px rgba(0,0,0,0.08);
+    --shadow-lg: 0 4px 20px rgba(0,0,0,0.12);
+    --font-mono: 'JetBrains Mono', 'Cascadia Code', 'Fira Code', 'Courier New', monospace;
+}
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: 'Segoe UI', 'Roboto', 'Helvetica Neue', Arial, sans-serif;
+    background-color: var(--off-white);
+    color: var(--text);
+    line-height: 1.7;
+    font-size: 16px;
+}
+
+/* ── Header ─────────────────────────────────────────── */
+header {
+    background-color: var(--navy);
+    color: var(--white);
+    border-bottom: 3px solid var(--amber);
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    box-shadow: var(--shadow);
+}
+
+.header-inner {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 0.75rem 2rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+}
+
+.header-brand {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+}
+
+.header-logo {
+    font-size: 1.5rem;
+    font-weight: 800;
+    letter-spacing: 0.5px;
+    color: var(--amber);
+}
+
+.header-subtitle {
+    font-size: 0.85rem;
+    opacity: 0.75;
+    font-weight: 400;
+}
+
+nav ul {
+    list-style: none;
+    display: flex;
+    gap: 24px;
+    flex-wrap: wrap;
+}
+
+nav a {
+    color: rgba(255,255,255,0.85);
+    text-decoration: none;
+    font-weight: 600;
+    font-size: 0.85rem;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    transition: color 0.15s;
+}
+
+nav a:hover {
+    color: var(--amber);
+}
+
+/* ── Hero ───────────────────────────────────────────── */
+.hero {
+    background: linear-gradient(160deg, var(--navy) 0%, var(--navy-light) 40%, #15293e 100%);
+    color: var(--white);
+    padding: 5rem 2rem;
+    text-align: center;
+    position: relative;
+    overflow: hidden;
+}
+
+.hero::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background:
+        radial-gradient(circle at 20% 50%, rgba(230,168,23,0.08) 0%, transparent 50%),
+        radial-gradient(circle at 80% 50%, rgba(230,168,23,0.05) 0%, transparent 50%);
+    pointer-events: none;
+}
+
+.hero-content {
+    position: relative;
+    z-index: 1;
+}
+
+.hero-content h1 {
+    font-size: 3.5rem;
+    font-weight: 900;
+    color: var(--amber);
+    margin-bottom: 0.5rem;
+    letter-spacing: 1px;
+}
+
+.hero-content h2 {
+    font-size: 1.5rem;
+    font-weight: 400;
+    color: rgba(255,255,255,0.85);
+    margin-bottom: 1rem;
+}
+
+.hero-content p {
+    font-size: 1.05rem;
+    opacity: 0.7;
+    max-width: 600px;
+    margin: 0 auto;
+}
+
+/* ── E-E-A-T Header ─────────────────────────────────── */
+.eeat-header {
+    margin-top: 1rem;
+    font-size: 0.85rem;
+    color: var(--mid-gray);
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 0.75rem;
+    line-height: 1.5;
+    max-width: 1200px;
+    margin-left: auto;
+    margin-right: auto;
+}
+
+/* ── Container ──────────────────────────────────────── */
+.container {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 3rem 2rem;
+}
+
+.bg-light {
+    background-color: var(--white);
+    border-top: 1px solid var(--light-gray);
+    border-bottom: 1px solid var(--light-gray);
+}
+
+.bg-dark {
+    background: linear-gradient(160deg, var(--navy) 0%, var(--navy-light) 100%);
+    color: var(--white);
+}
+
+.bg-dark h2 {
+    color: var(--amber) !important;
+}
+
+.bg-dark .accent-bar {
+    background-color: var(--amber) !important;
+}
+
+/* ── Section Headings ───────────────────────────────── */
+h2 {
+    font-size: 1.75rem;
+    color: var(--navy);
+    margin-bottom: 1.5rem;
+    display: flex;
+    align-items: center;
+    font-weight: 800;
+}
+
+.accent-bar {
+    display: inline-block;
+    width: 8px;
+    height: 30px;
+    background-color: var(--amber);
+    margin-right: 14px;
+    border-radius: 4px;
+}
+
+h3 {
+    font-size: 1.15rem;
+    color: var(--navy-light);
+    margin-bottom: 0.75rem;
+    font-weight: 700;
+}
+
+/* ── Abstract Box ───────────────────────────────────── */
+.abstract-box {
+    background: var(--white);
+    border-left: 5px solid var(--amber);
+    padding: 1.5rem 2rem;
+    box-shadow: var(--shadow);
+    border-radius: 0 6px 6px 0;
+}
+
+.abstract-box p {
+    font-size: 1.05rem;
+    line-height: 1.8;
+    margin-bottom: 1rem;
+}
+
+.abstract-box p:last-child {
+    margin-bottom: 0;
+}
+
+/* ── Content Split ──────────────────────────────────── */
+.content-split {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 40px;
+    align-items: start;
+}
+
+.content-split .text {
+    font-size: 1rem;
+}
+
+.content-split .text p {
+    margin-bottom: 1rem;
+}
+
+/* ── Bullet Lists ───────────────────────────────────── */
+.bullet-list {
+    list-style: none;
+    padding: 0;
+}
+
+.bullet-list li {
+    padding: 0.35rem 0 0.35rem 1.5rem;
+    position: relative;
+}
+
+.bullet-list li::before {
+    content: "\25B8";
+    color: var(--amber-dark);
+    font-weight: bold;
+    position: absolute;
+    left: 0;
+}
+
+/* ── Step List ──────────────────────────────────────── */
+.step-list {
+    list-style: none;
+    padding: 0;
+    counter-reset: step;
+}
+
+.step-list li {
+    counter-increment: step;
+    padding: 0.5rem 0 0.5rem 2.5rem;
+    position: relative;
+}
+
+.step-list li::before {
+    content: counter(step);
+    position: absolute;
+    left: 0;
+    top: 0.4rem;
+    width: 26px;
+    height: 26px;
+    background: var(--amber);
+    color: var(--navy);
+    font-weight: 800;
+    font-size: 0.8rem;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+/* ── Diagram Box ────────────────────────────────────── */
+.diagram-box {
+    background: var(--white);
+    padding: 1.5rem;
+    border-radius: 8px;
+    box-shadow: var(--shadow);
+    border: 1px solid var(--light-gray);
+}
+
+.diagram-caption {
+    text-align: center;
+    font-size: 0.8rem;
+    color: var(--mid-gray);
+    margin-top: 0.75rem;
+    font-style: italic;
+}
+
+/* ── Flow Diagram ───────────────────────────────────── */
+.flow-diagram {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    margin-bottom: 1rem;
+    flex-wrap: wrap;
+}
+
+.flow-diagram.reverse {
+    opacity: 0.7;
+    margin-top: 0.5rem;
+    padding-top: 0.5rem;
+    border-top: 1px dashed var(--border);
+}
+
+.flow-node {
+    background: var(--navy);
+    color: var(--white);
+    padding: 0.5rem 0.75rem;
+    border-radius: 6px;
+    font-size: 0.85rem;
+    font-weight: 700;
+    text-align: center;
+    line-height: 1.4;
+}
+
+.flow-node small {
+    display: block;
+    font-weight: 400;
+    opacity: 0.75;
+    font-size: 0.75rem;
+}
+
+.flow-node.error {
+    background: #7f1d1d;
+}
+
+.flow-arrow {
+    font-size: 1.5rem;
+    color: var(--amber);
+    font-weight: bold;
+}
+
+/* ── Loop Diagram ───────────────────────────────────── */
+.loop-diagram {
+    width: 200px;
+    height: 200px;
+    margin: 0 auto 0.5rem;
+    border: 3px solid var(--amber);
+    border-radius: 50%;
+    position: relative;
+    background: radial-gradient(circle at center, rgba(230,168,23,0.08), transparent 70%);
+}
+
+.loop-node {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    background: var(--navy);
+    color: var(--white);
+    padding: 0.5rem 1rem;
+    border-radius: 8px;
+    font-weight: 800;
+    font-size: 0.9rem;
+    text-align: center;
+}
+
+.loop-label {
+    position: absolute;
+    font-size: 0.75rem;
+    color: var(--dark-gray);
+    font-weight: 600;
+}
+
+.loop-label.top {
+    top: -1.2rem;
+    left: 50%;
+    transform: translateX(-50%);
+}
+
+.loop-label.right {
+    right: -4.5rem;
+    top: 50%;
+    transform: translateY(-50%);
+}
+
+.loop-label.bottom {
+    bottom: -1.2rem;
+    left: 50%;
+    transform: translateX(-50%);
+}
+
+.loop-iteration {
+    margin-top: 0.5rem;
+    text-align: center;
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+    color: var(--dark-gray);
+    font-weight: 600;
+}
+
+.loop-iteration span {
+    color: var(--amber-dark);
+}
+
+/* ── XOR Diagram ────────────────────────────────────── */
+.xor-diagram {
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+}
+
+.xor-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 0.4rem 0;
+    border-bottom: 1px solid var(--light-gray);
+}
+
+.xor-row:last-child {
+    border-bottom: none;
+}
+
+.xor-op {
+    color: var(--amber-dark);
+    font-weight: bold;
+    font-size: 1.1rem;
+}
+
+/* ── Highlight Box ──────────────────────────────────── */
+.highlight-box {
+    margin-top: 2rem;
+    background: linear-gradient(135deg, rgba(230,168,23,0.08), rgba(230,168,23,0.03));
+    border-left: 4px solid var(--amber);
+    padding: 1rem 1.5rem;
+    border-radius: 0 6px 6px 0;
+    font-size: 0.95rem;
+    line-height: 1.7;
+}
+
+/* ── Cards ──────────────────────────────────────────── */
+.cards-three {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 24px;
+}
+
+.cards-two {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 24px;
+}
+
+.card {
+    background: var(--white);
+    padding: 1.5rem;
+    border-radius: 8px;
+    box-shadow: var(--shadow);
+    border-top: 4px solid var(--amber);
+}
+
+.card h3 {
+    color: var(--navy);
+    font-size: 1.1rem;
+    margin-bottom: 0.75rem;
+    font-weight: 700;
+}
+
+.card p {
+    font-size: 0.93rem;
+    line-height: 1.7;
+    color: var(--text);
+    margin-bottom: 0.5rem;
+}
+
+.card p:last-child {
+    margin-bottom: 0;
+}
+
+.card-subtitle {
+    font-size: 0.8rem !important;
+    color: var(--mid-gray) !important;
+    font-style: italic;
+    margin-top: -0.5rem;
+    margin-bottom: 0.75rem !important;
+}
+
+.card .bullet-list {
+    font-size: 0.93rem;
+}
+
+/* ── Section Intro ──────────────────────────────────── */
+.section-intro {
+    font-size: 1rem;
+    color: var(--dark-gray);
+    margin-bottom: 1.5rem;
+    max-width: 700px;
+}
+
+/* ── Table ──────────────────────────────────────────── */
+.table-wrapper {
+    background: var(--white);
+    border-radius: 8px;
+    box-shadow: var(--shadow);
+    overflow-x: auto;
+}
+
+.compare-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.9rem;
+}
+
+.compare-table thead th {
+    background-color: var(--navy);
+    color: var(--white);
+    padding: 14px 18px;
+    text-align: left;
+    font-weight: 700;
+    font-size: 0.85rem;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.compare-table thead th:first-child {
+    width: 220px;
+}
+
+.compare-table tbody td {
+    padding: 12px 18px;
+    border-bottom: 1px solid var(--border);
+}
+
+.compare-table tbody tr:nth-child(even) {
+    background-color: rgba(13,27,42,0.03);
+}
+
+.compare-table tbody tr:hover {
+    background-color: rgba(230,168,23,0.06);
+}
+
+.compare-table tbody td:first-child {
+    font-weight: 700;
+    color: var(--navy);
+}
+
+.compare-table tbody tr.highlight-row {
+    background-color: rgba(230,168,23,0.12);
+}
+
+.compare-table tbody tr.highlight-row td:first-child {
+    color: var(--amber-dark);
+}
+
+/* ── Formula Inline ─────────────────────────────────── */
+.formula-inline {
+    background: var(--off-white);
+    border: 1px solid var(--light-gray);
+    border-radius: 4px;
+    padding: 0.4rem 0.75rem;
+    font-family: var(--font-mono);
+    font-size: 0.82rem;
+    text-align: center;
+    margin-top: 0.5rem;
+}
+
+/* ── Convergence Trace Table ────────────────────────── */
+.trace-table {
+    font-family: var(--font-mono);
+    font-size: 0.82rem;
+    width: 100%;
+}
+
+.trace-row {
+    display: grid;
+    grid-template-columns: 50px 1fr 1fr;
+    padding: 0.3rem 0.5rem;
+    border-bottom: 1px solid var(--light-gray);
+}
+
+.trace-row:last-child {
+    border-bottom: none;
+}
+
+.trace-header {
+    font-weight: 700;
+    color: var(--mid-gray);
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    border-bottom: 1px solid var(--border);
+}
+
+.trace-converged {
+    background-color: rgba(46,125,50,0.08);
+    font-weight: 700;
+}
+
+/* ── Placeholder Box ─────────────────────────────────── */
+.placeholder-box {
+    background: var(--white);
+    border: 2px dashed var(--amber);
+    border-radius: 8px;
+    padding: 1.25rem 1.75rem;
+    text-align: center;
+}
+
+.placeholder-box h3 {
+    color: var(--amber-dark);
+    margin-bottom: 0.5rem;
+    font-size: 1.05rem;
+}
+
+.placeholder-box p {
+    color: var(--dark-gray);
+    font-size: 0.93rem;
+    max-width: 600px;
+    margin: 0 auto 0.25rem;
+}
+
+.placeholder-note {
+    font-size: 0.82rem !important;
+    color: var(--mid-gray) !important;
+    font-style: italic;
+    margin-top: 0.5rem !important;
+}
+
+/* ── Dark Cards (Driver Numbers) ─────────────────────── */
+.card-dark {
+    background: var(--navy-lighter);
+    border-top: 4px solid var(--amber);
+    color: rgba(255,255,255,0.85);
+}
+
+.card-dark h3 {
+    color: var(--amber) !important;
+}
+
+.card-dark p {
+    color: rgba(255,255,255,0.75) !important;
+}
+
+.driver-number {
+    font-size: 2.2rem;
+    font-weight: 900;
+    color: var(--amber);
+    margin-bottom: 0.25rem;
+    font-family: var(--font-mono);
+}
+
+/* ── Inline Table (small key-value) ──────────────────── */
+.inline-table {
+    margin: 0.75rem auto 0;
+    font-size: 0.88rem;
+    border-collapse: collapse;
+}
+
+.inline-table td {
+    padding: 0.2rem 0.75rem;
+}
+
+.inline-table td:first-child {
+    color: var(--mid-gray);
+}
+
+.inline-table td:last-child {
+    font-weight: 600;
+    color: var(--navy);
+    text-align: right;
+}
+
+/* ── Roadmap ────────────────────────────────────────── */
+.roadmap {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 20px;
+}
+
+.roadmap-item {
+    background: var(--white);
+    border-radius: 8px;
+    box-shadow: var(--shadow);
+    overflow: hidden;
+    display: flex;
+}
+
+.roadmap-phase {
+    background: var(--amber);
+    color: var(--navy);
+    font-weight: 800;
+    font-size: 0.85rem;
+    padding: 1.25rem 1rem;
+    writing-mode: vertical-rl;
+    text-orientation: mixed;
+    letter-spacing: 1px;
+    text-align: center;
+    min-width: 42px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.roadmap-content {
+    padding: 1.25rem 1.5rem;
+    flex: 1;
+}
+
+.roadmap-content strong {
+    display: block;
+    font-size: 1rem;
+    color: var(--navy);
+    margin-bottom: 0.4rem;
+}
+
+.roadmap-content p {
+    font-size: 0.88rem;
+    line-height: 1.6;
+    color: var(--dark-gray);
+    margin: 0;
+}
+
+/* ── Conclusion ─────────────────────────────────────── */
+.conclusion-text {
+    font-size: 1.05rem;
+    line-height: 1.8;
+    margin-bottom: 1.25rem;
+    max-width: 900px;
+    color: rgba(255,255,255,0.85);
+}
+
+.conclusion-bold {
+    font-weight: 700;
+    color: var(--amber-light);
+    font-size: 1.1rem;
+    border-left: 3px solid var(--amber);
+    padding-left: 1.5rem;
+}
+
+/* ── Callout Box ────────────────────────────────────── */
+.callout-box {
+    background: var(--white);
+    border: 2px solid var(--amber);
+    border-radius: 8px;
+    padding: 1.5rem 2rem;
+    text-align: center;
+    box-shadow: var(--shadow);
+}
+
+.callout-box h3 {
+    color: var(--amber-dark);
+    margin-bottom: 0.75rem;
+    font-size: 1.15rem;
+}
+
+.callout-box p {
+    max-width: 700px;
+    margin: 0 auto;
+    color: var(--dark-gray);
+    font-size: 0.95rem;
+}
+
+/* ── Footer ─────────────────────────────────────────── */
+footer {
+    background-color: var(--navy);
+    color: rgba(255,255,255,0.6);
+    text-align: center;
+    padding: 2rem;
+    font-size: 0.85rem;
+    line-height: 1.7;
+    border-top: 3px solid var(--amber);
+}
+
+footer a {
+    color: var(--amber);
+    text-decoration: none;
+}
+
+footer a:hover {
+    text-decoration: underline;
+}
+
+.footer-impressum {
+    margin-bottom: 1rem;
+    padding-bottom: 1rem;
+    border-bottom: 1px solid rgba(255,255,255,0.1);
+    line-height: 1.7;
+}
+
+.footer-impressum strong {
+    color: var(--white);
+}
+
+.footer-note {
+    font-size: 0.78rem;
+    margin-top: 0.75rem;
+    opacity: 0.5;
+}
+
+/* ── Responsive ─────────────────────────────────────── */
+@media (max-width: 768px) {
+    .header-inner {
+        flex-direction: column;
+        text-align: center;
+    }
+    .header-brand {
+        flex-direction: column;
+        align-items: center;
+        gap: 4px;
+    }
+    nav ul {
+        justify-content: center;
+        gap: 14px;
+    }
+    .hero {
+        padding: 3rem 1rem;
+    }
+    .hero-content h1 {
+        font-size: 2.2rem;
+    }
+    .hero-content h2 {
+        font-size: 1.15rem;
+    }
+    .container {
+        padding: 2rem 1rem;
+    }
+    h2 {
+        font-size: 1.35rem;
+    }
+    .content-split {
+        grid-template-columns: 1fr;
+        gap: 24px;
+    }
+    .cards-three, .cards-two, .roadmap {
+        grid-template-columns: 1fr;
+    }
+    .compare-table {
+        font-size: 0.78rem;
+    }
+    .compare-table thead th,
+    .compare-table tbody td {
+        padding: 8px 10px;
+    }
+    .abstract-box {
+        padding: 1rem 1.25rem;
+    }
+    .roadmap-phase {
+        writing-mode: horizontal-tb;
+        min-width: auto;
+        padding: 0.5rem 1rem;
+    }
+    .roadmap-item {
+        flex-direction: column;
+    }
+}
+
+/* ── Second header nav row (index.html section links) ─────────── */
+.header-nav-section {
+    background: var(--navy, #1a1a2e);
+    border-top: 1px solid rgba(255,255,255,0.08);
+    padding: 0.15rem 0;
+}
+.header-nav-section nav ul {
+    display: flex;
+    justify-content: center;
+    flex-wrap: wrap;
+    gap: 0.25rem 1.25rem;
+    list-style: none;
+    margin: 0;
+    padding: 0.25rem 1rem;
+}
+.header-nav-section nav ul li a {
+    color: rgba(255,255,255,0.7);
+    text-decoration: none;
+    font-size: 0.8rem;
+    padding: 0.2rem 0;
+    transition: color 0.15s;
+}
+.header-nav-section nav ul li a:hover {
+    color: var(--amber, #ffb300);
+}

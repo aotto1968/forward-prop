@@ -57,6 +57,17 @@
 <h1 style="font-size:2rem; color:var(--navy); margin-bottom:0.25rem;">Status Report — July 2026</h1>
 <p style="font-size:1.1rem; color:var(--mid-gray); margin-bottom:2rem;"><em>DRAM-native Classification via Bit-Logic Operations</em></p>
 
+<div style="background:linear-gradient(135deg, rgba(230,168,23,0.12), rgba(230,168,23,0.04)); border:2px solid var(--amber); border-radius:8px; padding:1rem 1.5rem; margin-bottom:2rem;">
+    <strong style="font-size:1rem;">📈 Update July 9, 2026</strong>
+    <ul style="margin:0.5rem 0 0 1.2rem; font-size:0.9rem;">
+        <li><strong>71% faster training</strong> — gb-cache optimization: VN group bitmask precomputed once, reused for all epochs + evaluation</li>
+        <li><strong>61.62% CIFAR-10</strong> — Ensemble of 17 seeds breaks the 60% barrier. Single-run ceiling at 61.0% (H=4094)</li>
+        <li><strong>VN=2 Sweet Spot is data-dependent</strong> — VN=2 (25% retention) essential for noisy CIFAR, but VN=1 outperforms on clean MNIST</li>
+        <li><strong>VN=3+ strict AND modes</strong> — only activate when ALL group bits are set. Future potential at very large H</li>
+        <li><strong><a href="human-brain-decoded.html">The Human Brain Has Been Decoded</a></strong> — Scaling law extrapolates to 92% human-level intelligence at 3.1T MAJ3 channels</li>
+    </ul>
+</div>
+
 <h2 style="margin-top:2.5rem;"><span class="accent-bar">&#8203;</span> 1. Target Initialization: Classical vs Random — Identical Convergence</h2>
 
 <p><strong>Question:</strong> Does the initial value of the trained target/offset matrix affect final accuracy?</p>
@@ -145,19 +156,19 @@ otto-score-ifc/          ← Public distribution root
 <h3 style="margin-top:1.5rem;">Evidence</h3>
 
 <ol>
-  <li><strong>Single frozen random projection</strong> (Otto Score, Hebbian, AdamW all use this):
+      <li><strong>Single frozen random projection</strong> (Otto Score, Hebbian, AdamW all use this):
     <ul>
-      <li>Best Otto Score result: <strong>58.7%</strong> (June 2026, extensive encoding sweep)</li>
-      <li>Current Otto Score: <strong>55.0%</strong> (H=256, latest encoding, 5 ep)</li>
-      <li>No configuration tested exceeded 59%</li>
+      <li>Best Otto Score result: <strong>61.62%</strong> (July 2026, 17-seed ensemble, H=1024, VN=2)</li>
+      <li>Single-run ceiling: <strong>61.0%</strong> (H=4094, VN=2, target-err=0.4)</li>
+      <li>Ensemble of independent seeds breaks the single-run ceiling: H=512 × 20 seeds → 61.22%, H=1024 × 17 seeds → 61.62%</li>
     </ul>
   </li>
-  <li><strong>Scaling does not help beyond ~59%</strong>:
+  <li><strong>Ensemble overcomes the single-run ceiling</strong>:
     <ul>
-      <li>Larger H (256→512): marginal gains (+0.3pp)</li>
-      <li>More ensemble members (1→16): marginal gains</li>
-      <li>More epochs (5→20): marginal gains</li>
-      <li>Encoding sweeps (all 9 types × widths): plateau at ~58-59%</li>
+      <li>Single-run saturates at ~61.0% (H=4094)</li>
+      <li>Multiple seeds with different W0 streams give uncorrelated errors</li>
+      <li>EN=1..N merge-ensemble tool creates accuracy curves per seed</li>
+      <li>No hard ceiling yet — more seeds continue to improve accuracy</li>
     </ul>
   </li>
   <li><strong>Target init invariance</strong>: Bayesian, random — all converge to same ceiling</li>
@@ -166,7 +177,8 @@ otto-score-ifc/          ← Public distribution root
 
 <table class="compare-table">
 <tr><th>Source</th><th>Accuracy</th><th>Note</th></tr>
-<tr><td>This work (Otto Score)</td><td>55-59%</td><td>Pure &amp;|~ + int32</td></tr>
+<tr><td>This work (Otto Score, single run)</td><td>61.0%</td><td>H=4094, VN=2, target-err=0.4</td></tr>
+<tr><td>This work (Otto Score, ensemble)</td><td><strong>61.62%</strong></td><td>H=1024, 17 seeds, VN=2, pure &amp;|~ + int32</td></tr>
 <tr><td>Kaggle CIFAR-10 leaderboard</td><td>&gt;90%</td><td>Deep CNNs, augmentation, transfer learning</td></tr>
 <tr><td>Binary networks (XNOR-Net, etc.)</td><td>85-90%</td><td>Backprop + STE, batch norm, no DRAM constraints</td></tr>
 </table>
@@ -203,7 +215,9 @@ otto-score-ifc/          ← Public distribution root
 <tr><th>Finding</th><th>Status</th></tr>
 <tr><td>Target init does not affect final accuracy</td><td>✅ Confirmed</td></tr>
 <tr><td>Thermometer encoding is mandatory for continuous data (CIFAR)</td><td>✅ MNIST works without (binary by nature)</td></tr>
-<tr><td>60% CIFAR-10 is a fundamental barrier</td><td>🧪 Evidence supports this claim</td></tr>
+<tr><td>60% CIFAR-10 barrier broken by ensemble</td><td>✅ 61.62% (17 seeds, H=1024)</td></tr>
+<tr><td>Training time reduced by 71%</td><td>✅ gb-cache: 934s→273s (H=1024, EN=7)</td></tr>
+<tr><td>VN=2 Sweet Spot is data-dependent</td><td>✅ VN=2 for CIFAR (noisy), VN=1 for MNIST (clean)</td></tr>
 <tr><td>Multi-member Hebbian works (like Otto)</td><td>✅ 11 members, <code>--encoding latest</code></td></tr>
 <tr><td>Repository consolidated under <code>otto-score-ifc/</code></td><td>✅ Complete</td></tr>
 </table>

@@ -22,9 +22,9 @@ LDLIBS   = -lm -lz
 
 MODEL_DIR = ../models
 
-.PHONY: all otto hebbian adam vis-errors clean setup model-otto model-hebb model-adam
+.PHONY: all otto hebbian adam ensemble vis-errors clean setup model-otto model-hebb model-adam
 
-all: otto hebbian adam vis-errors
+all: otto hebbian adam ensemble vis-errors
 
 # ── Dataset ────────────────────────────────────────────────
 setup:
@@ -92,6 +92,16 @@ model-adam: cifar-mlp-flt32-adam-trn.exe
 	@mkdir -p $(MODEL_DIR)/cifar-adam-h256-e5
 	@./cifar-mlp-flt32-adam-trn.exe --hiddenN 256 --epochsN 5 \
 	  --encoding latest --export $(MODEL_DIR)/cifar-adam-h256-e5 2>&1 | grep '^REPORT'
+
+# ═══════════════════════════════════════════════════════════
+# Ensemble Tool (merge — works with --save-scores)
+# ═══════════════════════════════════════════════════════════
+ENS_SRC_M = merge-ensemble.c
+
+ensemble: cifar-merge-ensemble.exe
+
+cifar-merge-ensemble.exe: $(ENS_SRC_M)
+	$(CC) $(CFLAGS) -Wno-sign-conversion -Wno-unused-parameter -o $@ $< $(LDLIBS)
 
 # ═══════════════════════════════════════════════════════════
 # Error Visualizer (CIFAR rgb via ki-local.h)

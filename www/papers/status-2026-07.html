@@ -65,6 +65,7 @@
         <li><strong>VN=2 Sweet Spot is data-dependent</strong> — VN=2 (25% retention) essential for noisy CIFAR, but VN=1 outperforms on clean MNIST</li>
         <li><strong>VN=3+ strict AND modes</strong> — only activate when ALL group bits are set. Future potential at very large H</li>
         <li><strong><a href="human-brain-decoded.html">The Human Brain Has Been Decoded</a></strong> — Scaling law extrapolates to 92% human-level intelligence at 3.1T MAJ3 channels</li>
+        <li><strong>Decoupled ensemble workflow</strong> — <code>--save-scores DIR</code> saves per-member scores to archive files. The <code>merge-ensemble</code> tool combines any subset later. Training and merging are completely independent operations</li>
     </ul>
 </div>
 
@@ -209,6 +210,75 @@ otto-score-ifc/          ← Public distribution root
   <p>We consider any CIFAR-10 result above 60% that does not disclose its full training pipeline (including data augmentation, transfer learning, and architecture search) to be potentially influenced by dataset-specific prior knowledge. The Kaggle CIFAR-10 leaderboard is not a valid comparison for DRAM-native classifiers because those entries use GPU-optimized deep learning with extensive prior knowledge built into the architecture.</p>
 </blockquote>
 
+<h2 style="margin-top:2.5rem;"><span class="accent-bar">&#8203;</span> 5. Decoupled Ensemble Workflow</h2>
+
+<p><strong>Key architectural insight:</strong> Every Otto Score ensemble member is <strong>completely independent</strong>
+— different W0 (different random seed), trained from scratch, own target matrix. There is
+zero coupling between members. This enables a fundamentally decoupled workflow:</p>
+
+<h3>5.1 Train now, merge later</h3>
+
+<p>The <code>--save-scores DIR</code> flag saves each member's per-class scores to an archive file (<code>.ens</code>)
+immediately after training. These archives contain everything needed to reconstruct the ensemble:</p>
+
+<ul>
+    <li>All member scores (<code>int64[n_test × n_classes]</code>)</li>
+    <li>Ground truth labels (<code>uint8[n_test]</code>)</li>
+    <li>Configuration parameters (H, epochs, VN, seed, etc.)</li>
+    <li>Per-member encoding metadata (color channel, encoding type/width)</li>
+    <li>Embedded creation timestamp + ensemble eval accuracy</li>
+</ul>
+
+<p>The <code>merge-ensemble</code> tool reads any number of archive files, accumulates scores in order,
+and produces an accuracy curve for EN=1..N. Training and scoring are completely decoupled:</p>
+
+<div class="brain-equation" style="font-size:1rem; padding:1.2rem; text-align:left;">
+<pre style="background:transparent; color:blue; font-size:0.9rem; border:none; padding:0; margin:0; line-height:1.6;">
+┌─────────────────────┐     ┌─────────────────────┐
+│  Train seed 1234    │ ──> │  scores/SD1234.ens  │ ─┐
+│  --save-scores      │     └─────────────────────┘  │
+└─────────────────────┘                              │
+                                                     │   ┌──────────────────┐ 
+┌─────────────────────┐     ┌─────────────────────┐  │   │  merge-ensemble  │ 
+│  Train seed 5678    │ ──> │  scores/SD5678.ens  │ ─│─> │  scores/         │ 
+│  --save-scores      │     └─────────────────────┘  │   │  → EN curve      │ 
+└─────────────────────┘                              │   └──────────────────┘ 
+                                                     │   
+┌─────────────────────┐     ┌─────────────────────┐  │
+│  Train seed 9012    │ ──> │  scores/SD9012.ens  │ ─┘
+│  --save-scores      │     └─────────────────────┘
+└─────────────────────┘               
+   ... (N seeds, parallel, any time) ...
+</pre>
+</div>
+
+<h3>5.2 Maximum Parallelism</h3>
+
+<p>Because ensemble members are independent, the workflow enables:</p>
+<ul>
+    <li><strong>Parallel execution:</strong> N seeds can run simultaneously on N machines/cores — no shared state</li>
+    <li><strong>Incremental accumulation:</strong> Add more seeds days or weeks later — old archives are still valid</li>
+    <li><strong>Subset evaluation:</strong> <code>--filter "eval>58"</code> excludes low-quality runs;
+        <code>--filter "GB=sig8"</code> selects specific encoding channels</li>
+    <li><strong>Sorting flexibility:</strong> <code>--sort seed</code> or <code>--sort ctime</code> changes the EN curve interpretation</li>
+    <li><strong>Curve export:</strong> <code>--save FILE</code> produces plot-ready data for analyzing the EN accuracy saturation</li>
+</ul>
+
+<h3>5.3 Archive Versioning</h3>
+
+<table class="compare-table">
+<tr><th>Version</th><th>Added</th><th>Contents</th></tr>
+<tr><td>v1</td><td>—</td><td>Bare scores + labels</td></tr>
+<tr><td>v2</td><td>2026-07</td><td>Per-member encoding metadata (color, enc_type, enc_width)</td></tr>
+<tr><td>v3</td><td>2026-07</td><td>Embedded <code>int64</code> timestamp in header (independent of filesystem mtime)</td></tr>
+<tr><td>v4</td><td>2026-07</td><td>Ensemble eval accuracy (<code>float</code>) in header + <code>_F4</code> in filename</td></tr>
+</table>
+
+<p>File naming: <code>H{hidden}_EP{epochs}_VN{splitVN}_HN{splitHN}_TE{te}_SD{seed}_F4_TS{timestamp}.ens</code></p>
+
+<p>Archives from different training runs can be freely mixed as long as their configuration
+parameters (H, epochs, VN, etc.) match — the tool validates this and rejects mismatched files.</p>
+
 <h2 style="margin-top:2.5rem;"><span class="accent-bar">&#8203;</span> Summary</h2>
 
 <table class="compare-table">
@@ -219,6 +289,7 @@ otto-score-ifc/          ← Public distribution root
 <tr><td>Training time reduced by 71%</td><td>✅ gb-cache: 934s→273s (H=1024, EN=7)</td></tr>
 <tr><td>VN=2 Sweet Spot is data-dependent</td><td>✅ VN=2 for CIFAR (noisy), VN=1 for MNIST (clean)</td></tr>
 <tr><td>Multi-member Hebbian works (like Otto)</td><td>✅ 11 members, <code>--encoding latest</code></td></tr>
+<tr><td>Decoupled ensemble workflow</td><td>✅ <code>--save-scores</code> + <code>merge-ensemble</code> — train/merge fully independent</td></tr>
 <tr><td>Repository consolidated under <code>otto-score-ifc/</code></td><td>✅ Complete</td></tr>
 </table>
 

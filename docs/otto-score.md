@@ -2,6 +2,8 @@
 
 **Accuracy:** 95–96% on MNIST (H=512). Up to 96.4% with ensembles.
 **Operations:** Only `& | ~` (bitwise) + int32 addition. **No float, no multiply.**
+**Encoding required:** Yes for continuous data (CIFAR). MNIST works with raw pixels.
+                See [encoding.md](encoding.md) for details.
 
 ---
 

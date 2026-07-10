@@ -1,18 +1,43 @@
 # Technical Documentation — Otto Score & Reference Baselines
 
-This directory explains the three classification methods implemented in this
-repository. Each document walks through the forward pass, training algorithm,
-and key design decisions — from theory to C code.
+This directory contains all end-user-facing documentation for the
+**forward-prop** / **otto-score-ifc** project.
 
 ---
 
-## Documents
+## Core Methods
 
 | Document | Method | Type | Accuracy |
 |----------|--------|------|:--------:|
-| [otto-score.md](otto-score.md) | **Otto Score** | DRAM-native bit-logic | **96.3%** |
+| [otto-score.md](otto-score.md) | **Otto Score** | DRAM-native bit-logic | **96–97%** |
 | [adamw.md](adamw.md) | **Float32 AdamW** | CPU/GPU float matmul | 92.6% |
 | [hebbian.md](hebbian.md) | **Bin32 Hebbian** | DRAM-native bit-logic | ~82% |
+
+## Theory & Concepts
+
+| Document | Topic |
+|----------|-------|
+| [encoding.md](encoding.md) | **Input encoding** — required for continuous data (CIFAR) |
+| [majority-vote.md](majority-vote.md) | Majority vote — how MAJ3 replaces matmul |
+| [popcount.md](popcount.md) | Popcount off-table — the proof |
+| [bitmass.md](bitmass.md) | Bit-Mass theory — the container principle |
+| [DRAM.md](DRAM.md) | KI-DRAM: Boolean-only inference in commodity memory |
+| [color-vision-opponent-channels.md](color-vision-opponent-channels.md) | Opponent channel theory for CIFAR-10 |
+
+## Research Results
+
+| Document | Topic |
+|----------|-------|
+| [scaling-law-otto-score-vs-human-brain.md](scaling-law-otto-score-vs-human-brain.md) | Scaling law from 4 neurons to human-level intelligence |
+| [status-2026-07-04.md](status-2026-07-04.md) | Project status report — July 2026 |
+| [paper-2026-06-29-otto-score-summary.md](paper-2026-06-29-otto-score-summary.md) | Otto Score research summary |
+
+## Workflow & Tools
+
+| Document | Topic |
+|----------|-------|
+| [ensemble.md](ensemble.md) | Ensemble workflow — train now, merge later |
+| [vision_en.md](vision_en.md) | The evolution of life and perfect randomness |
 
 ---
 
@@ -20,7 +45,7 @@ and key design decisions — from theory to C code.
 
 ```
                 Forward Pass              Training Method         Eval
-Otto Score     XNOR → MAJ3 → Bayes log   Iterative correction   96.3%
+Otto Score     XNOR → MAJ3 → Bayes log   Iterative correction   96–97%
 AdamW          matmul → LReLU → matmul   AdamW (backprop)       92.6%
 Hebbian        XNOR → MAJ3 → popcount    Batch co-occurrence    ~82%
 ```
@@ -31,26 +56,8 @@ It is the only method designed to run natively on DRAM bit-logic hardware.
 
 ---
 
-## Architecture Overview
+## Mirror
 
-All three methods share the same two-layer structure:
-
-```
-         W0 (frozen)          W1 (trained)
-Input ───────────────► H0 ───────────────► Score ─► Argmax
-        784→196→H              H→10
-```
-
-The difference is:
-- **How** H0 is computed from the input and W0
-- **How** the final score is computed from H0 and W1
-- **How** W1 is trained
-
-| Component       | Otto Score       | AdamW            | Hebbian          |
-|-----------------|------------------|------------------|------------------|
-| W0 data type    | uint32           | float32          | uint32           |
-| H0 computation  | MAJ3(XNOR)       | matmul + LReLU   | MAJ3(XNOR)       |
-| W1 data type    | int32 (log-odds) | float32          | uint32           |
-| Score function  | Bayes log-sum    | matmul           | popcount(XNOR)   |
-| Training        | Correction pass  | AdamW            | Co-occurrence    |
-| Inference float | **No**           | Yes              | **No**           |
+All documents in this directory are symlinked from the project root `docs/`
+directory for convenient access. Edits should be made here, in
+`otto-score-ifc/docs/`.

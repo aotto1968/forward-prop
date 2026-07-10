@@ -3,6 +3,8 @@
 **Accuracy:** ~78–82% on MNIST (H=512, oscillates).
 **Operations:** `& | ~` + popcount. **No float, no multiply.**
 **Purpose:** Demonstrates that naive co-occurrence counting does *not* converge.
+**Encoding required:** Yes for continuous data (CIFAR). MNIST works with raw pixels.
+                See [encoding.md](encoding.md) for details.
 
 ---
 

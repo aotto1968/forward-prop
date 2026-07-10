@@ -182,7 +182,7 @@ make -C cifar ensemble
 ./cifar/cifar-merge-ensemble.exe scores/
 
 # Filter: only members from archives with eval > 58%
-./cifar/cifar-merge-ensemble.exe scores/ --filter "eval>58"
+./cifar/cifar-merge-ensemble.exe scores/ --filter eval gt 58
 
 # Sort by seed (default: ctime = order of creation)
 ./cifar/cifar-merge-ensemble.exe scores/ --sort seed
@@ -220,7 +220,7 @@ the ensemble is saturated at this H — need more neurons or more seeds.
 ```
 --num N       Only combine first N members (default: all)
 --sort MODE   Sort by 'seed' or 'ctime' (default: ctime, = order of creation)
---filter L    Exclude by label substring ("sig8") or eval threshold ("eval>58.1")
+--filter L    Exclude by label substring ("sig8") or eval threshold (eval gt 58.1) -- no quotes needed
 --save FILE   Save accuracy curve data to FILE (default: DIR/merge.dat)
 -h, --help    Show help
 ```
@@ -362,7 +362,7 @@ bash bin/run-ensemble.sh --repeat 20 ./cifar/cifar-mlp-bin32-otto-trn-xnor.exe \
 ./cifar/cifar-merge-ensemble.exe scores/
 
 # Filter by eval threshold
-./cifar/cifar-merge-ensemble.exe scores/ --filter "eval>58"
+./cifar/cifar-merge-ensemble.exe scores/ --filter eval gt 58
 ```
 
 ## Key Findings (2026-07)

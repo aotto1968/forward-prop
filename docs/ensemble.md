@@ -370,7 +370,7 @@ arbitrary subsets into an EN=1..N accuracy curve.
 
 1. **Maximal parallelism** — N seeds run on N machines/cores, no shared state
 2. **Incremental accumulation** — new seeds added days later, old archives remain valid
-3. **Subset filtering** — `--filter "eval>58"` excludes weak runs
+3. **Subset filtering** — `--filter eval gt 58` excludes weak runs (text operators: gt, lt, ge, le, eq)
 4. **Sorting** — by seed or timestamp for different EN-curve interpretations
 5. **Replay without retraining** — the scores archive is all that is needed to
    reconstruct any ensemble size; the original W0/target can be discarded
@@ -384,7 +384,7 @@ bash run-ensemble.sh --repeat 20 ./cifar/cifar-mlp-bin32-otto-trn-xnor.exe \
 ./cifar/cifar-merge-ensemble.exe scores/
 
 # Only runs with eval > 58%
-./cifar/cifar-merge-ensemble.exe scores/ --filter "eval>58"
+./cifar/cifar-merge-ensemble.exe scores/ --filter eval gt 58
 ```
 
 ### 5.5 Technological Consequence

@@ -261,7 +261,7 @@ and produces an accuracy curve for EN=1..N. Training and scoring are completely 
 <ul>
     <li><strong>Parallel execution:</strong> N seeds can run simultaneously on N machines/cores — no shared state</li>
     <li><strong>Incremental accumulation:</strong> Add more seeds days or weeks later — old archives are still valid</li>
-    <li><strong>Subset evaluation:</strong> <code>--filter "eval>58"</code> excludes low-quality runs;
+    <li><strong>Subset evaluation:</strong> <code>--filter eval gt 58</code> excludes low-quality runs (text operators: gt, lt, ge, le, eq);
         <code>--filter "GB=sig8"</code> selects specific encoding channels</li>
     <li><strong>Sorting flexibility:</strong> <code>--sort seed</code> or <code>--sort ctime</code> changes the EN curve interpretation</li>
     <li><strong>Curve export:</strong> <code>--save FILE</code> produces plot-ready data for analyzing the EN accuracy saturation</li>

@@ -28,7 +28,7 @@ This directory contains all end-user-facing documentation for the
 
 | Document | Topic |
 |----------|-------|
-| [scaling-law-otto-score-vs-human-brain.md](scaling-law-otto-score-vs-human-brain.md) | Scaling law from 4 neurons to human-level intelligence |
+| [human-brain-decoded.md](human-brain-decoded.md) | Scaling law from 4 neurons to human-level intelligence |
 | [status-2026-07-04.md](status-2026-07-04.md) | Project status report — July 2026 |
 | [paper-2026-06-29-otto-score-summary.md](paper-2026-06-29-otto-score-summary.md) | Otto Score research summary |
 

@@ -94,6 +94,37 @@ Projected_accuracy = 60.8% + 17pp ≈ 78%
 **At equal training data volume, the Otto Score would likely match or
 exceed human accuracy with far fewer neurons.**
 
+### 1.5 HiddenN Cannot Be Expanded Indefinitely — Data and Neurons Are Co-Dependent
+
+A critical finding from the CIFAR-10 ensemble sweep (July 2026) is that
+increasing H (hidden neurons) does **not** raise the accuracy ceiling —
+it only reduces the number of ensemble members needed:
+
+| H    | EN=1  | EN=3  | EN=10 | EN=50 | Ceiling |
+| ---- | ----- | ----- | ----- | ----- | ------- |
+| 1024 | 37.1% | 49.1% | 58.1% | 60.8% | 61.6%   |
+| 2048 | 39.2% | 50.9% | 58.7% | 61.2% | 61.6%   |
+| 4096 | 40.6% | 51.8% | 60.1% | 61.4% | 61.6%   |
+
+All three converge to the same ~61.5%. More H gives a head start but does
+**not** change the ceiling. The reason is fundamental: the input data
+(256 containers for CIFAR) contains only so much information. Beyond a
+certain H, every additional neuron extracts redundant projections of the
+same limited input.
+
+**The human brain's 92% requires BOTH data AND neurons — they are
+co-dependent.** The brain's 86 billion neurons store a lifetime of visual
+experience; that lifetime of experience fills the neurons with meaningful
+patterns. Neither works without the other: neurons without data store
+nothing, data without neurons has nowhere to go.
+
+The Otto Score scaling law projects 92% at 3.1T channels, but this
+projection requires **both** massive storage (the channels) AND massive
+data (millions of training examples) to fill them. The CIFAR-10 experiments
+confirm this: H=1024, 2048, and 4096 all converge to the same ceiling
+because the training data (50,000 images) is the limiting factor — not
+the number of neurons.
+
 ---
 
 ## 2. Otto Score Scaling — Empirical Data
@@ -403,3 +434,13 @@ H=3.1T, EN=1e6: 92.0%  ← Matches human level!
    Classification via Bit-Logic + MAJ3." *Status Paper, June 2026*.
 3. forward-prop research project (2026). "CIFAR-10 Benchmark — 60% Ceiling
    Analysis." *cifar-1/README.md, July 2026*.
+4. [Ensemble Theory — docs/ensemble.md](https://github.com/aotto1968/forward-prop/blob/master/docs/ensemble.md)
+   — CIFAR-10 convergence chain, seed experiments, precomputation.
+5. [Input Encoding — docs/encoding.md](https://github.com/aotto1968/forward-prop/blob/master/docs/encoding.md)
+   — The number world vs binary world, thermometer encoding.
+6. [Otto Score — docs/otto-score.md](https://github.com/aotto1968/forward-prop/blob/master/docs/otto-score.md)
+   — Full architecture: forward pass, training, ensemble voting.
+7. [MAJ3 — docs/majority-vote.md](https://github.com/aotto1968/forward-prop/blob/master/docs/majority-vote.md)
+   — Majority vote theory, VN and HN specialization.
+8. [Status Report — docs/status-2026-07-04.md](https://github.com/aotto1968/forward-prop/blob/master/docs/status-2026-07-04.md)
+   — Latest findings: hiddenN ceiling, encoding requirements.

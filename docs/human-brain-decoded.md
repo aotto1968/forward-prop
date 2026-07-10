@@ -199,10 +199,10 @@ Where:
 - **k** = scaling slope (dataset-dependent)
 - **H₀** = reference neuron count
 
-| Dataset | A₀  | k         | H₀    | Efficiency | t   |
-| ------- | --- | --------- | ----- | ---------- | --- |
-| 128     | 128 | 4,096 bit | 55.9% | +3.6pp     | 68s |
-| 128     | 128 | 4,096 bit | 55.9% | +3.6pp     | 68s |
+| Dataset | A₀   | k       | H₀ | Meaning |
+| ------- | ---- | ------- | --- | ------- |
+| MNIST   | 0.956 | 0.042  | 128 | Steep — binary information passes MAJ3 easily |
+| CIFAR-10| 0.559 | 0.021  | 128 | Medium — VN=2, EN=3 optimized sweep |
 
 The slope **k** captures the information density of the input data relative
 to the MAJ3 bottleneck.

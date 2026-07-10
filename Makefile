@@ -40,23 +40,20 @@ setup: setup-mnist setup-cifar
 # ═══════════════════════════════════════════════════════════════
 # Trained model cache (train if missing, then fast eval)
 # ═══════════════════════════════════════════════════════════════
-model-otto-mnist:   ; $(MAKE) -s -C mnist model-otto
-model-otto-cifar:   ; $(MAKE) -s -C cifar model-otto
-model-adam-mnist:
-	$(MAKE) -s -C mnist adam
-	@mkdir -p models/mnist-adam-h512-e10
-	@./mnist/mnist-mlp-flt32-adam-trn.exe --hiddenN 512 --epochsN 10 \
-	  --export models/mnist-adam-h512-e10 2>&1 | grep '^REPORT'
-model-adam-cifar:
-	$(MAKE) -s -C cifar model-adam
-model-hebb-mnist:   ; $(MAKE) -s -C mnist model-hebb
-model-hebb-cifar:   ; $(MAKE) -s -C cifar model-hebb
+model-mnist-otto:   ; $(MAKE) -s -C mnist model-otto
+model-cifar-otto:   ; $(MAKE) -s -C cifar model-otto
+model-mnist-adam:   ; $(MAKE) -s -C mnist model-adam
+model-cifar-adam:   ; $(MAKE) -s -C cifar model-adam
+model-mnist-hebbian:   ; $(MAKE) -s -C mnist model-hebbian
+model-cifar-hebbian:   ; $(MAKE) -s -C cifar model-hebbian
 
-models: model-otto-mnist model-otto-cifar model-adam-mnist model-hebb-mnist \
-        model-adam-cifar model-hebb-cifar
+models-mnist: model-mnist-otto model-mnist-adam model-mnist-hebbian
+models-cifar: model-cifar-otto model-cifar-adam model-cifar-hebbian
+models: models-mnist modls-cifar 
 
-.PHONY: models model-otto-mnist model-otto-cifar model-adam-mnist \
-        model-hebb-mnist model-adam-cifar model-hebb-cifar
+.PHONY: models models-mnist models-cifar \
+	model-mnist-otto model-mnist-hebbian model-mnist-adam \
+        model-cifar-otto model-cifar-hebbian model-cifar-adam
 
 # ═══════════════════════════════════════════════════════════════
 # Test — baut nur fehlende Modelle, dann eval via --import
@@ -70,46 +67,19 @@ test: all
 # ═══════════════════════════════════════════════════════════════
 
 # ── MNIST ──────────────────────────────────────────────────
-test-mnist-otto: mnist
-	@test -f models/mnist-otto-h512-e10/model.otto || $(MAKE) model-otto-mnist
-	@echo -e "\n=== Otto Score MNIST (H=512, 10 ep, exp8) ==="
-	@./mnist/mnist-mlp-bin32-otto-trn-xnor.exe \
-	  --import models/mnist-otto-h512-e10 --evalN 10000 --encoding exp 2>&1 | grep '^REPORT'
-
-test-mnist-adam:
-	@test -f models/mnist-adam-h512-e10/weights-0.meta || $(MAKE) model-adam-mnist
-	@echo -e "\n=== Float32 AdamW MNIST (H=512, 10 ep) ==="
-	@./mnist/mnist-mlp-flt32-adam-trn.exe \
-	  --import models/mnist-adam-h512-e10 --evalN 10000 2>&1 | grep '^REPORT'
-
-test-mnist-hebbian: mnist
-	@test -f models/mnist-hebbian-h512-e10/weights-0.meta || $(MAKE) model-hebb-mnist
-	@echo -e "\n=== Bin32 Hebbian MNIST (H=512, 10 ep) ==="
-	@./mnist/mnist-mlp-bin32-hebbian-trn-xnor.exe \
-	  --import models/mnist-hebbian-h512-e10 --evalN 10000 --encoding exp 2>&1 | grep '^REPORT'
-
-test-mnist: test-mnist-otto test-mnist-adam test-mnist-hebbian
+test-mnist-otto:    ; $(MAKE) -s -C mnist test-otto
+test-mnist-adam:    ; $(MAKE) -s -C mnist test-adam
+test-mnist-hebbian: ; $(MAKE) -s -C mnist test-hebbian
+test-mnist:         ; $(MAKE) -s -C mnist test
 
 # ── CIFAR-10 ───────────────────────────────────────────────
-test-cifar-otto: cifar
-	@test -f models/cifar-otto-h256-e5/model.otto || $(MAKE) model-otto-cifar
-	@echo -e "\n=== Otto Score CIFAR-10 (H=256, 5 ep) ==="
-	@./cifar/cifar-mlp-bin32-otto-trn-xnor.exe \
-	  --import models/cifar-otto-h256-e5 --evalN 10000 --encoding latest 2>&1 | grep '^REPORT'
+test-cifar-otto:    ; $(MAKE) -s -C cifar test-otto
+test-cifar-adam:    ; $(MAKE) -s -C cifar test-adam
+test-cifar-hebbian: ; $(MAKE) -s -C cifar test-hebbian
+test-cifar:         ; $(MAKE) -s -C cifar test
 
-test-cifar-adam:
-	@test -f models/cifar-adam-h256-e5/weights-0.meta || $(MAKE) model-adam-cifar
-	@echo -e "\n=== Float32 AdamW CIFAR-10 (H=256, 5 ep) ==="
-	@./cifar/cifar-mlp-flt32-adam-trn.exe \
-	  --import models/cifar-adam-h256-e5 --evalN 10000 2>&1 | grep '^REPORT'
-
-test-cifar-hebbian: cifar
-	@test -f models/cifar-hebbian-h256-e5/weights-0.meta || $(MAKE) model-hebb-cifar
-	@echo -e "\n=== Bin32 Hebbian CIFAR-10 (H=256, 5 ep, latest) ==="
-	@./cifar/cifar-mlp-bin32-hebbian-trn-xnor.exe \
-	  --import models/cifar-hebbian-h256-e5 --evalN 10000 --encoding latest 2>&1 | grep '^REPORT'
-
-test-cifar: test-cifar-otto test-cifar-adam test-cifar-hebbian
+.PHONY: test-mnist test-mnist-otto test-mnist-adam test-mnist-hebbian \
+	test-cifar test-cifar-otto test-cifar-adam test-cifar-hebbian
 
 # ═══════════════════════════════════════════════════════════════
 # Clean
@@ -118,8 +88,9 @@ clean:
 	$(MAKE) -C mnist clean
 	$(MAKE) -C cifar clean
 
-clean-all: clean
-	rm -rf models/mnist-* models/cifar-*
+clean-all:
+	$(MAKE) -C mnist clean-all
+	$(MAKE) -C cifar clean-all
 
 # ── Push ──────────────────────────────────────────────────────
 push:

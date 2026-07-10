@@ -8,21 +8,21 @@
 #   make hebbian     — Hebbian trainer only
 #   make adam        — Float32 AdamW trainer
 #   make model-otto  — train CIFAR Otto Score model
-#   make model-hebb  — train CIFAR Hebbian model
+#   make model-hebbian  — train CIFAR Hebbian model
 #   make model-adam  — train CIFAR AdamW model
 #   make clean       — remove executables
 #   make setup       — download CIFAR-10 dataset
 # =====================================================================
 
 CC       = gcc
-CFLAGS   = -O3 -march=native -fopenmp -Wall -Wextra -Werror \
+CFLAGS   = -O3 -g -march=native -fopenmp -Wall -Wextra -Werror \
            -Wconversion -Wsign-conversion -Wfloat-equal -Wundef -Wshadow -Wunused \
            -I../lib
 LDLIBS   = -lm -lz
 
 MODEL_DIR = ../models
 
-.PHONY: all otto hebbian adam ensemble vis-errors clean setup model-otto model-hebb model-adam
+.PHONY: all otto hebbian adam ensemble vis-errors clean setup model-otto model-hebbian model-adam
 
 all: otto hebbian adam ensemble vis-errors
 
@@ -71,7 +71,7 @@ cifar-mlp-bin32-hebbian-trn-xor.exe: $(HEBB_SRC) ki-common.h
 	  -Wno-sign-conversion -Wno-unused-parameter -Wno-unused-function -Wno-unused-variable \
 	  -DH0_XOR -o $@ $< $(LDLIBS)
 
-model-hebb: cifar-mlp-bin32-hebbian-trn-xnor.exe
+model-hebbian: cifar-mlp-bin32-hebbian-trn-xnor.exe
 	@mkdir -p $(MODEL_DIR)/cifar-hebbian-h256-e5
 	@./cifar-mlp-bin32-hebbian-trn-xnor.exe --hiddenN 256 --epochsN 5 \
 	  --encoding latest --export $(MODEL_DIR)/cifar-hebbian-h256-e5 2>&1 | grep '^REPORT'
@@ -86,22 +86,39 @@ adam: cifar-mlp-flt32-adam-trn.exe
 cifar-mlp-flt32-adam-trn.exe: $(ADAM_SRC) ki-common.h ../lib/ki-adamw.h
 	$(CC) $(CFLAGS) \
 	  -Wno-sign-conversion -Wno-unused-parameter -Wno-unused-function -Wno-unused-variable \
-	  -Wno-format-truncation -o $@ $< $(LDLIBS)
+	  -Wno-format-truncation -Wno-pointer-to-int-cast -o $@ $< $(LDLIBS)
 
 model-adam: cifar-mlp-flt32-adam-trn.exe
 	@mkdir -p $(MODEL_DIR)/cifar-adam-h256-e5
 	@./cifar-mlp-flt32-adam-trn.exe --hiddenN 256 --epochsN 5 \
 	  --encoding latest --export $(MODEL_DIR)/cifar-adam-h256-e5 2>&1 | grep '^REPORT'
 
-# ═══════════════════════════════════════════════════════════
-# Ensemble Tool (merge — works with --save-scores)
-# ═══════════════════════════════════════════════════════════
-ENS_SRC_M = merge-ensemble.c
+# ═══════════════════════════════════════════════════════════════
+# Fast single tests (use cached model if available, train if missing)
+# ═══════════════════════════════════════════════════════════════
 
-ensemble: cifar-merge-ensemble.exe
+.PHONY: test-otto test-adam test-hebbian test
 
-cifar-merge-ensemble.exe: $(ENS_SRC_M)
-	$(CC) $(CFLAGS) -Wno-sign-conversion -Wno-unused-parameter -o $@ $< $(LDLIBS)
+# ── CIFAR-10 ───────────────────────────────────────────────
+test-otto: otto
+	@test -f $(MODEL_DIR)/cifar-otto-h256-e5/model.otto || $(MAKE) model-otto
+	@echo -e "\n=== Otto Score CIFAR-10 (H=256, 5 ep, latest) ==="
+	@./cifar-mlp-bin32-otto-trn-xnor.exe \
+	  --import $(MODEL_DIR)/cifar-otto-h256-e5 --evalN 10000 --encoding latest 2>&1 | grep '^REPORT'
+
+test-adam: adam
+	@test -f $(MODEL_DIR)/cifar-adam-h256-e5/weights-0.meta || $(MAKE) model-adam
+	@echo -e "\n=== Float32 AdamW CIFAR-10 (H=256, 5 ep) ==="
+	@./cifar-mlp-flt32-adam-trn.exe \
+	  --import $(MODEL_DIR)/cifar-adam-h256-e5 --evalN 10000 2>&1 | grep '^REPORT'
+
+test-hebbian: hebbian
+	@test -f $(MODEL_DIR)/cifar-hebbian-h256-e5/weights-0.meta || $(MAKE) model-hebbian
+	@echo -e "\n=== Bin32 Hebbian CIFAR-10 (H=256, 5 ep, latest) ==="
+	@./cifar-mlp-bin32-hebbian-trn-xnor.exe \
+	  --import $(MODEL_DIR)/cifar-hebbian-h256-e5 --evalN 10000 --encoding latest 2>&1 | grep '^REPORT'
+
+test: test-otto test-adam test-hebbian
 
 # ═══════════════════════════════════════════════════════════
 # Error Visualizer (CIFAR rgb via ki-local.h)
@@ -115,7 +132,19 @@ cifar-mlp-otto-vis-errors.exe: $(VIS_SRC) ki-common.h
 	  -Wno-sign-conversion -Wno-unused-parameter -Wno-unused-function \
 	  -o $@ $< $(LDLIBS)
 
+# ═══════════════════════════════════════════════════════════
+# Ensemble Tool (merge — works with --save-scores)
+# ═══════════════════════════════════════════════════════════
+MERGE_SRC = merge-ensemble.c
+
+ensemble: cifar-merge-ensemble.exe
+
+cifar-merge-ensemble.exe: $(MERGE_SRC)
+	$(CC) $(CFLAGS) -Wno-sign-conversion -Wno-unused-parameter -Wno-unused-function -o $@ $< $(LDLIBS)
+
 # ── Clean ──────────────────────────────────────────────────
 clean:
 	rm -f *.exe
-	rm -rf $(MODEL_DIR)/cifar-otto-h256-e5 $(MODEL_DIR)/cifar-hebbian-h256-e5 $(MODEL_DIR)/cifar-adam-h256-e5
+
+clean-all: clean
+	rm -rf $(MODEL_DIR)/cifar-*

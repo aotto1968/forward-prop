@@ -2191,7 +2191,10 @@ int main(int argc, char *argv[]) {
             ? (uint8_t *)ki_xcalloc((size_t)total_eval, sizeof(uint8_t))
             : NULL;
         struct timeval tv0, tv1; gettimeofday(&tv0, NULL);
-        int evl_ok = ki_evaluate_member(X_te, y_te, total_eval, mems, n_mifc, (int)n_cont, pred_eval, 2);
+        /* BUG 2026-07-10: use_gb=2 crashed because gb_buf_te was never allocated
+         * in IFC mode (ki_member_create gets total_eval=0). Use use_gb=0 to compute
+         * scores from raw pixels — X_te and W0 are available. */
+        int evl_ok = ki_evaluate_member(X_te, y_te, total_eval, mems, n_mifc, (int)n_cont, pred_eval, 0);
         gettimeofday(&tv1, NULL);
         int el = (int)((tv1.tv_sec-tv0.tv_sec)*1000 + (tv1.tv_usec-tv0.tv_usec)/1000);
         float acc = (float)evl_ok * 100.0f / (float)total_eval;
@@ -2674,9 +2677,15 @@ int main(int argc, char *argv[]) {
     }
     free(pred_tr);
 
-    /* Export liest direkt aus Mitgliedern (kein Flat-Array mehr nötig) */
+    /* Export MUSS vor Member-Destruktion erfolgen (liest members[b]->target/offset) */
+    if (aa.exportD[0] != '\0')
+    {
+        export_ensemble(aa.exportD, W0_ens, total_members,
+                        members, active_members,
+                        H_local, NC_slice, (int)n_cont);
+    }
 
-    /* Members zerstören (nach finaler Evaluation) */
+    /* Members zerstören (nach finaler Evaluation + Export) */
     for (int _z = 0; _z < active_members; _z++)
         ki_member_destroy(members[_z]);
 
@@ -2693,13 +2702,6 @@ int main(int argc, char *argv[]) {
 
     ki_report_show(trn_ok, total_train, evl_ok, total_eval,
                    elapsed_ms, aa.threadN, fin_err, aa.lr);
-
-    if (aa.exportD[0] != '\0')
-    {
-        export_ensemble(aa.exportD, W0_ens, total_members,
-                        members, active_members,
-                        H_local, NC_slice, (int)n_cont);
-    }
 
     /* ── Export per-sample predictions (eval only, for vis-errors) ─ */
     if (aa.predictions[0]) {

@@ -8,27 +8,28 @@
 #   make hebbian     — Hebbian trainer only
 #   make adam        — Float32 AdamW trainer only
 #   make model-otto  — train MNIST Otto Score model
-#   make model-hebb  — train MNIST Hebbian model
+#   make model-hebbian  — train MNIST Hebbian model
 #   make model-adam  — train MNIST AdamW model
 #   make clean       — remove executables + models
 #   make setup       — download MNIST dataset
 # ================================================================
 
 CC       = gcc
-CFLAGS   = -O3 -march=native -fopenmp -Wall -Wextra -Werror \
+CFLAGS   = -O3 -g -march=native -fopenmp -Wall -Wextra -Werror \
            -Wconversion -Wsign-conversion -Wfloat-equal -Wundef -Wshadow -Wunused \
-           -I../../lib
+           -I../lib
 LDLIBS   = -lm -lz
 
 MODEL_DIR = ../models
 
-.PHONY: all otto hebbian adam vis-errors merge-ensemble clean setup model-otto model-hebb model-adam
+.PHONY: all otto hebbian adam vis-errors merge-ensemble clean setup model-otto model-hebbian model-adam
 
 all: otto hebbian adam vis-errors merge-ensemble
 
 # ── Dataset ────────────────────────────────────────────────
 setup:
 	@echo "Downloading MNIST dataset..."
+	@mkdir -p data
 	@bash ../fetch_mnist.sh
 
 # ═══════════════════════════════════════════════════════════
@@ -70,7 +71,7 @@ mnist-mlp-bin32-hebbian-trn-xor.exe: $(HEBB_SRC) ki-common.h
 	  -Wno-sign-conversion -Wno-unused-parameter -Wno-unused-function -Wno-unused-variable \
 	  -DH0_XOR -o $@ $< $(LDLIBS)
 
-model-hebb: mnist-mlp-bin32-hebbian-trn-xnor.exe
+model-hebbian: mnist-mlp-bin32-hebbian-trn-xnor.exe
 	@mkdir -p $(MODEL_DIR)/mnist-hebbian-h512-e10
 	@./mnist-mlp-bin32-hebbian-trn-xnor.exe --hiddenN 512 --epochsN 10 \
 	  --encoding exp --export $(MODEL_DIR)/mnist-hebbian-h512-e10 2>&1 | grep '^REPORT'
@@ -85,13 +86,39 @@ adam: mnist-mlp-flt32-adam-trn.exe
 mnist-mlp-flt32-adam-trn.exe: $(ADAM_SRC) ki-common.h ../lib/ki-adamw.h
 	$(CC) $(CFLAGS) \
 	  -Wno-sign-conversion -Wno-unused-parameter -Wno-unused-function -Wno-unused-variable \
-	  -Wno-format-truncation -Wno-pointer-to-int-cast \
-	  -o $@ $< $(LDLIBS)
+	  -Wno-format-truncation -Wno-pointer-to-int-cast -o $@ $< $(LDLIBS)
 
 model-adam: mnist-mlp-flt32-adam-trn.exe
 	@mkdir -p $(MODEL_DIR)/mnist-adam-h512-e10
 	@./mnist-mlp-flt32-adam-trn.exe --hiddenN 512 --epochsN 10 \
 	  --export $(MODEL_DIR)/mnist-adam-h512-e10 2>&1 | grep '^REPORT'
+
+# ═══════════════════════════════════════════════════════════════
+# Fast single tests (use cached model if available, train if missing)
+# ═══════════════════════════════════════════════════════════════
+
+.PHONY: test-otto test-adam test-hebbian test
+
+# ── MNIST ──────────────────────────────────────────────────
+test-otto: otto
+	@test -f $(MODEL_DIR)/mnist-otto-h512-e10/model.otto || $(MAKE) model-otto
+	@echo -e "\n=== Otto Score MNIST (H=512, 10 ep, exp8) ==="
+	@./mnist-mlp-bin32-otto-trn-xnor.exe \
+	  --import $(MODEL_DIR)/mnist-otto-h512-e10 --evalN 10000 --encoding exp 2>&1 | grep '^REPORT'
+
+test-adam: adam
+	@test -f $(MODEL_DIR)/mnist-adam-h512-e10/weights-0.meta || $(MAKE) model-adam
+	@echo -e "\n=== Float32 AdamW MNIST (H=512, 10 ep) ==="
+	@./mnist-mlp-flt32-adam-trn.exe \
+	  --import $(MODEL_DIR)/mnist-adam-h512-e10 --evalN 10000 2>&1 | grep '^REPORT'
+
+test-hebbian: hebbian
+	@test -f $(MODEL_DIR)/mnist-hebbian-h512-e10/weights-0.meta || $(MAKE) model-hebbian
+	@echo -e "\n=== Bin32 Hebbian MNIST (H=512, 10 ep, exp8) ==="
+	@./mnist-mlp-bin32-hebbian-trn-xnor.exe \
+	  --import $(MODEL_DIR)/mnist-hebbian-h512-e10 --evalN 10000 --encoding exp 2>&1 | grep '^REPORT'
+
+test: test-otto test-adam test-hebbian
 
 # ═══════════════════════════════════════════════════════════
 # Error Visualizer (MNIST + CIFAR via ki-local.h)
@@ -113,13 +140,11 @@ MERGE_SRC = merge-ensemble.c
 merge-ensemble: mnist-merge-ensemble.exe
 
 mnist-merge-ensemble.exe: $(MERGE_SRC)
-	$(CC) $(CFLAGS) \
-	  -Wno-sign-conversion -Wno-unused-parameter -Wno-unused-function \
-	  -o $@ $< $(LDLIBS)
+	$(CC) $(CFLAGS) -Wno-sign-conversion -Wno-unused-parameter -Wno-unused-function -o $@ $< $(LDLIBS)
 
 # ── Clean ──────────────────────────────────────────────────
 clean:
 	rm -f *.exe
-	rm -rf $(MODEL_DIR)/mnist-otto-h512-e10 $(MODEL_DIR)/mnist-hebbian-h512-e10
-	rm -rf $(MODEL_DIR)/mnist-otto-h512 $(MODEL_DIR)/mnist-hebbian-h512
-	rm -rf $(MODEL_DIR)/mnist-adam-h512-e10
+
+clean-all: clean
+	rm -rf $(MODEL_DIR)/mnist-*

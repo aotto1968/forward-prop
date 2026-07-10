@@ -199,7 +199,7 @@ Where:
 - **k** = scaling slope (dataset-dependent)
 - **H₀** = reference neuron count
 
-| Dataset | A₀  | k         | H₀    | Efficiency |
+| Dataset | A₀  | k         | H₀    | Efficiency | t   |
 | ------- | --- | --------- | ----- | ---------- | --- |
 | 128     | 128 | 4,096 bit | 55.9% | +3.6pp     | 68s |
 | 128     | 128 | 4,096 bit | 55.9% | +3.6pp     | 68s |

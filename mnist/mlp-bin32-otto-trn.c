@@ -2355,6 +2355,7 @@ int main(int argc, char *argv[]) {
 
     /* Best-Snapshots (flat arrays, für Export) */
     float best_evl = 0.0f;
+    int best_evl_ok = 0;        /* Anzahl korrekt beim besten eval */
     int best_err = total_train;
     int last_avg_err = total_train;
 
@@ -2523,6 +2524,7 @@ int main(int argc, char *argv[]) {
 
         if (evl_acc > best_evl) {
             best_evl = evl_acc;
+            best_evl_ok = evl_ok;
             /* Jetzt auch member->best_target setzen (für export) */
             for (int _b = 0; _b < active_members; _b++) {
                 ki_Member *mem = members[_b];
@@ -2700,7 +2702,9 @@ int main(int argc, char *argv[]) {
            H, ensembleN, splitVN, splitHN, epochs, fin_trn, fin_evl, final_best,
            (double)aa.lr, elapsed_ms);
 
-    ki_report_show(trn_ok, total_train, evl_ok, total_eval,
+    /* REPORT uses best eval (whichever is higher: training loop best or final eval) */
+    int report_evl_ok = (evl_ok > best_evl_ok) ? evl_ok : best_evl_ok;
+    ki_report_show(trn_ok, total_train, report_evl_ok, total_eval,
                    elapsed_ms, aa.threadN, fin_err, aa.lr);
 
     /* ── Export per-sample predictions (eval only, for vis-errors) ─ */

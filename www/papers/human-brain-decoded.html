@@ -106,6 +106,28 @@
 
 <p><strong>Recent optimizations (July 2026):</strong> Precomputing the VN-group bitmask once before training (gb-cache) reduced training time by <strong>71%</strong> — from 934s to 273s for H=1024, EN=7 on CIFAR-10. Combined with eliminating redundant h0 computation and flat array duplication, the Otto Score now trains efficiently at large scale. A VN sweep revealed that the optimal group size depends on data noise: <strong>VN=1 for clean data (MNIST), VN=2 for noisy data (CIFAR).</strong></p>
 
+<p><strong>Critical finding (July 2026): HiddenN cannot be expanded indefinitely.</strong>
+Experiments comparing H=1024, 2048, and 4096 on CIFAR-10 show that all three
+converge to the <strong>same ceiling of ~61.5%</strong> — more H only reduces the number
+of ensemble members needed, it does NOT raise the final accuracy. The reason is
+fundamental: the input data (256 containers for CIFAR) contains only so much
+information. Beyond a certain H, every additional neuron extracts redundant
+projections of the same limited input.</p>
+
+<p><strong>The human brain's 92% requires BOTH data AND neurons — they are co-dependent.</strong>
+The brain's 86 billion neurons are needed to <strong>store</strong> a lifetime of visual
+experience (cars, trucks, birds, cats, dogs in every pose, lighting condition,
+and background). That lifetime of experience is needed to <strong>fill</strong> those neurons
+with meaningful patterns. Neither works without the other: neurons without data
+store nothing, data without neurons has nowhere to go.</p>
+
+<p>The Otto Score scaling law projects 92% at 3.1T channels, but this projection
+requires <strong>both</strong> massive storage (the channels) AND massive data (millions of
+training examples) to fill them. The CIFAR-10 experiments confirm this:
+H=1024, 2048, and 4096 all converge to the same ~61.5% ceiling because the
+training data (50,000 images) is the limiting factor — not the number of
+neurons.</p>
+
 <div class="brain-equation">
     <div>100 trillion synapses &divide; 32 bits</div>
     <div style="font-size:3rem; color:var(--amber); margin:0.5rem 0;">=</div>

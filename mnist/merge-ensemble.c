@@ -242,8 +242,16 @@ static int load_archive(const char *path) {
             case 4: pass = (fabsf(hdr.ensemble_eval - g_eval_thresh) < 0.001f); break;
         }
         if (!pass) {
-            printf("  [SKIP] %s  eval=%.1f%%  (filter: eval%c%.1f)\n",
-                   path, hdr.ensemble_eval, g_eval_op, g_eval_thresh);
+            const char *op_str = "gt";
+            switch (g_eval_cmp) {
+                case 0: op_str = "gt"; break;
+                case 1: op_str = "ge"; break;
+                case 2: op_str = "lt"; break;
+                case 3: op_str = "le"; break;
+                case 4: op_str = "eq"; break;
+            }
+            printf("  [SKIP] %s  eval=%.1f%%  (filter: eval %s %.1f)\n",
+                   path, hdr.ensemble_eval, op_str, g_eval_thresh);
             fclose(f); return -1;
         }
     }
@@ -447,13 +455,17 @@ static int merge_and_eval(const char *save_path, int max_en)
     float prev_acc = 0.0f;
     const char *prev_file = "";
     int file_idx = 0;
-    for (int en = 1; en <= max_en; en++) {
+    int files_merged = 0;
+    for (int en = 1; en <= n_blocks; en++) {
         int m = en - 1;
 
         /* Print file separator when source file changes */
         if (strcmp(blocks[m].source_file, prev_file) != 0) {
             prev_file = blocks[m].source_file;
             file_idx++;
+            files_merged++;
+            /* --max/--num limits the number of archive files, not score blocks */
+            if (max_en > 0 && files_merged > max_en) break;
             printf("  ─── #%d [%.1f%%] %s ───\n", file_idx,
                    blocks[m].file_eval, prev_file);
         }
@@ -503,13 +515,13 @@ static void show_help(const char *prog) {
     printf("\n");
     printf("Options:\n");
     printf("  DIR          Directory containing .ens score archives\n");
-    printf("  --num N      Only combine the first N members (default: all)\n");
+    printf("  --num N      Only combine the first N archive files (default: all)\n");
     printf("  --max N      Alias for --num\n");
     printf("  --save FILE  Save cumulative accuracy to FILE (default: DIR/merge.dat)\n");
     printf("  --sort MODE  Sort members by 'seed' or 'ctime' (default: ctime)\n");
     printf("  --filter L   Filter members by label or eval threshold\n");
-    printf("               Label exclude : --filter \"GB=sig8,BL=down8\" (case-insensitive)\n");
-    printf("               Eval threshold: --filter \"eval>58.1\"  (>, >=, <, <=, =)\n");
+    printf("               Label exclude : --filter GB=sig8,BL=down8 (case-insensitive, no spaces)\n");
+    printf("               Eval threshold: --filter eval gt 58.1    (gt, lt, ge, le, eq, no quotes needed)\n");
     printf("  -h, --help   Show this help text\n");
     printf("\n");
     printf("Output:\n");
@@ -562,11 +574,18 @@ int main(int argc, char **argv) {
                 fprintf(stderr, "[ERROR] --sort: expected 'seed' or 'ctime', got '%s'\n", mode);
                 return 1;
             }
-        } else if (strcmp(argv[i], "--filter") == 0 && i + 1 < argc) {
-            const char *val = argv[++i];
-            char buf[512];
-            strncpy(buf, val, sizeof(buf) - 1);
-            buf[sizeof(buf) - 1] = '\0';
+        } else if (strcmp(argv[i], "--filter") == 0) {
+            /* Consume all following arguments until next flag or end */
+            char buf[1024] = "";
+            while (i + 1 < argc && argv[i + 1][0] != '-') {
+                i++;
+                if (buf[0]) strncat(buf, " ", sizeof(buf) - strlen(buf) - 1);
+                strncat(buf, argv[i], sizeof(buf) - strlen(buf) - 1);
+            }
+            if (buf[0] == '\0') {
+                fprintf(stderr, "[ERROR] --filter requires an expression\n");
+                return 1;
+            }
             g_eval_active = 0;
             g_filter_count = 0;
             for (char *tok = strtok(buf, ","); tok && (g_filter_count < 64 || g_eval_active); tok = strtok(NULL, ",")) {
@@ -574,26 +593,24 @@ int main(int argc, char **argv) {
                 if (*tok == '\0') continue;
 
                 if (strncasecmp(tok, "eval", 4) == 0) {
-                    const char *expr = tok + 4;
-                    char op = *expr;
-                    if (op == '>' || op == '<' || op == '=') {
-                        expr++;
-                        char op2 = *expr;
-                        if ((op == '>' || op == '<') && op2 == '=') {
-                            g_eval_cmp = (op == '>') ? 1 : 3;
-                            g_eval_op = (op == '>') ? '>' : '<';
-                            expr++;
-                        } else if (op == '=') {
-                            g_eval_cmp = 4;
-                            g_eval_op = '=';
-                        } else {
-                            g_eval_cmp = (op == '>') ? 0 : 2;
-                            g_eval_op = op;
-                        }
-                        g_eval_thresh = (float)atof(expr);
-                        g_eval_active = 1;
-                        continue;
+                    const char *p = tok + 4;
+                    while (*p == ' ' || *p == '\t') p++;
+                    /* parse text operator: gt, lt, ge, le, eq */
+                    int op_len = 0;
+                    if      (strncasecmp(p, "gt", 2) == 0) { g_eval_cmp = 0; g_eval_op = '>'; op_len = 2; }
+                    else if (strncasecmp(p, "ge", 2) == 0) { g_eval_cmp = 1; g_eval_op = 'g'; op_len = 2; }
+                    else if (strncasecmp(p, "lt", 2) == 0) { g_eval_cmp = 2; g_eval_op = '<'; op_len = 2; }
+                    else if (strncasecmp(p, "le", 2) == 0) { g_eval_cmp = 3; g_eval_op = 'l'; op_len = 2; }
+                    else if (strncasecmp(p, "eq", 2) == 0) { g_eval_cmp = 4; g_eval_op = '='; op_len = 2; }
+                    else {
+                        fprintf(stderr, "[ERROR] Unknown eval operator in '%s' — use gt, lt, ge, le, eq\n", tok);
+                        return 1;
                     }
+                    p += op_len;
+                    while (*p == ' ' || *p == '\t') p++;
+                    g_eval_thresh = (float)atof(p);
+                    g_eval_active = 1;
+                    continue;
                 }
 
                 strncpy(g_filter_pat[g_filter_count], tok, sizeof(g_filter_pat[0]) - 1);
@@ -634,8 +651,17 @@ int main(int argc, char **argv) {
         for (int i = 0; i < g_filter_count; i++)
             printf(" %s", g_filter_pat[i]);
     }
-    if (g_eval_active)
-        printf("  eval%c%.1f", g_eval_op, g_eval_thresh);
+    if (g_eval_active) {
+        const char *op_str = "gt";
+        switch (g_eval_cmp) {
+            case 0: op_str = "gt"; break;
+            case 1: op_str = "ge"; break;
+            case 2: op_str = "lt"; break;
+            case 3: op_str = "le"; break;
+            case 4: op_str = "eq"; break;
+        }
+        printf("  eval %s %.1f", op_str, g_eval_thresh);
+    }
     printf("\n");
 
     merge_and_eval(save_path, max_en);

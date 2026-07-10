@@ -290,15 +290,52 @@ computation, no redundant MAJ3 evaluations.
 
 With the precomputation architecture, training time drops dramatically:
 
-| H     | EN | Before (h0/epoch) | After (h0 once) | Speedup |
-|-------|----|-------------------|-----------------|---------|
-| 1024  | 7  | 934s              | **273s**        | **71%** |
+| H    | EN | Before (h0/epoch) | After (h0 once) | Speedup |
+| ---- | -- | ----------------- | --------------- | ------- |
+| 1024 | 7  | 934s              | **273s**        | **71%** |
 
 The effect grows with H and epoch count: each saved h0 recomputation is
 `O(H × NC × N)` bit-operations. For large ensembles and many epochs, the
 savings are multiplicative.
 
-### 5.3 Train Now, Merge Later — Fully Decoupled Ensemble Workflow
+### 5.3 H Does Not Change the Ceiling — Only the Convergence Speed
+
+An important empirical finding: increasing H (hidden neurons) does **not** raise
+the ensemble accuracy ceiling. It only reduces the number of ensemble members
+needed to reach that ceiling.
+
+The following table shows three CIFAR-10 ensembles (VN=2, EP=6, encoding=latest)
+converging to the same ~61.5% ceiling:
+
+| H    | EN=1  | EN=3  | EN=10     | EN=50 | EN=100 | EN=200 | Ceiling |
+| ---- | ----- | ----- | --------- | ----- | ------ | ------ | ------- |
+| 1024 | 37.1% | 49.1% | 58.1%     | 60.8% | 61.4%  | 61.6%  | 61.6%   |
+| 2048 | 39.2% | 50.9% | 58.7%     | 61.2% | 61.4%  | —      | 61.6%   |
+| 4096 | 40.6% | 51.8% | **60.1%** | 61.4% | —      | —      | 61.6%   |
+
+Key observations:
+- **H determines the starting speed**: H=4096 reaches 60.1% at EN=10, while
+  H=1024 needs ~50 members to get there
+- **The ceiling is identical**: all three converge to ~61.5% regardless of H
+- **The MAJ3 information bottleneck is the limit**: once the ensemble covers
+  enough diverse projections, additional H per member no longer helps
+
+**Why H cannot be expanded indefinitely**: More hidden neurons means more
+random projections of the **same fixed input data**. Each projection extracts
+32 bits of information from the input. With 196 containers for MNIST or 256
+for CIFAR, the input itself is small. Beyond a certain H, all projections
+become redundant — there is simply not enough information in the input to
+support more independent features.
+
+**Practical consequence**: Data and neurons are co-dependent. The human brain's
+86 billion neurons are needed to **store** a lifetime of visual experience;
+the lifetime of visual experience is needed to **fill** those neurons with
+meaningful patterns. Neither works without the other. The Otto Score scaling
+law projects 92% accuracy at 3.1T channels, but this requires **both** massive
+storage (the channels) AND massive data (millions of training examples) to fill
+them.
+
+### 5.4 Train Now, Merge Later — Fully Decoupled Ensemble Workflow
 
 Because W0 is the only data-dependent random element and it is frozen, each
 ensemble member is **completely independent** — different W0 (different seed),
@@ -350,7 +387,7 @@ bash run-ensemble.sh --repeat 20 ./cifar/cifar-mlp-bin32-otto-trn-xnor.exe \
 ./cifar/cifar-merge-ensemble.exe scores/ --filter "eval>58"
 ```
 
-### 5.4 Technological Consequence
+### 5.5 Technological Consequence
 
 The combination of frozen W0 + precomputed H0 means the Otto Score training
 pipeline is **embarrassingly parallel at every level**:

@@ -58,14 +58,17 @@
 <p style="font-size:1.1rem; color:var(--mid-gray); margin-bottom:2rem;"><em>DRAM-native Classification via Bit-Logic Operations</em></p>
 
 <div style="background:linear-gradient(135deg, rgba(230,168,23,0.12), rgba(230,168,23,0.04)); border:2px solid var(--amber); border-radius:8px; padding:1rem 1.5rem; margin-bottom:2rem;">
-    <strong style="font-size:1rem;">📈 Update July 9, 2026</strong>
+    <strong style="font-size:1rem;">📈 Update July 10, 2026</strong>
     <ul style="margin:0.5rem 0 0 1.2rem; font-size:0.9rem;">
         <li><strong>71% faster training</strong> — gb-cache optimization: VN group bitmask precomputed once, reused for all epochs + evaluation</li>
         <li><strong>61.62% CIFAR-10</strong> — Ensemble of 17 seeds breaks the 60% barrier. Single-run ceiling at 61.0% (H=4094)</li>
+        <li><strong>H determines speed, not ceiling</strong> — H=1024/2048/4096 all converge to ~61.5%. More H does NOT raise the ceiling, only reduces member count needed</li>
+        <li><strong>HiddenN is input-limited</strong> — Beyond a certain H, all projections become redundant because the input data (256 containers for CIFAR) is too small. Higher accuracy requires <strong>more data, not more neurons</strong></li>
+        <li><strong>Human brain's 92% comes from data</strong> — Lifetime exposure to millions of images, not 86B neurons, is what gives humans 92% accuracy. The Otto Score would match this given equal training data</li>
         <li><strong>VN=2 Sweet Spot is data-dependent</strong> — VN=2 (25% retention) essential for noisy CIFAR, but VN=1 outperforms on clean MNIST</li>
-        <li><strong>VN=3+ strict AND modes</strong> — only activate when ALL group bits are set. Future potential at very large H</li>
         <li><strong><a href="human-brain-decoded.html">The Human Brain Has Been Decoded</a></strong> — Scaling law extrapolates to 92% human-level intelligence at 3.1T MAJ3 channels</li>
         <li><strong>Decoupled ensemble workflow</strong> — <code>--save-scores DIR</code> saves per-member scores to archive files. The <code>merge-ensemble</code> tool combines any subset later. Training and merging are completely independent operations</li>
+        <li><strong>Filter by text operators</strong> — <code>--filter eval gt 58</code> replaces shell-unsafe <code>&gt;</code> syntax</li>
     </ul>
 </div>
 

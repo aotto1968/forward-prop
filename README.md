@@ -118,19 +118,19 @@ Each trainer doubles as inference engine via `--import`. Zero code drift.
 | `--qq`                     | Quick mode: 5000 train / 2000 eval / 3 ep            | off             |
 | `--threadN N`              | OpenMP threads                                       | auto            |
 
-**`--splitVN` — Bit-Grouping (nur Otto Score):**
-- `--splitVN 1` (default): jedes Bit = eigenes Feature, 50% Retention. Optimal für clean data (MNIST).
-- `--splitVN 2` (Süßer Punkt): AND2-Filter, nur `11` zählt, **25% Retention**. Optimal für noisy data (CIFAR-10).
-- `--splitVN 3-32`: strict AND (alle Bits der Gruppe müssen 1 sein). Nur für sehr grosse H.
+**`--splitVN` — Bit-Grouping (Otto Score only):**
+- `--splitVN 1` (default): every bit is its own feature, 50% retention. Optimal for clean data (MNIST).
+- `--splitVN 2` (sweet spot): AND2 filter, only `11` counts, **25% retention**. Optimal for noisy data (CIFAR-10).
+- `--splitVN 3-32`: strict AND (all bits in the group must be 1). Only useful for very large H.
 
-Die Retention (wieviel Signal passiert) bestimmt die VN-Wahl:
-| VN    | Gruppen | Retention | Charakter                              |
-| ----- | ------- | --------- | -------------------------------------- |
-| 1     | 32      | 50.0%     | Soft — alles zählt                     |
-| **2** | **16**  | **25.0%** | **Champion CIFAR** — harter AND        |
-| 3     | 10      | 12.5%     | Braucht 8× mehr H für gleiche Leistung |
-| 4     | 8       | 6.25%     | Verhungert bei kleinen H               |
-| 8-32  | 4-1     | 0.4%-0%   | Nur bei H>16384+                       |
+Retention determines the VN choice:
+| VN    | Groups | Retention | Character                              |
+| ----- | ------ | --------- | -------------------------------------- |
+| 1     | 32     | 50.0%     | Soft — everything counts               |
+| **2** | **16** | **25.0%** | **CIFAR champion** — hard AND          |
+| 3     | 10     | 12.5%     | Needs 8× more H for same performance   |
+| 4     | 8      | 6.25%     | Starves at small H                     |
+| 8-32  | 4-1    | 0.4%-0%   | Only viable at H>16384+                |
 
 Backward-compat aliases: `--out` = `--export`, `--model` = `--import`.
 
@@ -291,20 +291,20 @@ Without `--export`, no files are written (training-only mode).
 
 ## Error Visualization via `--predictions`
 
-Jeder Trainer kann per-sample predictions exportieren. Der integrierte
-**Error Visualizer** erzeugt ein index.html mit allen Samples, sortiert
-nach Klasse — Fehler rot markiert.
+Every trainer can export per-sample predictions. The built-in
+**Error Visualizer** generates an `index.html` with all samples sorted
+by class — errors are marked in red.
 
 MNIST (grayscale PNG, 28×28):
 
 ```bash
-# Schritt 1: predictions erzeugen
+# Step 1: generate predictions
 ./mnist/mnist-mlp-bin32-otto-trn-xnor.exe \
   --import models/mnist-otto-h512-e10 \
   --evalN 10000 --encoding exp \
   --predictions /tmp/mnist-preds.bin
 
-# Schritt 2: visualisieren
+# Step 2: visualize
 ./mnist/mnist-mlp-otto-vis-errors.exe \
   --predictions /tmp/mnist-preds.bin \
   --export vis/ --max 200
@@ -324,8 +324,8 @@ CIFAR-10 (color RGB PNG, 32×32):
   --export vis-cifar/ --max 200
 ```
 
-`cifar-mlp-otto-vis-errors.exe` nutzt dataset-spezifisches `ki_write_png()`
-aus `ki-local.h` (color RGB für CIFAR, grayscale für MNIST).
+`cifar-mlp-otto-vis-errors.exe` uses the dataset-specific `ki_write_png()`
+from `ki-local.h` (color RGB for CIFAR, grayscale for MNIST).
 
 ## Results Summary
 
@@ -337,19 +337,19 @@ aus `ki-local.h` (color RGB für CIFAR, grayscale für MNIST).
 | Float32 AdamW (matmul)  | 92.6%     | 41.2%      | CPU/GPU          |
 
 - **Otto Score**: MAJ3 + iterative Bayesian correction. Pure `&|~` + popcount.
-  Bessere Ergebnisse durch `--splitVN 2` (CIFAR) und Ensemble (`--ensembleN 7`).
+  Better results via `--splitVN 2` (CIFAR) and ensemble (`--ensembleN 7`).
 - **Hebbian**: Counter-based co-occurrence learning with multi-encoding members.
   MNIST: single member (exp8). CIFAR: 11 members (`--encoding latest`).
 - **AdamW**: 1-layer float32 MLP (LeakyReLU, AdamW). Unified source with `--import` inference.
 
 ### Best Results (Latest)
 
-| Konfiguration                                             | Dataset  | Accuracy   | Zeit                           |
-| --------------------------------------------------------- | -------- | ---------- | ------------------------------ |
-| H=128, EN=7, ep=8, `--encoding exp8,log8,sig8`, evalN=100 | MNIST    | **99.0%**  | ~30s                           |
-| H=1024, EN=7, ep=7, `--splitVN 2`, `--encoding latest`    | CIFAR-10 | **61.2%**  | **273s** (−71% durch gb-cache) |
-| H=1024, 17 seeds, VN=2, `--encoding latest` (Ensemble)    | CIFAR-10 | **61.62%** | merge-ensemble                 |
-| H=4094, EN=3, ep=7, VN=2, target-err=0.4 (single)         | CIFAR-10 | **61.0%**  | 603s                           |
+| Configuration                                             | Dataset  | Accuracy   | Time                            |
+| --------------------------------------------------------- | -------- | ---------- | ------------------------------- |
+| H=128, EN=7, ep=8, `--encoding exp8,log8,sig8`, evalN=100 | MNIST    | **99.0%**  | ~30s                            |
+| H=1024, EN=7, ep=7, `--splitVN 2`, `--encoding latest`    | CIFAR-10 | **61.2%**  | **273s** (−71% via gb-cache)    |
+| H=1024, 17 seeds, VN=2, `--encoding latest` (Ensemble)    | CIFAR-10 | **61.62%** | merge-ensemble                  |
+| H=4094, EN=3, ep=7, VN=2, target-err=0.4 (single)         | CIFAR-10 | **61.0%**  | 603s                            |
 
 ### Ensemble Workflow (quick overview)
 
@@ -367,16 +367,16 @@ bash bin/run-ensemble.sh --repeat 20 ./cifar/cifar-mlp-bin32-otto-trn-xnor.exe \
 
 ## Key Findings (2026-07)
 
-- **VN=2 Sweet Spot**: 25% Retention durch AND2-Filter. Optimal für noisy data (CIFAR).
-  Für clean data (MNIST) ist VN=1 besser. VN=3+ (strict AND) nur bei sehr grossem H.
-- **gb-cache Optimierung**: VN-Gruppenmaske wird 1× aus h0 berechnet und für alle
-  Epochen + Evaluation wiederverwendet. **−71% Trainingszeit** (H=1024, EN=7: 934s→273s).
-- **Ensemble überwindet Ceiling**: Mehrere Seeds + merge-ensemble erreichen 61.62%
-  (H=1024, 17 seeds). Single-Run ceiling: 61.0% (H=4094).
-- **h0_eval Cache**: `evaluate_member` nutzt gb_buf/gb_buf_te für beide Evaluationen
-  (train + test). Kein h0_neuron mehr während des Trainings.
-- **Flat arrays entfernt**: `target_ens`/`offset_ens`/`best_ens`/`err_ens` eliminiert.
-  Jeder Member speichert seine Targets selbst.
+- **VN=2 Sweet Spot**: 25% retention via AND2 filter. Optimal for noisy data (CIFAR).
+  For clean data (MNIST), VN=1 is better. VN=3+ (strict AND) only at very large H.
+- **gb-cache optimization**: VN group mask computed once from h0 and reused for all
+  epochs + evaluation. **−71% training time** (H=1024, EN=7: 934s→273s).
+- **Ensemble overcomes ceiling**: Multiple seeds + merge-ensemble reach 61.62%
+  (H=1024, 17 seeds). Single-run ceiling: 61.0% (H=4094).
+- **h0_eval Cache**: `evaluate_member` uses gb_buf/gb_buf_te for both evaluations
+  (train + test). No h0_neuron during training.
+- **Flat arrays removed**: `target_ens`/`offset_ens`/`best_ens`/`err_ens` eliminated.
+  Each member stores its own targets.
 
 ## References
 
@@ -385,7 +385,7 @@ bash bin/run-ensemble.sh --repeat 20 ./cifar/cifar-mlp-bin32-otto-trn-xnor.exe \
 - **Bin32 Hebbian (legacy)**: The old single-member Hebbian (raw pixels, no encoding)
   achieved only 10% on CIFAR (random baseline). The new multi-member version with
   Thermometer encoding (`--encoding latest`, 11 members) reaches 32.4%.
-- **VN-Datenabhängigkeit**: MNIST clean → VN=1. CIFAR noisy → VN=2. Siehe
+- **VN data dependency**: MNIST clean → VN=1. CIFAR noisy → VN=2. See
   [`plans/plan-2026-07-08-vn3.md`](https://github.com/aotto1968/forward-prop/blob/master/plans/plan-2026-07-08-vn3.md).
 
 ## License

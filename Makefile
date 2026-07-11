@@ -49,7 +49,7 @@ model-cifar-hebbian:   ; $(MAKE) -s -C cifar model-hebbian
 
 models-mnist: model-mnist-otto model-mnist-adam model-mnist-hebbian
 models-cifar: model-cifar-otto model-cifar-adam model-cifar-hebbian
-models: models-mnist modls-cifar 
+models: models-mnist models-cifar 
 
 .PHONY: models models-mnist models-cifar \
 	model-mnist-otto model-mnist-hebbian model-mnist-adam \

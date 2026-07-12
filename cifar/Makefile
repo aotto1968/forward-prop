@@ -133,7 +133,7 @@ cifar-mlp-otto-vis-errors.exe: $(VIS_SRC) ki-common.h
 	  -o $@ $< $(LDLIBS)
 
 # ═══════════════════════════════════════════════════════════
-# Ensemble Tool (merge — works with --save-scores)
+# Ensemble Tool (merge — works with --export-merge-scores)
 # ═══════════════════════════════════════════════════════════
 MERGE_SRC = merge-ensemble.c
 

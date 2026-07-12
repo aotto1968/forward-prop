@@ -8,7 +8,7 @@
  * Reads all .ens files from DIR, accumulates scores per seed+member,
  * and computes accuracy for EN=1..total_members.
  *
- * Archive format (produced by --save-scores):
+ * Archive format (produced by --export-merge-scores):
  *   Header: magic(4) ver(4) n_test(4) n_classes(4) n_members(4)
  *           hidden(4) epochs(4) split_vn(4) split_hn(4)
  *           target_err(4) seed(4)
@@ -533,7 +533,7 @@ static void show_help(const char *prog) {
     printf("  %s scores/ --num 5\n", prog);
     printf("  %s scores/ --save /tmp/curve.dat --num 20\n", prog);
     printf("\n");
-    printf("The .ens archives are created by the Otto Score trainer via --save-scores DIR.\n");
+    printf("The .ens archives are created by the Otto Score trainer via --export-merge-scores DIR.\n");
     printf("Each archive contains all ensemble members from one training run.\n");
 }
 

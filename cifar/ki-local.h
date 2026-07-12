@@ -41,15 +41,15 @@
 #endif
 
 #ifndef OT_PRECISION
-#define OT_PRECISION      17
+#define OT_PRECISION              17
 #endif
 
 /* Für mlp-flt32-trn-*-adam.c (Alt-Trainer) */
 #ifndef KI_BITS_PER_CONT
-#define KI_BITS_PER_CONT  32
+#define KI_BITS_PER_CONT          32
 #endif
 #ifndef KI_MODEL_DIR
-#define KI_MODEL_DIR      "models"
+#define KI_MODEL_DIR              "models"
 #endif
 
 /* ═══════════════════════════════════════════════════════════════════════

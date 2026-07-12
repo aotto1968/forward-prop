@@ -60,7 +60,7 @@ otto-score-ifc/
 │   ├── mlp-flt32-adam-trn.c      ← Float32 AdamW (unified, --import inference)
 │   ├── ki-common.h               ← Shared header (args, parsing, RNG)
 │   ├── ki-local.h                ← MNIST dataset config
-│   └── merge-ensemble.c          ← Ensemble merge tool (companion to --save-scores)
+│   └── merge-ensemble.c          ← Ensemble merge tool (companion to --export-merge-scores)
 ├── cifar/                ← CIFAR-10 (symlinks to mnist/ + CIFAR ki-local.h)
 │   ├── Makefile
 │   ├── mlp-bin32-otto-trn.c      → ../mnist/...
@@ -83,40 +83,40 @@ Each trainer doubles as inference engine via `--import`. Zero code drift.
 
 ## Build Targets
 
-| Command        | Builds                                            |
-| -------------- | ------------------------------------------------- |
-| `make` / `all` | All 6 binaries (Otto + Hebbian + Adam × XNOR/XOR) |
-| `make otto`    | Otto Score only (mnist/ + cifar/)                 |
-| `make hebbian` | Hebbian only (mnist/ + cifar/)                    |
-| `make adam`    | Float32 AdamW only (mnist/ + cifar/)              |
-| `make models`  | Train all 6 models (cached)                       |
-| `make clean`   | Remove executables                                |
-| `make ensemble`| Build merge-ensemble only (mnist/ + cifar/)       |
+| Command         | Builds                                            |
+| --------------- | ------------------------------------------------- |
+| `make` / `all`  | All 6 binaries (Otto + Hebbian + Adam × XNOR/XOR) |
+| `make otto`     | Otto Score only (mnist/ + cifar/)                 |
+| `make hebbian`  | Hebbian only (mnist/ + cifar/)                    |
+| `make adam`     | Float32 AdamW only (mnist/ + cifar/)              |
+| `make models`   | Train all 6 models (cached)                       |
+| `make clean`    | Remove executables                                |
+| `make ensemble` | Build merge-ensemble only (mnist/ + cifar/)       |
 
 ## CLI Flags (unified across all trainers)
 
-| Flag                       | Description                                          | Default         |
-| -------------------------- | ---------------------------------------------------- | --------------- |
-| `--hiddenN N`              | Hidden neurons                                       | 64              |
-| `--epochsN N`              | Training epochs                                      | 1               |
-| `--splitVN N`              | Bit-Grouping: 1                                      | 1,2,3,4,8,16,32 |
-| `--encoding TYPE`          | Input encoding (exp, sig, up8, down8, raw, etc.)     | raw8            |
-| `--ensembleN N`            | Independent W0 copies                                | 1               |
-| `--export DIR`             | Model export directory                               | none            |
-| `--import DIR`             | Load model for inference                             | none            |
-| `--predictions FILE`       | Export per-sample predictions (for vis-errors tool)  | none            |
-| `--save-scores DIR`        | Save per-member scores to archive files (ensemble)   | none            |
-| `--dry-run`                | Print architecture and exit (metadata only, instant) | off             |
-| `--seed N`                 | Random seed                                          | 42              |
-| `--seed-member MODE`       | Member seed strategy (once, const, incr)             | once            |
-| `--target-err F`           | Target error threshold for early stopping            | 0.0             |
-| `--multi-correct`          | Punish all wrong classes, not just argmax            | off             |
-| `--batchN N`               | Mini-batch size                                      | 64              |
-| `--debug-class-voting`     | Per-member per-class accuracy table                  | off             |
-| `--debug-confusion-matrix` | Confusion matrix table                               | off             |
-| `--filter CLASSES`         | Class subset (numeric or name, comma-sep)            | none            |
-| `--qq`                     | Quick mode: 5000 train / 2000 eval / 3 ep            | off             |
-| `--threadN N`              | OpenMP threads                                       | auto            |
+| Flag                        | Description                                          | Default         |
+| --------------------------- | ---------------------------------------------------- | --------------- |
+| `--hiddenN N`               | Hidden neurons                                       | 64              |
+| `--epochsN N`               | Training epochs                                      | 1               |
+| `--splitVN N`               | Bit-Grouping: 1                                      | 1,2,3,4,8,16,32 |
+| `--encoding TYPE`           | Input encoding (exp, sig, up8, down8, raw, etc.)     | raw8            |
+| `--ensembleN N`             | Independent W0 copies                                | 1               |
+| `--export DIR`              | Model export directory                               | none            |
+| `--import DIR`              | Load model for inference                             | none            |
+| `--predictions FILE`        | Export per-sample predictions (for vis-errors tool)  | none            |
+| `--export-merge-scores DIR` | Save per-member scores to archive files (ensemble)   | none            |
+| `--dry-run`                 | Print architecture and exit (metadata only, instant) | off             |
+| `--seed N`                  | Random seed                                          | 42              |
+| `--seed-member MODE`        | Member seed strategy (once, const, incr)             | once            |
+| `--target-err F`            | Target error threshold for early stopping            | 0.0             |
+| `--multi-correct`           | Punish all wrong classes, not just argmax            | off             |
+| `--batchN N`                | Mini-batch size                                      | 64              |
+| `--debug-class-voting`      | Per-member per-class accuracy table                  | off             |
+| `--debug-confusion-matrix`  | Confusion matrix table                               | off             |
+| `--filter CLASSES`          | Class subset (numeric or name, comma-sep)            | none            |
+| `--qq`                      | Quick mode: 5000 train / 2000 eval / 3 ep            | off             |
+| `--threadN N`               | OpenMP threads                                       | auto            |
 
 **`--splitVN` — Bit-Grouping (Otto Score only):**
 - `--splitVN 1` (default): every bit is its own feature, 50% retention. Optimal for clean data (MNIST).
@@ -124,13 +124,13 @@ Each trainer doubles as inference engine via `--import`. Zero code drift.
 - `--splitVN 3-32`: strict AND (all bits in the group must be 1). Only useful for very large H.
 
 Retention determines the VN choice:
-| VN    | Groups | Retention | Character                              |
-| ----- | ------ | --------- | -------------------------------------- |
-| 1     | 32     | 50.0%     | Soft — everything counts               |
-| **2** | **16** | **25.0%** | **CIFAR champion** — hard AND          |
-| 3     | 10     | 12.5%     | Needs 8× more H for same performance   |
-| 4     | 8      | 6.25%     | Starves at small H                     |
-| 8-32  | 4-1    | 0.4%-0%   | Only viable at H>16384+                |
+| VN    | Groups | Retention | Character                            |
+| ----- | ------ | --------- | ------------------------------------ |
+| 1     | 32     | 50.0%     | Soft — everything counts             |
+| **2** | **16** | **25.0%** | **CIFAR champion** — hard AND        |
+| 3     | 10     | 12.5%     | Needs 8× more H for same performance |
+| 4     | 8      | 6.25%     | Starves at small H                   |
+| 8-32  | 4-1    | 0.4%-0%   | Only viable at H>16384+              |
 
 Backward-compat aliases: `--out` = `--export`, `--model` = `--import`.
 
@@ -148,17 +148,17 @@ The ensemble sum smoothes out individual member mistakes. More seeds = better ac
 logarithmically saturating. The merge-ensemble tool shows exactly where
 you are on this curve.
 
-### 1. Train with `--save-scores DIR`
+### 1. Train with `--export-merge-scores DIR`
 
 Each run creates one `.ens` archive file with all per-member int64 scores:
 
 ```bash
 # Manual (one seed per call)
 ./cifar/cifar-mlp-bin32-otto-trn-xnor.exe --hiddenN 512 --epochsN 7 \
-  --encoding latest --splitVN 2 --save-scores scores/ --seed 1234
+  --encoding latest --splitVN 2 --export-merge-scores scores/ --seed 1234
 
 ./cifar/cifar-mlp-bin32-otto-trn-xnor.exe --hiddenN 512 --epochsN 7 \
-  --encoding latest --splitVN 2 --save-scores scores/ --seed 5678
+  --encoding latest --splitVN 2 --export-merge-scores scores/ --seed 5678
 
 # Auto-seed: run-ensemble.sh picks a random seed NOT used before
 bash bin/run-ensemble.sh ./cifar/cifar-mlp-bin32-otto-trn-xnor.exe \
@@ -344,11 +344,11 @@ from `ki-local.h` (color RGB for CIFAR, grayscale for MNIST).
 
 ### Best Results (Latest)
 
-| Configuration                                             | Dataset  | Accuracy   | Time                            |
-| --------------------------------------------------------- | -------- | ---------- | ------------------------------- |
-| H=128, EN=7, ep=6, `--encoding exp`, evalN=100            | MNIST    | **99.0%**  | **4s**                          |
-| H=1024, EN=7, ep=7, `--splitVN 2`, `--encoding latest`    | CIFAR-10 | **61.2%**  | 273s (single run)               |
-| H=1024, 132 filtered members, VN=2, `--encoding latest`   | CIFAR-10 | **61.66%** | merge-ensemble (6166/10000)      |
+| Configuration                                           | Dataset  | Accuracy   | Time                        |
+| ------------------------------------------------------- | -------- | ---------- | --------------------------- |
+| H=128, EN=7, ep=6, `--encoding exp`, evalN=100          | MNIST    | **99.0%**  | **4s**                      |
+| H=1024, EN=7, ep=7, `--splitVN 2`, `--encoding latest`  | CIFAR-10 | **61.2%**  | 273s (single run)           |
+| H=1024, 132 filtered members, VN=2, `--encoding latest` | CIFAR-10 | **61.66%** | merge-ensemble (6166/10000) |
 
 ### Ensemble Workflow (quick overview)
 

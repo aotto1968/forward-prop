@@ -344,25 +344,25 @@ own training, own target matrix.
 This enables a novel workflow:
 
 ```
-┌─────────────────────┐     ┌─────────────────────┐
-│  Train seed 1234    │ ──> │  scores/SD1234.ens  │
-│  --save-scores      │     └─────────────────────┘
-└─────────────────────┘              │
-                                     │                  ┌──────────────────┐ 
-┌─────────────────────┐     ┌─────────────────────┐     │  merge-ensemble  │ 
-│  Train seed 5678    │ ──> │  scores/SD5678.ens  │ ──> │  scores/         │ 
-│  --save-scores      │     └─────────────────────┘     │  → EN curve      │ 
-└─────────────────────┘              │                  └──────────────────┘ 
-                                     │                  
-┌─────────────────────┐     ┌─────────────────────┐
-│  Train seed 9012    │ ──> │  scores/SD9012.ens  │
-│  --save-scores      │     └─────────────────────┘
-└─────────────────────┘              │
-   ... (N seeds,                     │
-    parallel, any time)              ▼
+┌────────────────────────┐     ┌─────────────────────┐
+│  Train seed 1234       │ ──> │  scores/SD1234.ens  │
+│  --export-merge-scores │     └─────────────────────┘
+└────────────────────────┘              │
+                                        │                  ┌──────────────────┐ 
+┌────────────────────────┐     ┌─────────────────────┐     │  merge-ensemble  │ 
+│  Train seed 5678       │ ──> │  scores/SD5678.ens  │ ──> │  scores/         │ 
+│  --export-merge-scores │     └─────────────────────┘     │  → EN curve      │ 
+└────────────────────────┘              │                  └──────────────────┘ 
+                                        │                  
+┌────────────────────────┐     ┌─────────────────────┐
+│  Train seed 9012       │ ──> │  scores/SD9012.ens  │
+│  --export-merge-scores │     └─────────────────────┘
+└────────────────────────┘              │
+   ... (N seeds,                        │
+    parallel, any time)                 ▼
 ```
 
-Each `--save-scores DIR` run writes a **self-contained score archive** (`.ens`)
+Each `--export-merge-scores DIR` run writes a **self-contained score archive** (`.ens`)
 containing the member's per-sample scores. The `merge-ensemble` tool combines
 arbitrary subsets into an EN=1..N accuracy curve.
 
@@ -464,7 +464,7 @@ The practical scaling for fixed total MAJ3 budget (K = H × N):
 4. **Never use `--ensemble-seed const`** — identical W0 nullifies the ensemble benefit
 5. **Skip true random** — splitmix64 is sufficient; the seed source matters less than the diversity
 6. **Score-summing, not majority vote** — preserves margin information
-7. **Precompute h0 once** — with frozen W0 and fixed input, h0 never changes; do `--save-scores` and merge later
+7. **Precompute h0 once** — with frozen W0 and fixed input, h0 never changes; do `--export-merge-scores` and merge later
 8. **Archive all seeds** — score archives are tiny (~100KB each) and enable post-hoc ensemble analysis without retraining
 
 ## 8. Conclusion

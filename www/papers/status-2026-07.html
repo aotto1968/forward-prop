@@ -67,7 +67,7 @@
         <li><strong>Human brain's 92% comes from data</strong> — Lifetime exposure to millions of images, not 86B neurons, is what gives humans 92% accuracy. The Otto Score would match this given equal training data</li>
         <li><strong>VN=2 Sweet Spot is data-dependent</strong> — VN=2 (25% retention) essential for noisy CIFAR, but VN=1 outperforms on clean MNIST</li>
         <li><strong><a href="human-brain-decoded.html">The Human Brain Has Been Decoded</a></strong> — Scaling law extrapolates to 92% human-level intelligence at 3.1T MAJ3 channels</li>
-        <li><strong>Decoupled ensemble workflow</strong> — <code>--save-scores DIR</code> saves per-member scores to archive files. The <code>merge-ensemble</code> tool combines any subset later. Training and merging are completely independent operations</li>
+        <li><strong>Decoupled ensemble workflow</strong> — <code>--export-merge-scores DIR</code> saves per-member scores to archive files. The <code>merge-ensemble</code> tool combines any subset later. Training and merging are completely independent operations</li>
         <li><strong>Filter by text operators</strong> — <code>--filter eval gt 58</code> replaces shell-unsafe <code>&gt;</code> syntax</li>
     </ul>
 </div>
@@ -221,7 +221,7 @@ zero coupling between members. This enables a fundamentally decoupled workflow:<
 
 <h3>5.1 Train now, merge later</h3>
 
-<p>The <code>--save-scores DIR</code> flag saves each member's per-class scores to an archive file (<code>.ens</code>)
+<p>The <code>--export-merge-scores DIR</code> flag saves each member's per-class scores to an archive file (<code>.ens</code>)
 immediately after training. These archives contain everything needed to reconstruct the ensemble:</p>
 
 <ul>
@@ -237,20 +237,20 @@ and produces an accuracy curve for EN=1..N. Training and scoring are completely 
 
 <div class="brain-equation" style="font-size:1rem; padding:1.2rem; text-align:left;">
 <pre style="background:transparent; color:blue; font-size:0.9rem; border:none; padding:0; margin:0; line-height:1.6;">
-┌─────────────────────┐     ┌─────────────────────┐
-│  Train seed 1234    │ ──> │  scores/SD1234.ens  │ ─┐
-│  --save-scores      │     └─────────────────────┘  │
-└─────────────────────┘                              │
-                                                     │   ┌──────────────────┐ 
-┌─────────────────────┐     ┌─────────────────────┐  │   │  merge-ensemble  │ 
-│  Train seed 5678    │ ──> │  scores/SD5678.ens  │ ─│─> │  scores/         │ 
-│  --save-scores      │     └─────────────────────┘  │   │  → EN curve      │ 
-└─────────────────────┘                              │   └──────────────────┘ 
-                                                     │   
-┌─────────────────────┐     ┌─────────────────────┐  │
-│  Train seed 9012    │ ──> │  scores/SD9012.ens  │ ─┘
-│  --save-scores      │     └─────────────────────┘
-└─────────────────────┘               
+┌────────────────────────┐     ┌─────────────────────┐
+│  Train seed 1234       │ ──> │  scores/SD1234.ens  │ ─┐
+│  --export-merge-scores │     └─────────────────────┘  │
+└────────────────────────┘                              │
+                                                        │   ┌──────────────────┐ 
+┌────────────────────────┐     ┌─────────────────────┐  │   │  merge-ensemble  │ 
+│  Train seed 5678       │ ──> │  scores/SD5678.ens  │ ─│─> │  scores/         │ 
+│  --export-merge-scores │     └─────────────────────┘  │   │  → EN curve      │ 
+└────────────────────────┘                              │   └──────────────────┘ 
+                                                        │   
+┌────────────────────────┐     ┌─────────────────────┐  │
+│  Train seed 9012       │ ──> │  scores/SD9012.ens  │ ─┘
+│  --export-merge-scores │     └─────────────────────┘
+└────────────────────────┘               
    ... (N seeds, parallel, any time) ...
 </pre>
 </div>
@@ -292,7 +292,7 @@ parameters (H, epochs, VN, etc.) match — the tool validates this and rejects m
 <tr><td>Training time reduced by 71%</td><td>✅ gb-cache: 934s→273s (H=1024, EN=7)</td></tr>
 <tr><td>VN=2 Sweet Spot is data-dependent</td><td>✅ VN=2 for CIFAR (noisy), VN=1 for MNIST (clean)</td></tr>
 <tr><td>Multi-member Hebbian works (like Otto)</td><td>✅ 11 members, <code>--encoding latest</code></td></tr>
-<tr><td>Decoupled ensemble workflow</td><td>✅ <code>--save-scores</code> + <code>merge-ensemble</code> — train/merge fully independent</td></tr>
+<tr><td>Decoupled ensemble workflow</td><td>✅ <code>--export-merge-scores</code> + <code>merge-ensemble</code> — train/merge fully independent</td></tr>
 <tr><td>Repository consolidated under <code>otto-score-ifc/</code></td><td>✅ Complete</td></tr>
 </table>
 

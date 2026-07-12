@@ -209,7 +209,9 @@ typedef struct {
     unsigned int seed;      /* Random seed (--seed, default: 42) */
     char   exportD[256];    /* --export DIR: export directory */
     char   predictions[256]; /* --predictions FILE: export per-sample predictions (for vis-errors) */
-    char   save_scores[256]; /* --save-scores DIR: save per-member scores to archive files */
+    char   export_merge_scores[256];   /* --export-merge-scores DIR: save per-member scores to archive files */
+    char   export_scores[256]; /* --export-scores FILE: save per-sample scores (10×int64+uint8) */
+    char   export_neurons[256]; /* --export-neurons FILE: save gb_buf+Target+Offset für Adam-on-neurons */
     float  lr;              /* Step size (--lr, default: 0.05) */
     float  lr_min;          /* Min LR fraction (--lr-min, default: 0.1) */
     int    lr_step;         /* round(aa.lr * (1<<OT_PRECISION)) */
@@ -220,7 +222,7 @@ typedef struct {
     int    step_mode;       /* enum step_mode: Algorithmus (siehe oben) */
     int    stepN;           /* --step-const N: const step value (0=use lr, default: 0) */
     float  step_power;      /* --step-power F: exponent für pow/cos (default: 0.7) */
-    float  target_err;      /* --target-err F: training error target (0.0=off). Step→0 when err≤target */
+    float  gap_k;           /* --gap-k K: exp(-K×gap) Dämpfung des Steps bei Train/Eval-Gap (default: 0.0=aus) */
     int    err_rollback;    /* --err-rollback: rollback targets when err increases (default: 0) */
     int    ensembleN;       /* --ensembleN N: independent W0 copies (default: 1) */
     int    splitVN;         /* --splitVN N: vertical H split (default: 1) */
@@ -242,6 +244,7 @@ typedef struct {
     char   importD[512];    /* --import DIR: load model for inference */
     int    seed_splitmix;  /* --seed-splitmix: ignore seed_file, use splitmix64 PRNG */
     int    multi_correct;  /* --multi-correct: alle über true_k bestrafen (default: 1) */
+    int    target_random_init; /* --target-random-init: random targets statt counting (default: 0) */
     int    ensemble_seed;    /* ENS_SEED_ONCE|CONST|INCR (default: ONCE) */
     int    debug_class_voting; /* --debug-class-voting: Member × Class accuracy (end only) */
     int    debug_class_voting_all; /* --debug-class-voting-all: every epoch */
@@ -295,8 +298,8 @@ static inline void ki_parse_args(int argc, char *argv[]) {
             printf("                    const     : step_init (const=NUM: fixed step NUM)\n");
             printf("  --step-const N    alias for --step-err const=####                               (default: %d)\n", aa.stepN);
             printf("  --step-power F    alias for --step-err pow=####                                 (default: %.1f, 1.0=linear)\n", (double)aa.step_power);
-            printf("  --target-err F    Training error target (0.0=off). Step→0 when err≤target       (default: %.2f)\n", (double)aa.target_err);
-            printf("                    Soft scaling: step *= (err - target) / target\n");
+            printf("  --gap-k F         Exp(-K × gap) Dämpfung des Steps bei Overfitting-Gap           (default: %.1f)\n", (double)aa.gap_k);
+            printf("                    gap = train_err%% - eval_err%%  |  step *= exp(-K × gap)\n");
             printf("  --err-rollback    Rollback targets when training err increases                  (default: off)\n");
             printf("  --warmup N        Linear warmup epochs                                          (default: %d, 0=off)\n", aa.warmup_epochs);
             printf("  ---------------------------------------------------------------------------------------------\n");
@@ -340,13 +343,16 @@ static inline void ki_parse_args(int argc, char *argv[]) {
             printf("                    exp    exponential,\n");
             printf("                    sig    sigmoid.\n");
             printf("                    raw    no encoding (raw 8-bit bytes).\n");
-            printf("  --save-scores DIR  Save per-member scores to archive files for merge-ensemble      (default: none)\n");
+            printf("  --export-merge-scores DIR  Save per-member scores to archive files for merge    (default: none)\n");
+            printf("  --export-scores FILE  Save per-sample ensemble scores (10×int64+uint8)          (default: none)\n");
+            printf("  --export-neurons FILE  Save gb_buf+Target+Offset per member (v3) for Adam..     (default: none)\n");
             printf("  --export DIR      Export directory                                              (default: none)\n");
             printf("  --import DIR      Load model for inference                                      (default: none)\n");
             printf("  --predictions FILE                                                              (default: none)\n");
             printf("                    Export per-sample predictions (for vis-errors, eval only)\n");
             printf("  --optional target-norm  Vote normalisierung (equal voting power)                (default: off)\n");
             printf("  --?no-?multi-correct  Only punish argmax, not all over true_k                   (default: multi-correct)\n");
+            printf("  --?no-?target-random-init  Random targets statt counting (correction baut auf)  (default: off)\n");
             printf("  ---------------------------------------------------------------------------------------------\n");
             printf("  --dry-run         Print architecture and exit                                   (default: off)\n");
             printf("  --quick           5000 train / 2000 eval\n");
@@ -421,10 +427,9 @@ static inline void ki_parse_args(int argc, char *argv[]) {
             aa.step_power = (float)atof(argv[++i]);
             if (aa.step_power < 0.0f) aa.step_power = 0.0f;
             aa.step_mode = STEP_POW;
-        } else if (strcmp(argv[i], "--target-err") == 0 && i + 1 < argc) {
-            aa.target_err = (float)atof(argv[++i]);
-            if (aa.target_err < 0.0f) aa.target_err = 0.0f;
-            if (aa.target_err > 1.0f) aa.target_err = 1.0f;
+        } else if (strcmp(argv[i], "--gap-k") == 0 && i + 1 < argc) {
+            aa.gap_k = (float)atof(argv[++i]);
+            if (aa.gap_k < 0.0f) aa.gap_k = 0.0f;
         } else if (strcmp(argv[i], "--err-rollback") == 0) {
             aa.err_rollback = 1;
         } else if (strcmp(argv[i], "--iter") == 0 && i + 1 < argc) {
@@ -440,10 +445,16 @@ static inline void ki_parse_args(int argc, char *argv[]) {
         } else if (strcmp(argv[i], "--predictions") == 0 && i + 1 < argc) {
             strncpy(aa.predictions, argv[++i], sizeof(aa.predictions) - 1);
             aa.predictions[sizeof(aa.predictions) - 1] = '\0';
-        } else if (strcmp(argv[i], "--save-scores") == 0 && i + 1 < argc) {
-            if (i + 1 >= argc) { fprintf(stderr, "[ERROR] --save-scores DIR\n"); exit(1); }
-            strncpy(aa.save_scores, argv[++i], sizeof(aa.save_scores) - 1);
-            aa.save_scores[sizeof(aa.save_scores) - 1] = '\0';
+        } else if (strcmp(argv[i], "--export-merge-scores") == 0 && i + 1 < argc) {
+            if (i + 1 >= argc) { fprintf(stderr, "[ERROR] --export-merge-scores DIR\n"); exit(1); }
+            strncpy(aa.export_merge_scores, argv[++i], sizeof(aa.export_merge_scores) - 1);
+            aa.export_merge_scores[sizeof(aa.export_merge_scores) - 1] = '\0';
+        } else if (strcmp(argv[i], "--export-scores") == 0 && i + 1 < argc) {
+            strncpy(aa.export_scores, argv[++i], sizeof(aa.export_scores) - 1);
+            aa.export_scores[sizeof(aa.export_scores) - 1] = '\0';
+        } else if (strcmp(argv[i], "--export-neurons") == 0 && i + 1 < argc) {
+            strncpy(aa.export_neurons, argv[++i], sizeof(aa.export_neurons) - 1);
+            aa.export_neurons[sizeof(aa.export_neurons) - 1] = '\0';
         } else if (strcmp(argv[i], "--import") == 0 || strcmp(argv[i], "--import") == 0) {
             if (i + 1 >= argc) { fprintf(stderr, "[ERROR] --import DIR\n"); exit(1); }
             strncpy(aa.importD, argv[++i], sizeof(aa.importD) - 1);
@@ -534,6 +545,10 @@ static inline void ki_parse_args(int argc, char *argv[]) {
             aa.multi_correct = 1;
         } else if (strcmp(argv[i], "--no-multi-correct") == 0) {
             aa.multi_correct = 0;
+        } else if (strcmp(argv[i], "--target-random-init") == 0) {
+            aa.target_random_init = 1;
+        } else if (strcmp(argv[i], "--no-target-random-init") == 0) {
+            aa.target_random_init = 0;
         } else if (strcmp(argv[i], "--channels") == 0 && i + 1 < argc) {
             const char *val = argv[++i];
             int mask = 0;

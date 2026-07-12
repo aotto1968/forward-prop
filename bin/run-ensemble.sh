@@ -10,7 +10,7 @@
 #   1. Creates scores/ directory if missing
 #   2. Scans scores/*.ens for existing seeds (from SD{seed} in filenames)
 #   3. Generates a random seed NOT in the used set
-#   4. Appends --seed <new_seed> --save-scores scores/ to your command
+#   4. Appends --seed <new_seed> --export-merge-scores scores/ to your command
 #   5. Runs the command and reports the chosen seed
 #
 # Examples:
@@ -33,7 +33,7 @@ show_help() {
 Usage: bash ${SCRIPT_NAME} [options] <training-command> [flags...]
 
 Runs a training command with an automatically chosen non-conflicting --seed
-and --save-scores scores/ appended (unless --save-scores is already given).
+and --export-merge-scores scores/ appended (unless --export-merge-scores is already given).
 
 Options:
   -h, --help       Show this help text
@@ -49,7 +49,7 @@ Examples:
       --hiddenN 512 --epochsN 3 --splitVN 2 --target-err 0.4
 
   bash ${SCRIPT_NAME} ./cifar-mlp-bin32-otto-trn-xnor.exe \\
-      --hiddenN 1024 --epochsN 7 --encoding latest --save-scores scores-1024/
+      --hiddenN 1024 --epochsN 7 --encoding latest --export-merge-scores scores-1024/
 
 The scores/ directory can later be merged with:
   ./cifar-merge-ensemble.exe scores/
@@ -103,13 +103,13 @@ fi
 
 TRAINING_CMD=("$@")
 
-# ── Check if user already specified --save-scores in command ──
+# ── Check if user already specified --export-merge-scores in command ──
 HAS_SAVE_SCORES=0
 for arg in "${TRAINING_CMD[@]}"; do
     if [ "${HAS_SAVE_SCORES}" = "1" ]; then
         SCORES_DIR="${arg}"
         HAS_SAVE_SCORES=2
-    elif [ "${arg}" = "--save-scores" ]; then
+    elif [ "${arg}" = "--export-merge-scores" ]; then
         HAS_SAVE_SCORES=1
     fi
 done
@@ -160,11 +160,11 @@ run_one() {
     echo "[${SCRIPT_NAME}] Using seed=${new_seed}  (${total_used} existing seeds in ${scores_dir}/)"
 
     if [ "${HAS_SAVE_SCORES}" -ge 1 ]; then
-        # User specified --save-scores, just add --seed
+        # User specified --export-merge-scores, just add --seed
         "${cmd[@]}" --seed "${new_seed}"
     else
-        # Default: append --save-scores scores/
-        "${cmd[@]}" --seed "${new_seed}" --save-scores "${scores_dir}"
+        # Default: append --export-merge-scores scores/
+        "${cmd[@]}" --seed "${new_seed}" --export-merge-scores "${scores_dir}"
     fi
     local rc=$?
 

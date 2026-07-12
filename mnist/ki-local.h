@@ -19,6 +19,7 @@
  * CONSTANTS — MNIST
  * ═══════════════════════════════════════════════════════════════════════ */
 
+#define KI_DATASET_ID             0       /* unique for cache key */
 #define KI_PX                   784
 #define KI_NCLASSES             10
 #define KI_DEFAULT_LR           0.05f   /* → step = 0.05 × 131072 = 6554 */
@@ -56,6 +57,8 @@ typedef struct {
     uint8_t *X_raw;   /* [num_images * pixels] raw uint8 [0,255] */
     uint8_t *y;       /* [num_images] labels */
     int dry_run;      /* skip pixel data (fast metadata only) */
+    int n_train;      /* default training count (set by loader) */
+    int n_eval;       /* default eval count (set by loader) */
 } ki_MNISTData;
 
 /* Generic dataset aliases (used by ki-common.h) */
@@ -161,6 +164,8 @@ static int ki_mnist_read(ki_MNISTData *out) {
     }
 
     out->num_images = num_img;
+    out->n_train = num_img;         /* all loaded images for training */
+    out->n_eval = 10000;            /* test set (t10k) */
     out->rows = rows;
     out->cols = cols;
     out->pixels = pixels;

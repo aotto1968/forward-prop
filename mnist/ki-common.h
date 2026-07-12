@@ -376,7 +376,8 @@ static inline void ki_parse_args(int argc, char *argv[]) {
             aa.hidden = atoi(argv[++i]);
         } else if (strcmp(argv[i], "--epochsN") == 0 && i + 1 < argc) {
             aa.epochs = atoi(argv[++i]);
-            if (aa.epochs == 0) aa.dry_run = 1;
+            /* NOTE: epochs=0 bedeutet "counting-only + eval, kein Training".
+             * Nicht mit dry-run koppeln — --dry-run muss explizit sein. */
         } else if (strcmp(argv[i], "--batchN") == 0 && i + 1 < argc) {
             aa.batchN = atoi(argv[++i]);
             if (aa.batchN < 1) aa.batchN = 1;

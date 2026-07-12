@@ -1,6 +1,6 @@
 # Otto Score — DRAM-Native MLP Classifier
 
-**MNIST: 99.0%  |  CIFAR-10: 61.62%** — Zero floating point, zero matmul in inference.
+**MNIST: 99.0% in 4s  |  CIFAR-10: 61.2% single-run / 61.66% ensemble** — Zero floating point, zero matmul in inference.
 Only `&|~` + int32 + popcount. Also includes float32 AdamW + multi-member Hebbian baselines.
 
 ---
@@ -331,8 +331,8 @@ from `ki-local.h` (color RGB for CIFAR, grayscale for MNIST).
 
 | Approach                | MNIST     | CIFAR-10   | Hardware Target  |
 | ----------------------- | --------- | ---------- | ---------------- |
-| Otto Score (single)     | **99.0%** | **61.0%**  | DRAM (bit-logic) |
-| Otto Score (ensemble)   | 99.0%     | **61.62%** | DRAM (bit-logic) |
+| Otto Score (single)     | **99.0%** | **61.2%**  | DRAM (bit-logic) |
+| Otto Score (ensemble)   | 99.0%     | **61.66%** | DRAM (bit-logic) |
 | Bin32 Hebbian (bitwise) | 84.4%     | 32.4%      | DRAM (bit-logic) |
 | Float32 AdamW (matmul)  | 92.6%     | 41.2%      | CPU/GPU          |
 
@@ -346,10 +346,9 @@ from `ki-local.h` (color RGB for CIFAR, grayscale for MNIST).
 
 | Configuration                                             | Dataset  | Accuracy   | Time                            |
 | --------------------------------------------------------- | -------- | ---------- | ------------------------------- |
-| H=128, EN=7, ep=8, `--encoding exp8,log8,sig8`, evalN=100 | MNIST    | **99.0%**  | ~30s                            |
-| H=1024, EN=7, ep=7, `--splitVN 2`, `--encoding latest`    | CIFAR-10 | **61.2%**  | **273s** (−71% via gb-cache)    |
-| H=1024, 17 seeds, VN=2, `--encoding latest` (Ensemble)    | CIFAR-10 | **61.62%** | merge-ensemble                  |
-| H=4094, EN=3, ep=7, VN=2, target-err=0.4 (single)         | CIFAR-10 | **61.0%**  | 603s                            |
+| H=128, EN=7, ep=6, `--encoding exp`, evalN=100            | MNIST    | **99.0%**  | **4s**                          |
+| H=1024, EN=7, ep=7, `--splitVN 2`, `--encoding latest`    | CIFAR-10 | **61.2%**  | 273s (single run)               |
+| H=1024, 132 filtered members, VN=2, `--encoding latest`   | CIFAR-10 | **61.66%** | merge-ensemble (6166/10000)      |
 
 ### Ensemble Workflow (quick overview)
 

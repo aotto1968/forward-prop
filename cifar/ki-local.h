@@ -18,6 +18,9 @@
  * CONSTANTS — CIFAR-10
  * ═══════════════════════════════════════════════════════════════════════ */
 
+#ifndef KI_DATASET_ID
+#define KI_DATASET_ID             1       /* unique for cache key (overridable) */
+#endif
 #define KI_PX                     3072    /* 32 × 32 × 3 = 3072 pixels per image */
 #define KI_NCLASSES               10
 #define KI_DEFAULT_LR             0.01f   /* → step = 0.005 × 131072 = 655 (großes lr fürhrt zu starken trn und schwachem evl*/
@@ -136,6 +139,8 @@ typedef struct {
     uint8_t *X_raw;    /* [num_images * pixels] raw uint8 [0,255] */
     uint8_t *y;        /* [num_images] labels */
     int dry_run;       /* skip pixel data (fast metadata only) */
+    int n_train;       /* default training count (set by loader) */
+    int n_eval;        /* default eval count (set by loader) */
 } ki_ImageData;
 
 /* Generic dataset aliases (used by ki-common.h) */
@@ -192,6 +197,8 @@ static int ki_cifar_read(ki_ImageData *out) {
     out->channels = 3;
     out->pixels   = KI_PX;
     out->num_images = 60000;
+    out->n_train  = 50000;
+    out->n_eval   = 10000;
 
     if (dry_run) {
         printf("  [CIFAR-10] dry-run: 60000 samples (%d px, 3 channels) — 5 train + 1 test batch\n", KI_PX);

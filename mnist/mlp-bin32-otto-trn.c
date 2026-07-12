@@ -257,8 +257,8 @@ ki_Args aa = {
     .hidden             = 64,
     .epochs             = 1,
     .batchN             = KI_DEFAULT_BATCH_N,
-    .trainN             = 50000,
-    .evalN              = 10000,
+    .trainN             = 0,      /* auto: set from dataset default */
+    .evalN              = 0,      /* auto: set from dataset default */
     .seed               = 42,
     .lr                 = KI_DEFAULT_LR,
     .threadN            = 8,
@@ -1881,6 +1881,9 @@ static uint32_t input_cache_hash(void) {
     h = h * 31 + (uint32_t)KI_NC;
     h = h * 31 + (uint32_t)KI_PX;
     h = h * 31 + (uint32_t)KI_COLORS;
+#ifdef KI_DATASET_ID
+    h = h * 31 + (uint32_t)KI_DATASET_ID;
+#endif
     return h;
 }
 
@@ -2051,6 +2054,10 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "[FATAL] Expected %d pixels, got %d\n", KI_PX, data.pixels);
         ki_dataset_free(&data); return 1;
     }
+
+    /* ── Use dataset defaults if not explicitly set ── */
+    if (aa.trainN <= 0 && data.n_train > 0) aa.trainN = data.n_train;
+    if (aa.evalN  <= 0 && data.n_eval  > 0) aa.evalN  = data.n_eval;
 
     int total_train = aa.trainN;
     int total_eval  = aa.evalN;
@@ -2395,6 +2402,11 @@ int main(int argc, char *argv[]) {
         if (total_eval > 0) {
             for (int _b = 0; _b < active_members; _b++)
                 ki_member_compute_gb_te(members[_b], X_te, total_eval, (int)n_cont);
+        }
+        /* h0_buf nach gb-Berechnung freigeben — wird danach nie mehr gebraucht */
+        for (int _b = 0; _b < active_members; _b++) {
+            ki_Member *mem = members[_b];
+            if (mem->h0_buf) { free(mem->h0_buf); mem->h0_buf = NULL; }
         }
     }
     gettimeofday(&_tv1, NULL);

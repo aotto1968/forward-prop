@@ -2,20 +2,20 @@
  * mnist-1/mlp-otto-vis-errors.c — Error Visualizer (MNIST + CIFAR-10)
  * ==============================================================
  *
- * Lädt ein trainiertes Modell (predictions-Datei), berechnet für
- * einen Index-Bereich alle Sample-Bilder und exportiert sie als
- * PNG (grayscale für MNIST, color RGB für CIFAR-10) + index.html
+ * Loads a trained model.*predictions file.*computes for
+ * all sample images for an index range and exports them as
+ * PNG (grayscale for MNIST, color RGB for CIFAR-10) + index.html
  * mit Fehler-Markierung.
  *
- * PNG writer ist dataset-spezifisch: ki_write_png() aus ki-local.h.
+ * PNG writer is dataset-specific.*from ki-local.h.
  *
  * Usage:
  *   ./tool --predictions FILE --export vis/
- *   → vis/index.html  (alle Samples, nach Klasse sortiert, Fehler rot)
+ *   → vis/index.html  (all samples.*sorted by class.*errors in red)
  *
  * Predictions-Format (vom Trainer via --predictions):
  *   uint32 magic = 'PRED' (0x44455250)
- *   uint32 N     = Anzahl Samples
+ *   uint32 N     = number of Samples
  *   uint8[N] preds = vorhergesagte Klassen
  */
 #include "ki-common.h"

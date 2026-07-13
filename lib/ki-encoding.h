@@ -1,25 +1,25 @@
 /*
- * lib/ki-encoding.h — Thermometer Encoding für DRAM-native MLP
+ * lib/ki-encoding.h — Thermometer Encoding for DRAM-native MLP
  * ===============================================================
  *
- * Self-contained Header für das Thermometer-Encoding von Pixelwerten.
- * Keine Abhängigkeit von ki_Args, ki-common.h oder Otto Score.
+ * Self-contained Header for thermometer Encoding von Pixelwerten.
+ * No dependency von ki_Args, ki-common.h oder Otto Score.
  *
- * Enthält:
+ * Contains:
  *   enum ki_encoding         — Encoding-Typen (RAW, LIN7, …, SIG)
  *   ki_enc_parse()           — String → (encoding, width)
  *   ki_apply_enc_w()         — Pixel (0..255) → Thermometer-Bitmaske
  *   enc_lut_init_enc()       — LUT vorberechnen
  *   enc_lut_get()            — schneller LUT-Lookup
  *   enum ki_color_bit        — Farbblock-Definitionen
- *   COLOR_NB                 — Anzahl Blöcke
+ *   COLOR_NB                 — number of Blöcke
  *   ki_blocks_from_rgb()     — RGB → Block-Array
- *   ki_color_name()          — Blockname für Display
+ *   ki_color_name()          — Blockname for display
  *
  * Usage:
  *   1. #include "ki-encoding.h"
- *   2. enc_lut_init_enc(KI_ENC_EXP, 8);  // einmalig
- *   3. uint32_t bits = enc_lut_get(KI_ENC_EXP, 8, pixel);  // pro Pixel
+ *   2. enc_lut_init_enc(KI_ENC_EXP, 8);  // once
+ *   3. uint32_t bits = enc_lut_get(KI_ENC_EXP, 8, pixel);  // per pixel
  */
 #ifndef KI_ENCODING_H
 #define KI_ENCODING_H
@@ -37,24 +37,24 @@ extern "C" {
  * ENCODING TYPES
  * ═══════════════════════════════════════════════════════════════════════ */
 
-/* ── Thermometer-Encoding: popcount(encode(pv)) ∝ Helligkeit ──── */
+/* ── Thermometer encoding: popcount(encode(pv)) ∝ brightness ──── */
 enum ki_encoding {
-    KI_ENC_RAW  = 0,   /* Roher Pixelwert (0..255), keine Transformation */
-    KI_ENC_LIN7 = 1,   /* Gleichmäßig, 7 Stufen (pv>>5 → popcount=1..7)  */
-    KI_ENC_LIN8 = 2,   /* Gleichmäßig, 8 Stufen (pv*8>>8 → popcount=1..8) */
-    KI_ENC_DOWN = 3,   /* Unten-betont (mehr Auflösung in Schatten)       */
-    KI_ENC_UP   = 4,   /* Oben-betont (mehr Auflösung in Lichtern)        */
-    KI_ENC_MID  = 5,   /* Mittig-betont (mehr Auflösung in Mitteltönen)   */
-    KI_ENC_LOG  = 6,   /* Logarithmisch (natürliche Helligkeitswahrnehmung) */
-    KI_ENC_EXP  = 7,   /* Exponentiell (stark oben betont)                */
-    KI_ENC_SIG  = 8,   /* S-förmig (Sigmoid, sanfter Übergang)            */
+    KI_ENC_RAW  = 0,   /* Raw pixel value (0..255), keine Transformation */
+    KI_ENC_LIN7 = 1,   /* Uniform, 7 Stufen (pv>>5 → popcount=1..7)  */
+    KI_ENC_LIN8 = 2,   /* Uniform, 8 Stufen (pv*8>>8 → popcount=1..8) */
+    KI_ENC_DOWN = 3,   /* Bottom-weighted (more resolution in shadows)       */
+    KI_ENC_UP   = 4,   /* Top-weighted (more resolution in highlights)        */
+    KI_ENC_MID  = 5,   /* Mid-weighted (more resolution in midtones)   */
+    KI_ENC_LOG  = 6,   /* Logarithmisch (natural brightness perception) */
+    KI_ENC_EXP  = 7,   /* Exponentiell (heavily top-weighted)                */
+    KI_ENC_SIG  = 8,   /* S-shaped (Sigmoid, smooth transition)            */
     KI_ENC_COUNT = 9
 };
 
 #define KI_ENC_WIDTH_DEFAULT 8
 
 /* ═══════════════════════════════════════════════════════════════════════
- * ENCODING NAMES (für Display)
+ * ENCODING NAMES (for display)
  * ═══════════════════════════════════════════════════════════════════════ */
 
 /* ── Kurzname (ohne Width-Suffix) ──────────────────────────────── */
@@ -122,11 +122,11 @@ static inline int ki_enc_parse(const char *tok, int *out_width) {
 /* ═══════════════════════════════════════════════════════════════════════
  * APPLY ENCODING — Pixel (0..255) → Thermometer-Bitmaske
  * ═══════════════════════════════════════════════════════════════════════
- * Jedes Encoding wandelt einen 8-Bit-Pixelwert in eine Bitmaske um,
- * deren popcount proportional zur Helligkeit ist.
+ * Each encoding converts an 8-bit pixel value into a bitmask,
+ * whose popcount is proportional to brightness.
  *
- * width = Ausgabebreite in Bits (8, 16, 32)
- * LOG/EXP/SIG verwenden float — für Host-Training (nicht DRAM). */
+ * width = output width in bits (8, 16, 32)
+ * LOG/EXP/SIG verwenden float — for host training (nicht DRAM). */
 
 static inline uint32_t ki_apply_enc_w(uint8_t pv, int enc, int width) {
     int max_lev;
@@ -204,13 +204,13 @@ static inline uint8_t ki_apply_enc(uint8_t pv, int enc) {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
- * ENCODING LOOKUP TABLE (LUT) — vorberechneter Fast-Path
+ * ENCODING LOOKUP TABLE (LUT) — precomputed fast path
  * ═══════════════════════════════════════════════════════════════════════
- * Ersetzt on-the-fly powf()/expf() in ki_apply_enc_w() mit
+ * Replaces on-the-fly powf()/expf() in ki_apply_enc_w() mit
  * einer 256-Eintrag-Tabelle pro (encoding, width)-Kombination.
  *
  * Covers all 9 encodings × 3 widths (8, 16, 32) = 27 tables × 256 = 27 KB.
- * Initialisiert über BSS = 0, daher _rdy-Flag nötig. */
+ * Initialized via BSS = 0, hence needed. */
 
 #define _KI_ENC_NENC  9
 #define _KI_ENC_NWI   3
@@ -231,18 +231,18 @@ static inline void enc_lut_init_enc(int enc, int width) {
         _enc_lut_tab[enc][wi][pv] = ki_apply_enc_w((uint8_t)pv, enc, width);
 }
 
-/* ── Schneller Lookup (Tabelle muss initialisiert sein) ─────── */
+/* ── Fast lookup (Tabelle must be initialized) ─────── */
 static inline uint32_t enc_lut_get(int enc, int width, uint8_t pv) {
     return _enc_lut_tab[enc][_enc_lut_wi(width)][pv];
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
- * COLOR DEFINITIONS — Bit-Positionen für Farb-Analyse-Blöcke
+ * COLOR DEFINITIONS — Bit positions for color analysis blocks
  * ═══════════════════════════════════════════════════════════════════════
  *
- * Jeder Analyse-Block hat eine feste Bit-Position (0..COLOR_NB-1).
- * Bit 0 (COLOR_MNIST) ist der einzelne Graustufen-Block für MNIST.
- * Alle anderen Blöcke (R,G,B,Y,…) sind um 1 verschoben.
+ * Each analysis block has a fixed bit position (0..COLOR_NB-1).
+ * Bit 0.*is the single grayscale block for MNIST.
+ * Alle anderen Blöcke (R,G,B,Y,…) are shifted by 1.
  *
  * Default-Masken:
  *   CIFAR: r+g+b = (1<<COLOR_R)|(1<<COLOR_G)|(1<<COLOR_B) = 0x0E
@@ -265,21 +265,21 @@ enum ki_color_bit {
     COLOR_BM    = 13,  /* R-B opponent */
     COLOR_BP    = 14,  /* G-(R+B)/2 opponent */
 
-    COLOR_H     = 15,  /* Hue (Farbwinkel) */
-    COLOR_S     = 16,  /* Saturation (Farbsättigung) */
+    COLOR_H     = 15,  /* Hue */
+    COLOR_S     = 16,  /* Saturation */
     COLOR_C     = 17,  /* Contrast (chromatische Varianz) */
 
     COLOR_CL    = 18,  /* (G+B)>>1 */
     COLOR_CM    = 19,  /* G-B opponent */
     COLOR_CP    = 20,  /* R-(G+B)/2 opponent */
 
-    COLOR_EDGE  = 21,  /* Sobel-Kanten auf Y-Luminanz (für --channels edge) */
-    COLOR_BIN   = 22,  /* Otsu-binarisiertes Y (filled black/white) */
+    COLOR_EDGE  = 21,  /* Sobel edges on Y luminance (für --channels edge) */
+    COLOR_BIN   = 22,  /* Otsu-binarized Y (filled black/white) */
 
-    COLOR_NB    = 23   /* Anzahl Farben */
+    COLOR_NB    = 23   /* number of Farben */
 };
 
-/* ── Block-Namen für Display ────────────────────────────────── */
+/* ── Block-Namen for display ────────────────────────────────── */
 static inline const char *ki_color_name(int bit) {
     static const char *names[COLOR_NB] = {
         [COLOR_MNIST] = "mnist",
@@ -310,14 +310,14 @@ static inline const char *ki_color_name(int bit) {
     return "?";
 }
 
-/* ── clamp auf 0..255 (Helfer für ki_blocks_from_rgb) ───────── */
+/* ── clamp to 0..255 (helper for ki_blocks_from_rgb) ───────── */
 static inline int ki_clamp_u8(int x) {
     return (x < 0) ? 0 : (x > 255) ? 255 : x;
 }
 
-/* ── RGB → Block-Array (CIFAR: 21 Blöcke pro Pixel) ──────────
- * Berechnet alle 21 Farb-Analyse-Blöcke aus R,G,B (0..255).
- * Die Blöcke werden im Array `blocks[COLOR_NB]` abgelegt,
+/* ── RGB.*blocks per pixel) ──────────
+ * Computes all 21 color analysis blocks aus R,G,B (0..255).
+ * The blocks are stored
  * indiziert via enum ki_color_bit. */
 static inline void ki_blocks_from_rgb(int r, int g, int b, uint8_t blocks[COLOR_NB]) {
     unsigned int ru = (unsigned int)r;
@@ -358,11 +358,11 @@ static inline void ki_blocks_from_rgb(int r, int g, int b, uint8_t blocks[COLOR_
         if (b > mx) { mx = b; } if (b < mn) { mn = b; }
         blocks[COLOR_S] = (uint8_t)(mx - mn);
     }
-    /* Contrast (wird nach Sobel in load_input berechnet — hier Platzhalter) */
+    /* Contrast.*computed by Sobel in load_input.*placeholder) */
     blocks[COLOR_C] = (uint8_t)r;
-    /* Edge (wird nach Sobel in load_input berechnet — hier Platzhalter) */
+    /* Edge.*computed by Sobel in load_input.*placeholder) */
     blocks[COLOR_EDGE] = 0;
-    /* Binary (wird nach Otsu in load_input berechnet — hier Platzhalter) */
+    /* Binary.*computed by Otsu in load_input.*placeholder) */
     blocks[COLOR_BIN] = 0;
 
     blocks[COLOR_CL] = (uint8_t)((g + b) >> 1);
@@ -373,15 +373,15 @@ static inline void ki_blocks_from_rgb(int r, int g, int b, uint8_t blocks[COLOR_
 /* ═══════════════════════════════════════════════════════════════════════
  * PRINT MEMBER STRUCTURE — unified format für Otto/Hebbian/Adam
  * ═══════════════════════════════════════════════════════════════════════
- * Gibt eine konsistente Member-Liste aus:
+ * Prints a consistent Member-Liste aus:
  *   Structure: M0(COL=ENC_WIDTH), M1(COL=ENC_WIDTH), ...
  *
  * Parameter:
- *   colors[]  — ki_color_bit für jeden Member (-1 = unbekannt)
+ *   colors[]  — ki_color_bit for each member (-1 = unbekannt)
  *   types[]   - Encoding-Typ (-1 = kein Encoding)
  *   widths[]  - Encoding-Breite (-1 = unbekannt)
- *   n         - Anzahl Members
- *   ens       - Ensemble-Zahl (für Display: × EN=ens)
+ *   n         - number of Members
+ *   ens       - ensemble count (for display: × EN=ens)
  */
 static inline void ki_print_member_structure(const int *colors,
                                                const int *types,
@@ -405,10 +405,10 @@ static inline void ki_print_member_structure(const int *colors,
 /* ═══════════════════════════════════════════════════════════════════════
  * EDGE DETECTION — Sobel 3×3 auf Y-Luminanz
  * ═══════════════════════════════════════════════════════════════════════
- * Erwartet: px[COLOR_NB][1024] mit gültigem COLOR_Y (ITU-601 Y).
- * Berechnet: COLOR_EDGE (Sobel-Magnitude) + COLOR_C (Sobel auf AL).
- * px wird IN PLACE aktualisiert. Aufruf NACH ki_blocks_from_rgb().
- * w=32, h=32 (CIFAR-10 Auflösung).
+ * Expects: px[COLOR_NB][1024] mit gültigem COLOR_Y (ITU-601 Y).
+ * Computes: COLOR_EDGE (Sobel-Magnitude) + COLOR_C (Sobel auf AL).
+ * px is updated IN PLACE. Call AFTER ki_blocks_from_rgb().
+ * w=32, h=32 (CIFAR-10 resolution).
  */
 __attribute__((unused))
 static inline void ki_compute_edge(uint8_t px[COLOR_NB][1024], int w, int h) {
@@ -428,7 +428,7 @@ static inline void ki_compute_edge(uint8_t px[COLOR_NB][1024], int w, int h) {
                 px[COLOR_EDGE][i] = (uint8_t)mag;
             }
         }
-        /* Border-Pixel: nächsten Wert kopieren */
+        /* Border: copy nearest pixel */
         for (int y = 0; y < h; y++) {
             px[COLOR_EDGE][y*w]     = px[COLOR_EDGE][y*w+1];
             px[COLOR_EDGE][y*w+w-1] = px[COLOR_EDGE][y*w+w-2];
@@ -454,7 +454,7 @@ static inline void ki_compute_edge(uint8_t px[COLOR_NB][1024], int w, int h) {
                 px[COLOR_C][i] = (uint8_t)mag;
             }
         }
-        /* Border-Pixel: nächsten Wert kopieren */
+        /* Border: copy nearest pixel */
         for (int y = 0; y < h; y++) {
             px[COLOR_C][y*w]     = px[COLOR_C][y*w+1];
             px[COLOR_C][y*w+w-1] = px[COLOR_C][y*w+w-2];
@@ -469,14 +469,14 @@ static inline void ki_compute_edge(uint8_t px[COLOR_NB][1024], int w, int h) {
 /* ═══════════════════════════════════════════════════════════════════════
  * BINARY THRESHOLD — Otsu auf Y-Luminanz → filled black/white
  * ═══════════════════════════════════════════════════════════════════════
- * Erwartet: px[COLOR_NB][1024] mit gültigem COLOR_Y (ITU-601 Y).
- * Berechnet: COLOR_BIN (Otsu-binarisiert: 0 oder 255).
- * px wird IN PLACE aktualisiert. Aufruf NACH ki_blocks_from_rgb().
- * w=32, h=32 (CIFAR-10 Auflösung).
+ * Expects: px[COLOR_NB][1024] mit gültigem COLOR_Y (ITU-601 Y).
+ * Computes: COLOR_BIN (Otsu-binarisiert: 0 oder 255).
+ * px is updated IN PLACE. Call AFTER ki_blocks_from_rgb().
+ * w=32, h=32 (CIFAR-10 resolution).
  *
- * Otsu's Method: Findet den Threshold T der die intra-class Varianz
- * minimiert (bzw. inter-class Varianz maximiert). Liefert ein
- * "filled" Schwarz/Weiss-Bild — Objekt-Regionen sind 255, Hintergrund 0.
+ * Otsu's Method: Finds threshold T that minimizes intra-class variance
+ * minimiert (bzw. inter-class Varianz maximiert). Returns a
+ * "filled" Schwarz/Weiss-Bild — Object regions sind 255, background 0.
  */
 __attribute__((unused))
 static inline void ki_compute_binary(uint8_t px[COLOR_NB][1024], int w, int h) {
@@ -486,7 +486,7 @@ static inline void ki_compute_binary(uint8_t px[COLOR_NB][1024], int w, int h) {
     for (int p = 0; p < N; p++)
         hist[px[COLOR_Y][p]]++;
 
-    /* Otsu: Finde Threshold T der sigma_b^2 maximiert */
+    /* Otsu: find threshold T that maximizes sigma_b² */
     int total = N;
     float sum = 0.0f;
     for (int i = 0; i < 256; i++) sum += (float)i * (float)hist[i];
@@ -513,7 +513,7 @@ static inline void ki_compute_binary(uint8_t px[COLOR_NB][1024], int w, int h) {
         }
     }
 
-    /* Binarisieren: Y > threshold → 255, sonst 0 */
+    /* Binarize: Y > threshold → 255, otherwise 0 */
     for (int p = 0; p < N; p++)
         px[COLOR_BIN][p] = (px[COLOR_Y][p] > threshold) ? 255 : 0;
 }

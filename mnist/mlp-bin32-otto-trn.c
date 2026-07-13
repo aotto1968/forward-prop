@@ -30,7 +30,7 @@
     ((size_t)(h) * (size_t)(V) * KI_NCLASSES + (size_t)(v) * KI_NCLASSES + (size_t)(k))
 #endif
 
-/* ── VN-Dispatch-Makro (generiert switch über splitVN-Werte) ── */
+/* ── VN dispatch macro (generates switch over splitVN values) ── */
 #define VN_DISPATCH(func, G, args...) do {                          \
     switch (G) {                                                    \
         case 1:  func ## _vn1(args); break;                         \
@@ -249,7 +249,7 @@
 } while (0)
 
 /* ── Forward declaration für ki_Member (Struct-Definition folgt
- * weiter unten, ki_evaluate_member steht davor) ───────────── */
+ * below, ki_evaluate_member is declared before) ───────────── */
 typedef struct ki_Member ki_Member;
 
 /* ── Global args (initialisiert in main) ────────────────────── */
@@ -271,7 +271,7 @@ ki_Args aa = {
     .splitHN            = 1,
     .channel            = KI_DEFAULT_COLOR,/* CIFAR: r+g+b, MNIST: nur Block 0 */
     .packedB            = 1,
-    .enc_default_type   = -1,    /* -1 = auto: falls bin→KI_ENC_LIN7, sonst KI_ENC_RAW */
+    .enc_default_type   = -1,    /* -1 = auto: falls bin→KI_ENC_LIN7, otherwise KI_ENC_RAW */
     .enc_default_width  = KI_ENC_WIDTH_DEFAULT,
     .enc_count          = 0,     /* 0 = kein enc_array (legacy single) */
     .opt_target_norm    = KI_DEFAULT_TARGET_NORM,
@@ -288,19 +288,19 @@ ki_Args aa = {
  *
  * ── INPUT-BUFFER LAYOUT (CIFAR, linear, 1 Bild = 7 × KI_NC uint32) ──
  *
- *   Block | Bit | Name | Formel (pro Pixel)         | Mapping auf 0..255
+ *   Block | Bit | Name | Formel (per pixel)         | Mapping auf 0..255
  *   ------|-----|------|----------------------------|-------------------
  *     0   |  0  |  R   | roter Rohpixel             | r
- *     1   |  1  |  G   | grüner Rohpixel            | g
+ *     1   |  1  |  G   | green raw pixel            | g
  *     2   |  2  |  B   | blauer Rohpixel            | b
  *     3   |  3  |  Y   | ITU-R BT.601               | (r*77+g*150+b*29)>>8
  *     4   |  4  |  LUM | R+G Luminanz               | (r+g)>>1
- *     5   |  5  |  RG  | R-G Rot-Grün Opponent      | (r-g+255)>>1
+ *     5   |  5  |  RG  | R-G red-green opponent      | (r-g+255)>>1
  *     6   |  6  |  BY  | B-(R+G)/2 Blau-Gelb Opp.   | (2b-r-g+510)>>2
  *
  *   Buffer: [R(256)][G(256)][B(256)][Y(256)][LUM(256)][RG(256)][BY(256)][YL(256)]
  *           ↑0      ↑256   ↑512   ↑768   ↑1024    ↑1280    ↑1536    ↑1792
- *   n_cont = 8×256 = 2048 (FIXED, immer alle Blöcke)
+ *   n_cont = 8×256 = 2048 (FIXED, always all blocks)
  *
  *   Block | Bit | Name | Formel
  *   ------|-----|------|----------------------------
@@ -315,20 +315,20 @@ ki_Args aa = {
  *
  * ── MEMBER-INDIZIERUNG ──────────────────────────────────────────────
  *   active_chans[] = 1:1 Mapping aus Bitmaske (b→Block b).
- *   Für jeden Member m:
+ *   For each member m:
  *     seq_chan  = (m / splitHN) % eff_colors
  *     block     = active_chans[seq_chan]            // 0..7
  *     h_idx     = m % splitHN
  *     nc_off    = block * KI_NC + h_idx * NC_slice
  */
-/* Anzahl Container-Blöcke = Anzahl Farben (COLOR_NB, dynamisch) */
+/* number of container blocks = number of colors (COLOR_NB, dynamic) */
 #define KI_NB COLOR_NB
 
 static __attribute__((unused)) uint32_t *load_input(const uint8_t *X_raw,
                                                      int n_samples) {
     (void)n_samples;
 #if KI_COLORS > 1
-    /* ── CIFAR: immer über enc_array (nach Expansion haben alle Einträge color>=0) ── */
+    /* ── CIFAR: always via enc_array (after expansion all entries have color>=0) ── */
     int n_enc = aa.enc_count;
     int enc_off[KI_ENC_MAX], enc_nc[KI_ENC_MAX];
     size_t stride = 0;
@@ -421,8 +421,8 @@ static __attribute__((unused)) uint32_t *load_input(const uint8_t *X_raw,
 #define NC        196     /* Default MNIST — override via -DNC or ki-local.h */
 #endif
 
-/* Globale Channel-Parameter (werden nach --channels in main() gesetzt) */
-static int eff_colors = 3;              /* Anzahl aktiver Channels / Mitglieder (popcount mask) */
+/* Global channel parameters set after --channels in main) */
+static int eff_colors = 3;              /* number of aktiver Channels / members (popcount mask) */
 static int active_chans[KI_ENC_MAX];    /* Mapping: seq_idx → Bit-Position (0..8) */
 #define BITS       32
 #define N_CLASSES KI_NCLASSES
@@ -436,9 +436,9 @@ static int active_chans[KI_ENC_MAX];    /* Mapping: seq_idx → Bit-Position (0.
 
 
 // === Zentraler Skalierungsfaktor OT_PRECISION ===
-// Alle logit/log(p)-Werte werden mit F = (1<<OT_PRECISION) skaliert
-// in int32/int64 gespeichert.  Der Korrektur-Step und die lr-Anzeige
-// leiten sich daraus ab → eine Änderung wirkt auf alle abhängigen Stellen.
+// All logit values are scaled by F
+// stored in int32/int64.  The correction step and lr display
+// derived from it.*a change affects all dependent places.
 #define STRINGIFY(x) #x
 #define TOSTRING(x) STRINGIFY(x)
 
@@ -466,7 +466,7 @@ static int active_chans[KI_ENC_MAX];    /* Mapping: seq_idx → Bit-Position (0.
  * H0 FORWARD — MAJ3 über nc_local Container
  * ═══════════════════════════════════════════════════════════════════
  * in_offset: Start des Slices im Input-Array
- * nc_local:  Anzahl Container für diesen Member
+ * nc_local:  number of Container for this member
  */
 static uint32_t h0_neuron(const uint32_t *in, const uint32_t *W0_row, int nc_local) {
     uint32_t match[MAJ3_BUF]; /* aus maj3.h, ≥ MAJ3_BUF */
@@ -534,18 +534,18 @@ static int32_t *ki_build_target(const uint32_t *X, const uint8_t *Y, int N,
     return target;
 }
 
-/* ── ki_build_target_from_gb: Target-Zählung aus gb_buf (KEIN h0_neuron) ── *
- * Nutzt vorberechnete gb_buf-Daten statt h0_neuron + VN-Reduktion.
- * Doppelt so schnell wie ki_build_target, weil h0_neuron UND die
- * VN-Gruppen-Berechnung entfallen (beides ist bereits in gb_buf). */
+/* ── ki_build_target_from_gb: target counting from gb_buf (no h0_neuron) ── *
+ * Uses precomputed gb_buf data instead of h0_neuron + VN reduction.
+ * Twice as fast as ki_build_target because both h0_neuron AND
+ * VN group computation are eliminated (both are already in gb_buf). */
 static int32_t *ki_build_target_from_gb(const uint8_t *Y, int N,
     const uint32_t *gb_buf, int H_local, int V,
     const int class_counts[KI_NCLASSES]) {
     size_t sz = (size_t)H_local * KI_NCLASSES * (size_t)V;
     int32_t *target = (int32_t *)ki_xcalloc(sz, sizeof(int32_t));
     if (aa.target_random_init) {
-        /* Random init: target = uniform [0, nk] pro Klasse.
-         * class_counts wird vom Caller bereitgestellt (1× in main). */
+        /* Random init: target = uniform [0, nk] per class.
+         * class_counts is provided by the caller (1× in main). */
         for (int k = 0; k < KI_NCLASSES; k++) {
             int nk = class_counts[k];
             if (nk <= 0) continue;
@@ -586,7 +586,7 @@ static int32_t *ki_build_target_from_gb(const uint8_t *Y, int N,
  *   target[k][h][b] = round( ln((t+1)/(N_k-t+1)) × F )
  *   mit F = (1<<OT_PRECISION) (default 10 → F=1024)
  *
- * Abhängigkeit: ot_precision() definiert die int32-Skalierung.
+ * Dependency: ot_precision defines the int32 scaling.
  */
 static void logit_convert(int32_t *target, int H_local, const int class_counts[KI_NCLASSES]) {
     int V = VN_GROUPS_;
@@ -605,7 +605,7 @@ static void logit_convert(int32_t *target, int H_local, const int class_counts[K
 }
 
 /* ── VN_SCORE_FROM_GB / VN_CORRECT_FROM_GB ───────────────────── *
- * Nutzen vorberechnete gb-Maske statt h0 → popcount-Reduktion.     */
+ * Use precomputed gb mask instead of h0 → popcount reduction.     */
 #define VN_SCORE_FROM_GB(gb, h, H, NG, TGT, SC) do { \
     uint32_t _b = (gb); \
     while (_b) { int _v = __builtin_ctz(_b); \
@@ -625,7 +625,7 @@ static void logit_convert(int32_t *target, int H_local, const int class_counts[K
 /* ═══════════════════════════════════════════════════════════════════
  * CLASS OFFSET — Σ log(1-P_k) × F  (F = 1<<OT_PRECISION)
  * ═══════════════════════════════════════════════════════════════════
- * Muss VOR logit_convert berechnet werden (braucht raw counts).
+ * Must be computed BEFORE logit_convert (needs raw counts).
  * Gemeinsame Skalierung: target und offset teilen F.
  *
  * Note: +-0.5 rounding removed because log(p1)*F is always negative
@@ -653,7 +653,7 @@ static void compute_class_offset(int64_t class_offset[KI_NCLASSES],
 }
 /* ═══════════════════════════════════════════════════════════════════
  * SCORE — Bayes log-Score (mit Slice)
- * in:    Input + nc_off (zum Member-Slice verschoben)
+ * in: Input shifted to member slice)
  * W0:    Member-W0 [H_local × NC_slice]
  * H_local, NC_slice, nc_off: Slice-Parameter
  */
@@ -680,10 +680,10 @@ static void scores_otto(const uint32_t *in, const uint32_t *W0,
     }
 }
 
-/* ── scores_otto aus vorberechneter VN-Gruppenmaske (KEIN h0_neuron) ── *
- * Wird für Training-Eval verwendet (gb_buf ist 1× berechnet).
- * Nimmt Einzelfelder statt ki_Member* (Struct-Definition kommt später).
- * Für Test-Eval ohne Cache gibt es scores_otto (oben). */
+/* ── scores_otto from precomputed VN group mask (no h0_neuron) ── *
+ * Used for training eval (gb_buf is computed once).
+ * Takes individual fields instead of ki_Member* (struct definition comes later).
+ * For test eval without cache there is scores_otto (oben). */
 static void scores_otto_from_gb(int s, int H_local,
                                  const uint32_t *gb_buf,
                                  const int32_t *target,
@@ -708,19 +708,19 @@ static void scores_otto_from_gb(int s, int H_local,
 
 
 /* ═══════════════════════════════════════════════════════════════════
- * EVALUATE — Members außen, Samples innen (cache-optimal)
+ * EVALUATE — Members outer, samples inner (cache-optimal)
  * ═══════════════════════════════════════════════════════════════════
  *
- * Members seriell außen → target[m] (80 KB) bleibt im D1-Cache für
- * alle N Samples. Reduziert D1mr von 55% auf <1% (vorher: samples
- * außen → jeder member-Wechsel evicted target aus dem Cache).
+ * Members serial outer.*stays in L1 cache for
+ * all N samples. Reduces D1mr from 55% to <1% (previously: samples
+ * außen → each member switch evicted target from cache).
  *
- * Nutzt direkt die ki_Member-Structs (keine flachen Arrays mehr).
- * Jeder Member hat eigene W0, target, offset, slc_off.
+ * Uses ki_Member structs directly (no more flat arrays).
+ * Each member has its own W0, target, offset, slc_off.
  *
- * Votes-Zwischenspeicher: N × KI_NCLASSES × 8 Byte (4 MB für 50000 Samples).
- * n_cont:   Container pro Sample (NC, für Stride)
- * Returns:  Anzahl korrekt klassifizierte Samples
+ * Votes buffer.*for.*samples).
+ * n_cont:   Container per sample (NC, für Stride)
+ * Returns:  number of korrekt klassifizierte Samples
  */
 
 /* (body moved after struct ki_Member definition, siehe forward decl) */
@@ -858,7 +858,7 @@ static const char *opp_name(int ch);
 /* ═══════════════════════════════════════════════════════════════════════
  * PRINT MEMBER STRUCTURE — zeigt Grid + Per-Member + H/C-Struktur
  * ═══════════════════════════════════════════════════════════════════════
- * Wird von dry-run und main() aufgerufen — keine Datenabhängigkeit.
+ * Called by dry-run and main.*no data dependency.
  */
 static void print_member_structure(int ensembleN, int splitVN, int splitHN,
                                     int H_local, int NC_slice, int channel) {
@@ -878,7 +878,7 @@ static void print_member_structure(int ensembleN, int splitVN, int splitHN,
         for (int hi = 0; hi < splitHN && _n < 64; hi++) {
             _c[_n] = col;
             _t[_n] = -1; _w[_n] = -1;
-            /* Nachschlagen: enc_array für diese Farbe (oder default -1) */
+            /* Lookup: enc_array for this color (or default -1) */
             for (int ei = 0; ei < aa.enc_count && ei < KI_ENC_MAX; ei++) {
                 int ec = (int)aa.enc_array[ei].color;
                 if (ec == col || ec < 0) {  /* explizite Farbe oder default */
@@ -893,7 +893,7 @@ static void print_member_structure(int ensembleN, int splitVN, int splitHN,
     ki_print_member_structure(_c, _t, _w, _n, ensembleN);
     if (ensembleN > 1) {
         if (aa.ensemble_seed == ENS_SEED_CONST) {
-            printf("  → ENSEMBLE x%d: alle Channel-Member teilen W0 (const)\n",
+            printf("  → ENSEMBLE x%d: all channel members share W0 (const)\n",
                    ensembleN);
             if (aa.seed_file[0])
                 printf("    W0 from %s, 1 chunk per ensemble\n", aa.seed_file);
@@ -919,43 +919,43 @@ static const char *opp_name(int ch) {
 }
 
 /* ═══════════════════════════════════════════════════════════════════
- * AUTONOMOUS MEMBER — eigener Speicher, eigene Fehler, eigener Schritt
+ * AUTONOMOUS MEMBER — own memory, eigene Fehler, eigener Schritt
  * ═══════════════════════════════════════════════════════════════════
  *
- * Jeder Member verwaltet seine Ressourcen selbst. Kein malloc/free
- * pro Epoche → kein Cache-Bouncing durch Allokator-Overhead.
+ * Each member manages its own resources. Kein malloc/free
+ * per epoch → no cache bouncing from allocator overhead.
  */
 typedef struct ki_Member {
     /* Dimensionen (aus CLI, konstant) */
     int H_local;            /* Neurons (H, no vertical split) */
     int NC_slice;           /* Container (KI_NC / splitHN) */
-    int slc_off;            /* Input-Offset für diesen Member */
+    int slc_off;            /* Input-Offset for this member */
     int vi;                 /* Encoding-Index in enc_array (für stats/debug) */
 
-    /* Zeiger auf externe Daten (Member besitzt target+offset, teilt W0) */
+    /* Pointer to external data (Member owns target+offset, shares W0) */
     const uint32_t *W0;     /* W0 row start (geteilt oder eigen) */
-    int32_t *target;        /* [H_local × KI_NCLASSES × 32] int32 — eigener Speicher */
-    int64_t *offset;        /* [KI_NCLASSES] int64 — eigener Speicher */
+    int32_t *target;        /* [H_local × KI_NCLASSES × 32] int32 — own memory */
+    int64_t *offset;        /* [KI_NCLASSES] int64 — own memory */
 
-    /* Trainings-Puffer (einmal alloziert, jede Epoche wiederverwendet) */
+    /* Training buffers.*allocated once.*reused each epoch) */
     uint32_t *h0_buf;       /* [total_train × H_local] — rohe H0-Werte */
     uint32_t *gb_buf;       /* [total_train × H_local] — VN-Gruppenmaske (h0_to_gb) */
-    int orig_m;             /* Index im Export (für korrekte Reihenfolge) */
-    uint32_t *gb_buf_te;    /* [total_eval × H_local] — eval-Cache (NULL wenn kein eval) */
+    int orig_m;             /* Index im Export (for correct ordering) */
+    uint32_t *gb_buf_te;    /* [total_eval × H_local] — eval cache.*NULL if no eval) */
 
-    /* Best-State (für Export bei bestem eval) */
+    /* Best-State (for export bei bestem eval) */
     int32_t *best_target;   /* [H_local × KI_NCLASSES × V] — Snapshot bei bestem eval */
     int64_t *best_offset;   /* [KI_NCLASSES] */
     float   best_evl;       /* eval bei bestem Snapshot */
 
-    /* Err-State (für rollback, nur wenn aa.err_rollback) */
+    /* Err state.*for rollback.*only when aa.err_rollback) */
     int32_t *err_target;    /* [H_local × KI_NCLASSES × V] — Snapshot bei bestem train-err */
     int64_t *err_offset;    /* [KI_NCLASSES] */
 
-    /* Member-Zustand (pro Epoche aktualisiert) */
+    /* Member-Zustand (per epoch aktualisiert) */
     int step;               /* aktueller Schritt */
     int last_err;           /* letzter Fehler */
-    int ep;                 /* eigene Epoche (für Cosine) */
+    int ep;                 /* own epoch (for cosine) */
     int evl_ok;             /* eval correct count (--debug) */
 } ki_Member;
 
@@ -1080,9 +1080,9 @@ static void ki_member_destroy(ki_Member *m) {
 /* forward declaration (defined below after ki_batch_correct helpers) */
 static inline uint32_t h0_to_gb(uint32_t h0);
 
-/* ── Member: Test-Eval gb vorberechnen (einmalig) ───────────────── *
- * Schreibt direkt in gb_buf_te, kein h0_buf nötig (nur gb wird
- * für evaluate_member gebraucht). */
+/* ── Member: Test-Eval gb vorberechnen (once) ───────────────── *
+ * Writes directly to gb_buf_te, no h0_buf needed (nur gb wird
+ * needed for evaluate_member). */
 static void ki_member_compute_gb_te(ki_Member *m, const uint32_t *X,
                                      int N, int n_cont) {
     if (!m->gb_buf_te || N <= 0) return;
@@ -1098,8 +1098,8 @@ static void ki_member_compute_gb_te(ki_Member *m, const uint32_t *X,
     }
 }
 
-/* ── Member: h0 + gb vorberechnen (einmalig, jede Epoche wiederverwendet) ── *
- * gb_buf = VN-Gruppenmaske aus h0 (vermeidet popcount-Reduktion im Training). */
+/* ── Member: h0 + gb vorberechnen (once, jede Epoche wiederverwendet) ── *
+ * gb_buf = VN group mask from h0 (vermeidet popcount reduction im Training). */
 static void ki_member_compute_h0(ki_Member *m, const uint32_t *X, int N,
                                   int n_cont) {
     const uint32_t *in_base = X + (size_t)m->slc_off;
@@ -1223,9 +1223,9 @@ extern void hip_mem_done(void);
 /* ═══════════════════════════════════════════════════════════════════════
  * VN-GROUP BITMASK — h0 → gb conversion (cached, not per-epoch recomputed)
  * ═══════════════════════════════════════════════════════════════════════
- * Für VN=1: gb = h0 (jedes Bit = eigene Gruppe).
- * Für VN≥2: gb hat ein Bit pro Gruppe, gesetzt wenn popcount >
- *            N_BITS-1 (strict AND: alle Bits müssen 1 sein). */
+ * For VN=1: gb = h0.*each bit = its own group).
+ * For VN.*gb has one bit per group, set when popcount >
+ *            N_BITS-1 (strict AND: all bits must be 1). */
 static inline uint32_t h0_to_gb(uint32_t h0) {
     switch (aa.splitVN) {
         case 1:  return h0;
@@ -1316,25 +1316,25 @@ static inline void ki_cache_apply_free(int32_t **cache, int n_threads,
  * ═══════════════════════════════════════════════════════════════════════
  *
  * Phasen pro Batch:
- *   1. Parallel: Scores aus target berechnen, Deltas in Thread-Cache
- *   2. Sequentiell: Deltas auf target anwenden → nächster Batch sieht Änderung
+ *   1. Parallel: compute scores from target, deltas in thread cache
+ *   2. Sequentiell: apply deltas to target → next batch sees the change
  *
- * Schrittgrösse pro Sample:
+ * step size per sample:
  *   gap = sc[pred] - sc[true_k]   (Member-eigener Score-Abstand)
  *   gap > 0 → Korrektur, step skaliert proportional: step × gap / F
  *   gap ≥ F → vollen Schritt
- *   gap ≤ 0 → kein Update (Member lag richtig)
+ *   gap.*no update.*member was correct)
  *
- * target:     Ziel-Target (mit Offset für Ensemble)
- * H:          Anzahl Neuronen
- * class_offset: Offset pro Klasse
+ * target:     target.*with offset for ensemble)
+ * H:          number of Neuronen
+ * class_offset: Offset per class
  * gb_all:     Vorberechnete VN-Gruppenmasken [N × H] (aus h0_to_gb)
  * y:          Labels
- * N:          Anzahl Trainings-Samples
+ * N:          number of Trainings-Samples
  * step:       Basis-Schritt (Obergrenze, Member skaliert via gap)
- * tgt_sz:     Grösse des Target-Arrays (H × KI_NCLASSES × V)
+ * tgt_sz:     size des Target-Arrays (H × KI_NCLASSES × V)
  *
- * Returns:    Anzahl Korrekturen
+ * Returns:    number of Korrekturen
  */
 static inline int ki_batch_correct(int32_t *target, int H,
                                     const int64_t *class_offset,
@@ -1514,7 +1514,7 @@ static inline int ki_batch_correct(int32_t *target, int H,
 }
 
 /* ── Member: batch correct (nutzt gb_buf + target + offset) ────────── *
- * gb_buf = vorberechnete VN-Gruppenmaske (keine popcount-Reduktion nötig). */
+ * gb_buf = precomputed VN group mask (no popcount reduction needed). */
 static inline int ki_member_batch_correct(ki_Member *m, const uint8_t *y, int N, int step) {
     m->step = step;
     int err = ki_batch_correct(m->target, m->H_local, m->offset,
@@ -1526,19 +1526,19 @@ static inline int ki_member_batch_correct(ki_Member *m, const uint8_t *y, int N,
 }
 
 /* ═══════════════════════════════════════════════════════════════════
- * EVALUATE — Members außen, Samples innen (cache-optimal)
+ * EVALUATE — Members outer, samples inner (cache-optimal)
  * ═══════════════════════════════════════════════════════════════════
  *
- * Members seriell außen → target[m] (80 KB) bleibt im D1-Cache für
- * alle N Samples. Reduziert D1mr von 55% auf <1% (vorher: samples
- * außen → jeder member-Wechsel evicted target aus dem Cache).
+ * Members serial outer.*stays in L1 cache for
+ * all N samples. Reduces D1mr from 55% to <1% (previously: samples
+ * außen → each member switch evicted target from cache).
  *
- * Nutzt direkt die ki_Member-Structs (keine flachen Arrays mehr).
- * Jeder Member hat eigene W0, target, offset, slc_off.
+ * Uses ki_Member structs directly (no more flat arrays).
+ * Each member has its own W0, target, offset, slc_off.
  *
- * Votes-Zwischenspeicher: N × KI_NCLASSES × 8 Byte (4 MB für 50000 Samples).
- * n_cont:   Container pro Sample (NC, für Stride)
- * Returns:  Anzahl korrekt klassifizierte Samples
+ * Votes buffer.*for.*samples).
+ * n_cont:   Container per sample (NC, für Stride)
+ * Returns:  number of korrekt klassifizierte Samples
  */
 static int ki_evaluate_member(const uint32_t *X, const uint8_t *y, int N,
                                ki_Member **members, int active_members,
@@ -1550,12 +1550,12 @@ static int ki_evaluate_member(const uint32_t *X, const uint8_t *y, int N,
     int64_t (*votes)[KI_NCLASSES] = (int64_t (*)[KI_NCLASSES])calloc((size_t)N, sizeof(int64_t[KI_NCLASSES]));
     if (!votes) { fprintf(stderr, "[FATAL] evaluate: votes OOM\n"); exit(1); }
 
-    /* Jeder Member bekommt gleiches Stimmrecht: Skaliere sc[] so dass
-     * max|sc[k]| ≤ SCALE_MAX. Verhindert dass Member mit grossen
-     * Target-Gewichten (mehr Korrekturen, andere Channel) dominieren. */
+    /* Each member gets equal voting power: Scale sc.*so that
+     * max|sc[k]| ≤ SCALE_MAX. Prevents members with large
+     * target weights (more corrections, different channels) from dominating. */
     #define VOTE_SCALE ((int64_t)1 << 24)  /* 16.7 Mio, passt ×16 in int64 */
 
-    /* Members außen: target[m] bleibt warm im D1-Cache */
+    /* Members outer: target.*stays warm in L1 cache */
     //#pragma omp parallel for schedule(static) if(active_members > 8)
     for (int m = 0; m < active_members; m++) {
         ki_Member *mem = members[m];
@@ -1564,11 +1564,11 @@ static int ki_evaluate_member(const uint32_t *X, const uint8_t *y, int N,
         for (int s = 0; s < N; s++) {
             int64_t sc[KI_NCLASSES];
             if (use_gb == 2) {
-                /* ── Test-Eval: gb_buf_te ist 1× berechnet und gecached. */
+                /* ── Test eval: gb_buf_te is computed once and cached. */
                 scores_otto_from_gb(s, mem->H_local, mem->gb_buf_te,
                                    mem->target, mem->offset, sc);
             } else if (use_gb == 1) {
-                /* ── Training-Eval: gb_buf ist 1× berechnet und gecached. */
+                /* ── Training-Eval: gb_buf is computed once und gecached. */
                 scores_otto_from_gb(s, mem->H_local, mem->gb_buf,
                                    mem->target, mem->offset, sc);
             } else {
@@ -1579,9 +1579,9 @@ static int ki_evaluate_member(const uint32_t *X, const uint8_t *y, int N,
             }
 
             /* Vote-Normalisierung: --optional target-norm
-             * Jeder Member wird auf max|sc| = VOTE_SCALE normiert.
-             * Alle Member haben dadurch gleiches Stimmrecht,
-             * unabhängig von Target-Grösse oder Kanal. */
+             * Each member is normalized to max.*VOTE_SCALE.
+             * All members thus have equal voting power,
+             * regardless of target size or channel. */
             if (aa.opt_target_norm) {
                 int64_t max_abs = 0;
                 for (int k = 0; k < KI_NCLASSES; k++) {
@@ -1603,7 +1603,7 @@ static int ki_evaluate_member(const uint32_t *X, const uint8_t *y, int N,
     }
     #undef VOTE_SCALE
 
-    /* Merge: argmax pro Sample */
+    /* Merge: argmax per sample */
     int ok = 0;
     for (int s = 0; s < N; s++) {
         int pred = 0;
@@ -1617,11 +1617,11 @@ static int ki_evaluate_member(const uint32_t *X, const uint8_t *y, int N,
 }
 
 /* ═══════════════════════════════════════════════════════════════════
- * PER-MEMBER DEBUG STATS — Tabelle nach jeder Epoche
+ * Per-member debug stats.*table after each epoch
  * ═══════════════════════════════════════════════════════════════════
- * Nur bei --debug aktiv.  Zeigt pro Member:
- *   Channel=Encoding · Target min/max · Step · last_err · Eigenständige eval
- * Ermöglicht zu erkennen, welche Member helfen/schaden.
+ * Active only with --debug.*Shows per member:
+ *   Channel=Encoding · Target min/max · Step · last_err · Independent eval
+ * Shows which members help or hurt, which members help or hurt.
  */
 static void print_member_debug(ki_Member **members, int active_members,
                                 const uint32_t *X, const uint8_t *y, int N,
@@ -1671,7 +1671,7 @@ static void print_member_debug(ki_Member **members, int active_members,
         int max_h = (int)((pos_max % (size_t)_hv) / (size_t)V);
         int max_v = (int)(pos_max % (size_t)V);
 
-        /* ── Eigenständige eval (nur dieser Member) ───────────── */
+        /* ── Independent eval (nur dieser Member) ───────────── */
         int member_ok = 0;
         if (N > 0) {
             int64_t *sc = (int64_t *)calloc((size_t)N * KI_NCLASSES, sizeof(int64_t));
@@ -1714,9 +1714,9 @@ static void print_member_debug(ki_Member **members, int active_members,
 /* ═══════════════════════════════════════════════════════════════════
  * CLASS-VOTING DEBUG — Member × Klasse Trefferquote auf trainN
  * ═══════════════════════════════════════════════════════════════════
- * Nur bei --debug-class-voting aktiv.  Zeigt pro Member und Klasse
- * wie oft der Member korrekt lag (pred == y[s]) geteilt durch
- * Anzahl Samples dieser Klasse.
+ * Active only with --debug-class-voting.*Shows per member and class
+ * how often the member was correct (pred == y[s]) divided by
+ * the number of samples of this class.
  *
  * Zeilen = Member (mit Channel=Encoding-Name)
  * Spalten = Klassen 0..K-1  + avg
@@ -1735,13 +1735,13 @@ static void print_class_voting_debug(ki_Member **members, int active_members,
         free(total); free(correct); exit(1);
     }
 
-    /* ── Erster Pass: Samples pro Klasse zählen ────────────────── */
+    /* ── First pass: count samples per class ────────────────── */
     for (int s = 0; s < N; s++) {
         int k = (int)y[s];
         if (k >= 0 && k < KI_NCLASSES) total[k]++;
     }
 
-    /* ── Zweiter Pass: pro Member Scores berechnen, argmax, vergleich ── */
+    /* ── Zweiter Pass: per member Scores berechnen, argmax, vergleich ── */
     for (int m = 0; m < active_members; m++) {
         ki_Member *mem = members[m];
         for (int s = 0; s < N; s++) {
@@ -1761,7 +1761,7 @@ static void print_class_voting_debug(ki_Member **members, int active_members,
     }
 
     /* ── Tabelle ausgeben ──────────────────────────────────────── */
-    /* Nur Klassen mit Samples anzeigen (wichtig bei --filter) */
+    /* Only classes with samples anzeigen (important with --filter) */
     int active_cols[KI_NCLASSES], n_active = 0;
     for (int k = 0; k < KI_NCLASSES; k++)
         if (total[k] > 0) active_cols[n_active++] = k;
@@ -1856,7 +1856,7 @@ static int ifc_load_model(const char *path,
     if (!*W0_out || !*tgt_out || !*off_out) { fprintf(stderr, "[FATAL] OOM\n"); exit(1); }
     /* Datei-Layout (wie export_ensemble): per-member interleaved
      *   W0_m0  TGT_m0  OFF_m0  W0_m1  TGT_m1  OFF_m1  ...
-     * Import muss im gleichen Loop lesen. */
+     * Import must read in the same loop. */
     for (uint32_t m = 0; m < n_members; m++) {
         if (fread(*W0_out + (size_t)m * w0_msz, sizeof(uint32_t), w0_msz, f) != w0_msz ||
             fread(*tgt_out + (size_t)m * tgt_msz, sizeof(int32_t), tgt_msz, f) != tgt_msz ||
@@ -1877,8 +1877,8 @@ static int ifc_load_model(const char *path,
  * ═══════════════════════════════════════════════════════════════════
  *
  * load_input() ist teuer (Farbraum + Encoding f. Samples).
- * Da die Encoding-Konfiguration pro Projekt konstant ist, koennen wir
- * die uint32-Container einmal berechnen und als Cache-Datei speichern.
+ * Since the encoding config is constant per project, koennen wir
+ * compute the uint32 containers once and save as cache file.
  *
  * Format: data/prepped/<hash>_<samples>x<stride>.pre
  *   magic(4) ver(4) hash(4) samples(4) stride(4) data[...]
@@ -1903,7 +1903,7 @@ static uint32_t input_cache_hash(void) {
     return h;
 }
 
-/* Versuche Cache zu laden, sonst load_input() + speichern */
+/* Versuche Cache zu laden, otherwise load_input() + speichern */
 static uint32_t *load_input_cached(const uint8_t *X_raw, int n_samples,
                                     size_t stride) {
     uint32_t hash = input_cache_hash();
@@ -1977,7 +1977,7 @@ int main(int argc, char *argv[]) {
     if (KI_COLORS <= 1)
         aa.channel = KI_DEFAULT_COLOR;  /* MNIST: ignore --channels */
     /* 1:1 Mapping: Bit b = COLOR_BIT direkt (COLOR_MNIST=0, R=1, G=2, …, GB=10)
-     * active_chans speichert die Bit-Position aus enum ki_color_bit. */
+     * active_chans stores the bit position from enum ki_color_bit. */
     {   int mask = aa.channel;
         int n = 0;
         for (int b = 0; b < COLOR_NB; b++)
@@ -1992,10 +1992,10 @@ int main(int argc, char *argv[]) {
             if (aa.channel & (1 << b)) cnt++;
         eff_colors_orig = cnt;
     }
-    /* Multi-Encoding: enc_array-Einträge = virtuelle Blöcke */
+    /* Multi-encoding: enc_array entries = virtual blocks */
     if (aa.enc_count > 1) {
         eff_colors = aa.enc_count;
-        /* active_chans mit den Farben aus enc_array füllen */
+        /* fill active_chans with colors from enc_array */
         for (int i = 0; i < aa.enc_count && i < KI_ENC_MAX; i++) {
             int col = (int)aa.enc_array[i].color;
             if (KI_COLORS > 1 && col >= 0 && col < COLOR_NB) {
@@ -2018,7 +2018,7 @@ int main(int argc, char *argv[]) {
     if (splitHN < 1) splitHN = 1;
 
     /* ── Effektive Container pro Block (Encoding-Breite aus enc_array) ── */
-    /* SplitHN-check: jeder enc_array-Eintrag muss teilbar sein */
+    /* SplitHN check: each enc_array entry must be divisible */
     for (int i = 0; i < aa.enc_count && i < KI_ENC_MAX; i++) {
         int w = (int)aa.enc_array[i].width;
         if (w < 1) w = KI_ENC_WIDTH_DEFAULT;
@@ -2032,7 +2032,7 @@ int main(int argc, char *argv[]) {
             return 1;
         }
     }
-    /* nc_blk (breitester Block, für step-validation) */
+    /* nc_blk.*widest block.*for step validation) */
     int nc_blk = 0;
     for (int i = 0; i < aa.enc_count && i < KI_ENC_MAX; i++) {
         int w = (int)aa.enc_array[i].width;
@@ -2062,10 +2062,10 @@ int main(int argc, char *argv[]) {
     gettimeofday(&tv_start, NULL);
     ki_Dataset data = { .dry_run = aa.dry_run };
     if (ki_dataset_read(&data) != 0) return 1;
-    /* NOTE: --filter (aa.filter_mask) wirkt NUR auf Training.
-     * Evaluation verwendet immer ALLE Klassen.  Kein
-     * ki_filter_dataset() nötig — das Training skippt
-     * nicht-matching Samples in ki_batch_correct(). */
+    /* NOTE: --filter affects training only.
+     * Evaluation always uses ALL classes.  No
+     * ki_filter_dataset() needed — training skips
+     * non-matching samples in ki_batch_correct(). */
     if (data.pixels != KI_PX) {
         fprintf(stderr, "[FATAL] Expected %d pixels, got %d\n", KI_PX, data.pixels);
         ki_dataset_free(&data); return 1;
@@ -2078,6 +2078,17 @@ int main(int argc, char *argv[]) {
     int total_train = aa.trainN;
     int total_eval  = aa.evalN;
     int total_all   = total_train + total_eval;
+    if (total_train + total_eval > data.num_images) {
+        fprintf(stderr, "  [WARN] Requested %d+%d=%d > %d available, adjusting eval\n",
+                total_train, total_eval, total_all, data.num_images);
+        total_eval = data.num_images - total_train;
+        if (total_eval < 0) { total_eval = 0; total_train = data.num_images; }
+        if (total_eval == 0 && total_train < data.num_images) {
+            total_train = data.num_images / 2; /* fallback */
+            total_eval  = data.num_images - total_train;
+        }
+        total_all = total_train + total_eval;
+    }
 
     /* ── Compute total stride = sum over all enc_array entries ── */
     size_t n_cont = 0;
@@ -2185,9 +2196,9 @@ int main(int argc, char *argv[]) {
     int NC_slice  = nc_blk / splitHN;  /* base slice (from default width) */
     int total_members = ensembleN * splitHN * eff_colors;
 
-    /* ── Default W0-Quelle: splitmix64 PRNG (kein auto-search mehr) ─── */
+    /* ── Default W0 source: splitmix64 PRNG.*no more auto search) ─── */
     /* --seed-file override → w0_rand_set_file() in W0 init.
-     * Mit seed_splitmix=1 (default) wird immer splitmix64 genutzt. */
+     * With seed_splitmix=1.*splitmix64 is always used. */
 
     /* ── IFC MODE: --import → evaluieren statt trainieren ───────────── */
     if (aa.importD[0]) {
@@ -2260,14 +2271,14 @@ int main(int argc, char *argv[]) {
     uint32_t *W0_ens = (uint32_t *)ki_xmalloc(w0_sz * sizeof(uint32_t));
 
     /* Transparent: w0_random() liest aus Datei (falls --seed-file),
-     * sonst aus splitmix64 PRNG.  Die member-strategy (const/incr/once)
-     * arbeitet identisch in beiden Modi. */
+     * otherwise aus splitmix64 PRNG.  Die member-strategy (const/incr/once)
+     * works identically in both modes. */
     if (aa.seed_file[0])
         w0_rand_set_file(aa.seed_file);
 
     if (aa.ensemble_seed == ENS_SEED_CONST) {
-        /* const: Jedes Ensemble bekommt eigenen W0-Chunk,
-         * alle Channel-Member teilen ihn sich. */
+        /* const: each ensemble gets its own W0 chunk,
+         * all channel members share it. */
         int memb_per_ens = eff_colors * splitHN;
         for (int e = 0; e < ensembleN; e++) {
             w0_srandom((unsigned int)(aa.seed + e));
@@ -2280,7 +2291,7 @@ int main(int argc, char *argv[]) {
             }
         }
     } else if (aa.ensemble_seed == ENS_SEED_INCR) {
-        /* incr: Jeder Member bekommt eigenen Seed → anderen W0 */
+        /* incr: Each member gets own seed → anderen W0 */
         for (int m = 0; m < total_members; m++) {
             w0_srandom((unsigned int)(aa.seed + m));
             for (size_t i = 0; i < w0_m_sz; i++)
@@ -2315,7 +2326,7 @@ int main(int argc, char *argv[]) {
             class_counts[(int)y_tr[s]]++;
 
     print_member_structure(ensembleN, splitVN, splitHN, H_local, NC_slice, aa.channel);
-    /* Target wird NACH h0-compute aus gb_buf gebaut (s.u.). */
+    /* Target is built from gb_buf AFTER h0-compute (s.u.). */
     printf("\n");
     fflush(stdout);
 
@@ -2340,7 +2351,7 @@ int main(int argc, char *argv[]) {
     int warmup = aa.warmup_epochs;
     int epochs = aa.epochs;
 
-    /* ── Member-Array anlegen: jeder Member verwaltet sich selbst ─── */
+    /* ── Create member array: each member manages itself ─── */
     int active_members = 0;
     for (int m = 0; m < total_members; m++)
         if (!(aa.channel >= 0 && !(aa.channel & (1 << active_chans[(m / splitHN) % eff_colors]))))
@@ -2372,15 +2383,15 @@ int main(int argc, char *argv[]) {
                                             W0_m, total_train, total_eval);
             members[mem_idx]->orig_m = m;
             members[mem_idx]->vi = vi;
-            /* target + offset werden NACH h0-compute aus gb_buf befüllt */
+            /* target.*are populated from gb_buf AFTER h0-compute */
             members[mem_idx]->last_err = total_train;
             mem_idx++;
         }
     }
 
-    /* Best-Snapshots (flat arrays, für Export) */
+    /* Best-Snapshots (flat arrays, for export) */
     float best_evl = 0.0f;
-    int best_evl_ok = 0;        /* Anzahl korrekt beim besten eval */
+    int best_evl_ok = 0;        /* number correct at best eval */
     int best_err = total_train;
     int last_avg_err = total_train;
 
@@ -2416,12 +2427,12 @@ int main(int argc, char *argv[]) {
             for (int _b = 0; _b < active_members; _b++)
                 ki_member_compute_h0(members[_b], X_tr, total_train, (int)n_cont);
         }
-        /* Test-Eval gb einmal vorberechnen (wenn test data existiert) */
+        /* Precompute test eval gb once (if test data exists) */
         if (total_eval > 0) {
             for (int _b = 0; _b < active_members; _b++)
                 ki_member_compute_gb_te(members[_b], X_te, total_eval, (int)n_cont);
         }
-        /* h0_buf nach gb-Berechnung freigeben — wird danach nie mehr gebraucht */
+        /* free h0_buf after gb computation — is never needed again */
         for (int _b = 0; _b < active_members; _b++) {
             ki_Member *mem = members[_b];
             if (mem->h0_buf) { free(mem->h0_buf); mem->h0_buf = NULL; }
@@ -2429,9 +2440,9 @@ int main(int argc, char *argv[]) {
     }
     gettimeofday(&_tv1, NULL);
 
-    /* ── Target aus gb_buf bauen (KEIN h0_neuron mehr) ──────────── *
-     * Überschreibt die uniformen Init-Werte (aus dem TARGET-INIT-Loop
-     * oben) mit korrekten Counts. Anschliessend logit_convert + offset. */
+    /* ── Build target from gb_buf (no more h0_neuron) ──────────── *
+     * Overwrites the uniform init values (from the TARGET-INIT loop
+     * above) with correct counts. Then logit_convert + offset. */
     gettimeofday(&_target0, NULL);
     if (!aa.dry_run && V > 1) {
         for (int _b = 0; _b < active_members; _b++) {
@@ -2439,14 +2450,14 @@ int main(int argc, char *argv[]) {
             if (!mem->gb_buf) continue;
             int32_t *tgt = ki_build_target_from_gb(y_tr, total_train,
                 mem->gb_buf, mem->H_local, V, class_counts);
-            /* Überschreibt die uniformen Init-Werte */
+            /* Overwrites the uniform init values */
             memcpy(mem->target, tgt, (size_t)mem->H_local * KI_NCLASSES * (size_t)V * sizeof(int32_t));
             free(tgt);
         }
     }
     gettimeofday(&_target1, NULL);
 
-    /* logit_convert + class_offset für alle Member (basierend auf neuen Targets) */
+    /* logit_convert.*class_offset for all members (based on new targets) */
     gettimeofday(&_logit0, NULL);
     if (!aa.dry_run) {
         for (int _b = 0; _b < active_members; _b++) {
@@ -2456,7 +2467,7 @@ int main(int argc, char *argv[]) {
             compute_class_offset(off_m, mem->target, mem->H_local, class_counts);
             memcpy(mem->offset, off_m, KI_NCLASSES * sizeof(int64_t));
             logit_convert(mem->target, mem->H_local, class_counts);
-            /* Ersten Snapshot in best/err (für Export / Rollback) */
+            /* First snapshot in best/err (for export / Rollback) */
             memcpy(mem->best_target, mem->target, m_tgt_sz * sizeof(int32_t));
             memcpy(mem->best_offset, mem->offset, KI_NCLASSES * sizeof(int64_t));
             if (aa.err_rollback) {
@@ -2499,9 +2510,9 @@ int main(int argc, char *argv[]) {
             }
         }
 
-        /* ── Step 2: Step berechnen (mit Gap-Dämpfung) ── */
+        /* ── Step 2: compute step (with gap damping) ── */
         int display_step = 0;
-        /* Ensemble-Gap: eval_err - train_err (overfitting = positive) */
+        /* Ensemble gap: eval_err - train_err (overfitting = positive) */
         float ensemble_gap = 0.0f;
         if (total_eval > 0 && aa.gap_k > 0.0f && ep > 0) {
             int en_err = total_train - trn_ok;
@@ -2550,8 +2561,8 @@ int main(int argc, char *argv[]) {
                   }
                   break;
              }
-             /* Gap-Dämpfung: exp(-K × gap) reduziert Step bei Overfitting.
-              * Benutzt den Ensemble-Gap (eval_err - train_err über alle Member). */
+             /* Gap damping: exp(-K × gap) reduces step when overfitting gap widens.
+              * Uses ensemble gap (eval_err - train_err averaged over all members). */
              if (ensemble_gap > 0.0f) {
                  float gap_factor = expf(-aa.gap_k * ensemble_gap);
                  s = (int)((float)s * gap_factor + 0.5f);
@@ -2564,7 +2575,7 @@ int main(int argc, char *argv[]) {
         int elapsed = (int)((tv_end.tv_sec - tv_start.tv_sec) * 1000
                           + (tv_end.tv_usec - tv_start.tv_usec) / 1000);
 
-        /* ── trn % / err: bei --filter NUR auf den trainierten Klassen ── */
+        /* ── trn.*err: with --filter only on trained classes ── */
         int trn_ok_filtered = 0, n_filtered_train = total_train;
         if (aa.filter_mask && pred_epoch) {
             n_filtered_train = 0;
@@ -2596,7 +2607,7 @@ int main(int argc, char *argv[]) {
         }
         printf("\n");
 
-        /* Alle Korrektur (immer — kein early stop mehr) */
+        /* All corrections (immer — no more early stop) */
         int member_err_sum = 0;
         for (int _b = 0; _b < active_members; _b++) {
             ki_Member *mem = members[_b];
@@ -2633,7 +2644,7 @@ int main(int argc, char *argv[]) {
                 }
             }
         }
-        /* Early stopping: bei --filter den Ensemble-Fehler nutzen */
+        /* Early stopping: use ensemble error with --filter */
         int early_stop_err = aa.filter_mask ? trn_disp_err : trn_err;
         if (early_stop_err == 0) { printf("  ✓\n"); break; }
 
@@ -2645,7 +2656,7 @@ int main(int argc, char *argv[]) {
             print_member_debug(members, active_members, _x, _y2, _n, (int)n_cont, ep);
         }
 
-        /* --debug-class-voting(-all): IMMER auf trainN (niemals eval) */
+        /* --debug-class-voting.*always on trainN.*never eval) */
         if (aa.debug_class_voting_all) {
             print_class_voting_debug(members, active_members,
                                      X_tr, y_tr, total_train, (int)n_cont, ep);
@@ -2665,7 +2676,7 @@ int main(int argc, char *argv[]) {
     int elapsed_ms = (int)((tv_end.tv_sec - tv_start.tv_sec) * 1000
                          + (tv_end.tv_usec - tv_start.tv_usec) / 1000);
 
-    /* Final evaluation: mit AKTUELLEN Targets (nach letzter Korrektur) */
+    /* Final evaluation: with CURRENT targets (after last correction) */
     int trn_ok=0, evl_ok = 0;
     uint8_t *pred_eval = aa.predictions[0] ?  (uint8_t *)ki_xcalloc((size_t)total_eval, sizeof(uint8_t)) : NULL ;
     /* pred_tr für debug_confusion — ki_evaluate_member nur 1× auf trainN */
@@ -2780,7 +2791,7 @@ int main(int argc, char *argv[]) {
     }
     free(pred_tr);
 
-    /* Export MUSS vor Member-Destruktion erfolgen (liest members[b]->target/offset) */
+    /* Export MUST happen before member destruction (liest members[b]->target/offset) */
     if (aa.exportD[0] != '\0')
     {
         export_ensemble(aa.exportD, W0_ens, total_members,
@@ -2788,7 +2799,7 @@ int main(int argc, char *argv[]) {
                         H_local, NC_slice, (int)n_cont);
     }
 
-    /* Members zerstören (nach finaler Evaluation + Export) */
+    /* Destroy members.*after final evaluation + Export) */
     for (int _z = 0; _z < active_members; _z++)
         ki_member_destroy(members[_z]);
 

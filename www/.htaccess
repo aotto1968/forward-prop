@@ -5,8 +5,8 @@
     Require all denied
 </FilesMatch>
 
-# Block access to data directory (MNIST files)
-RedirectMatch 403 ^/data/
+# Block access to data directory except MNIST (needed for inference demo)
+RedirectMatch 403 ^/data/(?!mnist/)
 
 # Block access to dot-files
 <FilesMatch "^\.">

@@ -241,16 +241,16 @@ and produces an accuracy curve for EN=1..N. Training and scoring are completely 
 │  Train seed 1234       │ ──> │  scores/SD1234.ens  │ ─┐
 │  --export-merge-scores │     └─────────────────────┘  │
 └────────────────────────┘                              │
-                                                        │   ┌──────────────────┐ 
-┌────────────────────────┐     ┌─────────────────────┐  │   │  merge-ensemble  │ 
-│  Train seed 5678       │ ──> │  scores/SD5678.ens  │ ─│─> │  scores/         │ 
-│  --export-merge-scores │     └─────────────────────┘  │   │  → EN curve      │ 
-└────────────────────────┘                              │   └──────────────────┘ 
-                                                        │   
+                                                        │   ┌──────────────────┐
+┌────────────────────────┐     ┌─────────────────────┐  │   │  merge-ensemble  │
+│  Train seed 5678       │ ──> │  scores/SD5678.ens  │ ─│─> │  scores/         │
+│  --export-merge-scores │     └─────────────────────┘  │   │  → EN curve      │
+└────────────────────────┘                              │   └──────────────────┘
+                                                        │
 ┌────────────────────────┐     ┌─────────────────────┐  │
 │  Train seed 9012       │ ──> │  scores/SD9012.ens  │ ─┘
 │  --export-merge-scores │     └─────────────────────┘
-└────────────────────────┘               
+└────────────────────────┘
    ... (N seeds, parallel, any time) ...
 </pre>
 </div>

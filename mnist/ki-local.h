@@ -23,7 +23,7 @@
 #define KI_PX                   784
 #define KI_NCLASSES             10
 #define KI_DEFAULT_LR           0.05f   /* → step = 0.05 × 131072 = 6554 */
-#define KI_DEFAULT_STEP_POWER   0.1f    /* höher erzeugt kleiners trn */
+#define KI_DEFAULT_STEP_POWER   0.1f    /* higher yields smaller trn */
 #define KI_DEFAULT_STEP_MODE    STEP_COS_TIME
 #define KI_DEFAULT_BATCH_N      64      /* optimum */
 #define KI_COLORS               1       /* MNIST is grayscale */
@@ -202,6 +202,47 @@ static int ki_mnist_read(ki_MNISTData *out) {
     out->y = (uint8_t *)malloc((size_t)lbl_count);
     memcpy(out->y, raw + 8, (size_t)lbl_count);
     free(raw);
+
+    /* ── Load test data (t10k) ─────────────────────────────── */
+    char tepath[512];
+    snprintf(tepath, sizeof(tepath), "%s/t10k-images-idx3-ubyte.gz", data_dir);
+    int has_test = (access(tepath, R_OK) == 0);
+    if (has_test) {
+        uint8_t *te_raw = NULL; size_t te_sz = 0;
+        if (ki_decompress_gz(tepath, &te_raw, &te_sz) == 0) {
+            int te_num = (te_raw[4]<<24)|(te_raw[5]<<16)|(te_raw[6]<<8)|te_raw[7];
+            int te_magic = (te_raw[0]<<24)|(te_raw[1]<<16)|(te_raw[2]<<8)|te_raw[3];
+            if (te_magic == 0x00000803 && te_num > 0) {
+                size_t te_npix = (size_t)te_num * (size_t)pixels;
+                size_t old_npix = (size_t)num_img * (size_t)pixels;
+                /* Load test labels */
+                snprintf(tepath, sizeof(tepath), "%s/t10k-labels-idx1-ubyte.gz", data_dir);
+                uint8_t *tel = NULL; size_t tlsz = 0;
+                int lab_ok = (ki_decompress_gz(tepath, &tel, &tlsz) == 0);
+                int te_lbl_cnt = 0;
+                if (lab_ok) {
+                    int lm = (tel[0]<<24)|(tel[1]<<16)|(tel[2]<<8)|tel[3];
+                    te_lbl_cnt = (tel[4]<<24)|(tel[5]<<16)|(tel[6]<<8)|tel[7];
+                    lab_ok = (lm == 0x00000801 && te_lbl_cnt == te_num);
+                }
+                if (lab_ok) {
+                    /* Realloc + copy images */
+                    out->X_raw = (uint8_t *)realloc(out->X_raw, old_npix + te_npix);
+                    memcpy(out->X_raw + old_npix, te_raw + 16, te_npix);
+                    out->X = (float *)realloc(out->X, (old_npix + te_npix) * sizeof(float));
+                    for (size_t i = 0; i < te_npix; i++)
+                        out->X[old_npix + i] = ((float)te_raw[16 + i] / 255.0f) * 2.0f - 1.0f;
+                    /* Realloc + copy labels */
+                    out->y = (uint8_t *)realloc(out->y, num_img + te_num);
+                    memcpy(out->y + num_img, tel + 8, te_num);
+                    out->num_images += te_num;
+                    out->n_eval = te_num;
+                }
+                if (tel) free(tel);
+            }
+            free(te_raw);
+        }
+    }
 
     printf("  [MNIST] Loaded %d samples (%d px)\n", out->num_images, out->pixels);
     return 0;

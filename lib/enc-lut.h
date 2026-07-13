@@ -2,16 +2,16 @@
  * lib/enc-lut.h — Precomputed Encoding Lookup Table (Legacy Wrapper)
  * ===================================================================
  *
- * Dies ist ein Legacy-Wrapper. Neue Nutzer sollten direkt
- * "ki-encoding.h" inkludieren.
+ * This is a legacy wrapper. New users should include
+ * "ki-encoding.h" directly.
  *
- * Dieses Header inkludiert ki-encoding.h und definiert
- * enc_lut_init_all() als Komfort-Funktion für den Otto Score.
+ * This header includes ki-encoding.h and defines
+ * enc_lut_init_all() as a convenience function for the Otto Score.
  *
  * Usage (legacy):
  *   1. #include "ki-common.h" first (defines aa, ki_Args)
  *   2. #include "enc-lut.h"
- *   3. enc_lut_init_all()  — initialisiert alle in aa.enc* aktiven Tabellen
+ *   3. enc_lut_init_all()  — initializes all tables active in aa.enc*
  */
 #ifndef ENC_LUT_H
 #define ENC_LUT_H

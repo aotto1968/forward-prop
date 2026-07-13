@@ -147,14 +147,14 @@ int main(int argc, char *argv[]) {
     aa.channel = KI_DEFAULT_COLOR; aa.packedB = 1; aa.ensembleN = 1;
     ki_parse_args(argc, argv);
 
-    /* Sollen Members oder eine Matrix verwendet werden?
+    /* Should members or a matrix be used?
      * Default (kein --channels, kein --encoding): single matrix (flat)
      * --channels r,g,b  (ohne flat) → Members pro Block
      * --channels flat              → single matrix
      * --encoding latest            → Members (mixed types) */
     int use_members = 0;
     if (aa.enc_count > 1) {
-        /* --encoding mit verschiedenen Typen → Members */
+        /* --encoding with different types.*Members */
         int8_t first = aa.enc_array[0].type;
         for (int i = 1; i < aa.enc_count; i++)
             if (aa.enc_array[i].type != first) { use_members = 1; break; }
@@ -164,15 +164,15 @@ int main(int argc, char *argv[]) {
     omp_set_num_threads(aa.threadN);
 
     /* ── Single matrix or multi-member? ────────────────────────── */
-    int n_mem = 0;          /* Anzahl Members (für Training) */
-    int n_blocks = 0;       /* Anzahl gepackter Blöcke im Buffer */
+    int n_mem = 0;          /* number of Members (für Training) */
+    int n_blocks = 0;       /* number of packed blocks in buffer */
     int mem_nc[ADAM_MAX_MEM], mem_off[ADAM_MAX_MEM];
     int block_order[ADAM_MAX_MEM];
     int total_stride = 0;
     int blk_nc = aa.packedB ? KI_NC : (KI_PX / 3);
 
     if (!use_members) {
-        /* Single-matrix: alle Blöcke in EINER W0 kombiniert */
+        /* Single matrix: all blocks combined in ONE W0 */
         n_mem = 1;
         int blk_idx = 0;
         if (aa.enc_count > 0) {
@@ -239,7 +239,7 @@ int main(int argc, char *argv[]) {
     /* ── Load dataset ─────────────────────────────────────────── */
     ki_Dataset data = { .dry_run = aa.dry_run };
     if (ki_dataset_read(&data) != 0) return 1;
-    /* NOTE: --filter wirkt NUR auf Training */
+    /* NOTE: --filter affects training only */
     int total_all = data.num_images;
     int total_train = aa.trainN;
     int total_eval  = aa.evalN;

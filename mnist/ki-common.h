@@ -33,21 +33,21 @@
 #include "w0_random.h"
 
 /* ═══════════════════════════════════════════════════════════════════════
- * STEP MODE — eindeutige Identifikation des Step-Algorithmus
+ * STEP MODE — unique identification des Step-Algorithmus
  * ═══════════════════════════════════════════════════════════════════════
  *
- * Jeder Member bekommt seinen eigenen Step pro Epoche.
- * Der Step-Mechanismus wird über --step-err / --step-const
- * gesetzt und im struct ki_Args.step_mode gespeichert.
+ * Each member gets its own step per epoch.
+ * The step mechanism is set via --step-err / --step-const
+ * set in struct ki_Args.step_mode gespeichert.
  *
  *   STEP_POW:       step = step_init × (err/total)^step_power  (DEFAULT)
- *                   Fällt sanft mit Fehler → kein Overfitting.
+ *                   Decays smoothly with error → kein Overfitting.
  *   STEP_COS_TIME:  step = step_init × cosine(ep/epochs)
- *                   Zeitbasierter Cosine-Decay.
+ *                   Time-based cosine decay.
  *   STEP_COS_ERR:   step = step_init × cosine(1 - err/total)
- *                   Fehlerbasierter Cosine-Decay.
- *   STEP_CONST:     step = stepN (wenn stepN>0) sonst step_init
- *                   Konstanter Step.
+ *                   Error-based cosine decay.
+ *   STEP_CONST:     step = stepN (wenn stepN>0) otherwise step_init
+ *                   Constant step.
  */
 enum step_mode {
     STEP_POW        = 0,
@@ -65,9 +65,9 @@ static const char *step_mode_name[] = {
     [STEP_CONST]    = "const",
 };
 
-/* Forward declaration: mode_str(), color_str(), enc_str() sind weiter unten
- * definiert (nach OT_F), werden aber von ki_parse_args() im --help
- * bereits vor OT_F verwendet. */
+/* Forward declaration: mode_str(), color_str(), enc_str() are defined below
+ * defined (after OT_F), but overwritten by ki_parse_args() in --help
+ * already used before OT_F. */
 __attribute__((unused))
 static const char *mode_str(void);
 __attribute__((unused))
@@ -79,25 +79,25 @@ static const char *enc_str(void);
  * ENCODING — Pixel-zu-Thermometer-Transformationen
  * ═══════════════════════════════════════════════════════════════════════
  *
- * Jeder aktive Farb-Block kann eine eigene Encoding-Funktion haben.
- * Steuerung über --encoding r=lin8,g=up,b=down (per Block) oder
- * --encoding lin8 (Default für alle aktiven Blöcke).
+ * Each has its own Encoding-Funktion haben.
+ * Controlled via --encoding r=lin8,g=up,b=down (per Block) oder
+ * --encoding lin8 (default for all active blocks).
  */
 
 /* ═══════════════════════════════════════════════════════════════════════
- * ENCODING — Thermometer-Bitmasken für binäre Eingabe
+ * ENCODING — thermometer bitmasks for binary input
  * ═══════════════════════════════════════════════════════════════════════
  * Encoding-Enum, Parser, Apply, LUT und Farbdefinitionen
- * sind in den gemeinsamen Header ausgelagert: */
+ * are in the shared header ausgelagert: */
 #include "../lib/ki-encoding.h"
 
-/* ── Parser: String → Bit-Position (für --channels) ────────────
+/* ── Parser: string → bit position (for --channels) ────────────
  * Returns bit index or -1 if not a color name.
  * Handles: mnist,r,g,b,y,601,lum,l,rg,by,yl,709,auge,packed,full
  */
 static inline int ki_color_parse(const char *tok) {
-    /* Datengetrieben: {name, index} — Alias-Mehrfacheinträge erlaubt.
-     * strcasecmp → case-insensitive. Sonderfälle: auge=-2, grey=-3,
+    /* Data-driven: multiple aliases allowed.
+     * strcasecmp → case-insensitive. Sonderfaelle: auge=-2, grey=-3,
      * rgb=-4, diff=-5. */
     static const struct { const char *name; int idx; } _lut[] = {
         {"mnist", COLOR_MNIST},
@@ -162,12 +162,12 @@ static inline int ki_color_parse(const char *tok) {
  * VIRTUAL NEURONS (VN) — Bit-Grouping per Container
  * ═══════════════════════════════════════════════════════════════════════
  *
- * --splitVN (1,2,4,8,16,32) gruppiert Bits eines Containers zu
- * virtuellen Neuronen.  Jedes virtuelle Neuron feuert wenn die
- * Popcount-Mehrheit seiner Bits gesetzt ist.
+ * --splitVN groups bits of a container into
+ * virtual neurons. Each virtual neuron fires when the
+ * popcount majority of its bits are set.
  *
  *   VN_BITS(G)  = G       Bits pro virtuellem Neuron (= splitVN)
- *   VN_GROUPS(G) = 32 / G Virtuelle Neuronen pro Container
+ *   VN_GROUPS(G) = 32 / G Virtuelle Neuronen per container
  *   VN_THRESH(G) = G / 2  Popcount-Schwelle (>=majority)
  */
 #define VN_BITS(G)   (G)
@@ -222,7 +222,7 @@ typedef struct {
     int    step_mode;       /* enum step_mode: Algorithmus (siehe oben) */
     int    stepN;           /* --step-const N: const step value (0=use lr, default: 0) */
     float  step_power;      /* --step-power F: exponent für pow/cos (default: 0.7) */
-    float  gap_k;           /* --gap-k K: exp(-K×gap) Dämpfung des Steps bei Train/Eval-Gap (default: 0.0=aus) */
+    float  gap_k;           /* --gap-k K: exp(-K×gap) step damping when train/eval gap widens (default: 0.0=off) */
     int    err_rollback;    /* --err-rollback: rollback targets when err increases (default: 0) */
     int    ensembleN;       /* --ensembleN N: independent W0 copies (default: 1) */
     int    splitVN;         /* --splitVN N: vertical H split (default: 1) */
@@ -238,12 +238,12 @@ typedef struct {
     int8_t enc_default_type;      /* --encoding: fallback type for blocks without specific setting */
     int8_t enc_default_width;     /* --encoding: fallback width (8, 16, 32) */
     ki_EncSlot enc_array[KI_ENC_MAX];  /* Alle aktiven Encodings als (type,width)-Paare */
-    int         enc_count;             /* Anzahl Einträge in enc_array */
+    int         enc_count;             /* number of Eintraege in enc_array */
     int    opt_target_norm;    /* --optional target-norm: vote normalisierung aktivieren */
     char   seed_file[256]; /* --seed-file PATH: true random source */
     char   importD[512];    /* --import DIR: load model for inference */
     int    seed_splitmix;  /* --seed-splitmix: ignore seed_file, use splitmix64 PRNG */
-    int    multi_correct;  /* --multi-correct: alle über true_k bestrafen (default: 1) */
+    int    multi_correct;  /* --multi-correct: punish all over true_k (default: 1) */
     int    target_random_init; /* --target-random-init: random targets statt counting (default: 0) */
     int    ensemble_seed;    /* ENS_SEED_ONCE|CONST|INCR (default: ONCE) */
     int    debug_class_voting; /* --debug-class-voting: Member × Class accuracy (end only) */
@@ -273,7 +273,7 @@ static inline const char *ensemble_seed_str() {
 
 /* ── Parse CLI ─────────────────────────────────────────────────── */
 static inline void ki_parse_args(int argc, char *argv[]) {
-    /* enc[] initialisieren: -1 = "nicht gesetzt" (Default wird später aufgelöst) */
+    /* enc[] initialisieren: -1 = "nicht gesetzt" (default resolved later) */
     for (int i = 0; i < COLOR_NB; i++) aa.enc[i] = -1;
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
@@ -298,7 +298,7 @@ static inline void ki_parse_args(int argc, char *argv[]) {
             printf("                    const     : step_init (const=NUM: fixed step NUM)\n");
             printf("  --step-const N    alias for --step-err const=####                               (default: %d)\n", aa.stepN);
             printf("  --step-power F    alias for --step-err pow=####                                 (default: %.1f, 1.0=linear)\n", (double)aa.step_power);
-            printf("  --gap-k F         Exp(-K × gap) Dämpfung des Steps bei Overfitting-Gap           (default: %.1f)\n", (double)aa.gap_k);
+            printf("  --gap-k F         Exp(-K × gap) step damping when overfitting gap widens          (default: %.1f)\n", (double)aa.gap_k);
             printf("                    gap = train_err%% - eval_err%%  |  step *= exp(-K × gap)\n");
             printf("  --err-rollback    Rollback targets when training err increases                  (default: off)\n");
             printf("  --warmup N        Linear warmup epochs                                          (default: %d, 0=off)\n", aa.warmup_epochs);
@@ -322,7 +322,7 @@ static inline void ki_parse_args(int argc, char *argv[]) {
             printf("                    rgb           : r=R, g=G, b=B,\n");
             printf("                    grey          : y|601=ITU-601, yl|709=ITU-709\n");
             printf("                    h             : hue (Farbwinkel, atan2-basiert)\n");
-            printf("                    s             : saturation (Farbsättigung, max-min)\n");
+            printf("                    s             : saturation (Farbsaettigung, max-min)\n");
             printf("                    c             : contrast (Sobel-Kanten auf LUM)\n");
             printf("                    edge          : edges via Sobel on Y luminance (like MNIST, for CIFAR)\n");
             printf("                    bin           : Otsu-binarized Y luminance (filled black/white regions)\n");
@@ -383,7 +383,7 @@ static inline void ki_parse_args(int argc, char *argv[]) {
         } else if (strcmp(argv[i], "--epochsN") == 0 && i + 1 < argc) {
             aa.epochs = atoi(argv[++i]);
             /* NOTE: epochs=0 bedeutet "counting-only + eval, kein Training".
-             * Nicht mit dry-run koppeln — --dry-run muss explizit sein. */
+             * Do not couple with dry-run — --dry-run must be explicit. */
         } else if (strcmp(argv[i], "--batchN") == 0 && i + 1 < argc) {
             aa.batchN = atoi(argv[++i]);
             if (aa.batchN < 1) aa.batchN = 1;
@@ -477,8 +477,8 @@ static inline void ki_parse_args(int argc, char *argv[]) {
                 fprintf(stderr, "[ERROR] --filter: empty string\n");
                 exit(1);
             }
-            /* Parse sofort in Bitmask — benötigt ki_class_names[] (verfügbar
-             * da ki-local.h vor ki_parse_args inkludiert). */
+            /* Parse immediately into bitmask — needs ki_class_names[] (available
+             * since ki-local.h is included before ki_parse_args). */
             aa.filter_mask = 0;
             char fbuf[128];
             strncpy(fbuf, aa.filter_str, sizeof(fbuf) - 1);
@@ -590,7 +590,7 @@ static inline void ki_parse_args(int argc, char *argv[]) {
 
             /* ── Encoding-Alias-Expansion ─────────────────────────────
              * Erlaubt --encoding latest statt langer Komma-Listen.
-             * Neue Aliases hier eintragen (beide Arrays同步 halten).
+             * New aliases: add here (keep both arrays in sync).
              * Expandiert rekursiv bis 5 Tiefe: zunaechst voller String,
              * dann pro Komma-Token. */
             #define KI_ENC_ALIAS_N 8
@@ -645,7 +645,7 @@ static inline void ki_parse_args(int argc, char *argv[]) {
                     }
                     _t = strtok(NULL, ",");
                 }
-                if (!_any) break; /* keine weiteren Expansionen */
+                if (!_any) break; /* no further expansions */
                 strncpy(buf, _new, sizeof(buf) - 1);
                 buf[sizeof(buf) - 1] = '\0';
             }
@@ -674,7 +674,7 @@ static inline void ki_parse_args(int argc, char *argv[]) {
                                 "Valid: raw,lin7,lin8,down,up,mid,log,exp,sig\n", eq + 1, tok);
                         exit(1);
                     }
-                    /* In enc_array eintragen — der einzige Encoding-Pfad */
+                    /* In enc_array eintragen — the only encoding path */
                     #define ADD_ENC(COL, E, W) do { \
                         if (aa.enc_count < KI_ENC_MAX) { \
                             aa.enc_array[aa.enc_count].type  = (int8_t)(E); \
@@ -697,7 +697,7 @@ static inline void ki_parse_args(int argc, char *argv[]) {
                     if (enc == KI_ENC_RAW) has_raw = 1;
                 } else {
                     /* Single token: encoding name ± width suffix.
-                     * Jeder Token → EIN Eintrag in enc_array[]. */
+                     * Each token means ONE entry in enc_array[]. */
                     enc = ki_enc_parse(tok, &w);
                     if (enc < 0) {
                         fprintf(stderr, "[ERROR] --encoding: unknown '%s'. "
@@ -710,7 +710,7 @@ static inline void ki_parse_args(int argc, char *argv[]) {
                         aa.enc_array[aa.enc_count].color = -1;  /* default/all */
                         aa.enc_count++;
                     }
-                    /* Erster Token setzt auch enc_default (Backward compat) */
+                    /* First token also sets enc_default (Backward compat) */
                     if (aa.enc_count == 1) {
                         aa.enc_default_type  = (int8_t)enc;
                         aa.enc_default_width = (int8_t)w;
@@ -763,11 +763,11 @@ static inline void ki_parse_args(int argc, char *argv[]) {
             exit(1);
         }
     }
-    /* ── Post-processing: enc_array füllen/expandieren ──────────────
+    /* ── Post-processing: fill.expand enc_array ──────────────
      * 1. Wenn enc_array leer: Defaults pro aktivem Kanal eintragen
-     * 2. Wenn enc_array Einträge mit color=-1 (bare tokens): expandieren
-     *    auf alle aktiven Kanäle.
-     * 3. Channel-Maske aus enc_array ableiten (falls nicht explizit). */
+     * 2. If enc_array entries have color=-1 (bare tokens: expand
+     *    to all active channels.
+     * 3. Channel-Maske aus enc_array ableiten (if not explicit). */
     {   int first_bare = -1;  /* index of first color=-1 entry */
         for (int i = 0; i < aa.enc_count && i < KI_ENC_MAX; i++)
             if (aa.enc_array[i].color < 0) { first_bare = i; break; }
@@ -845,19 +845,19 @@ static inline float ki_lr_schedule(int epoch, int total_epochs, int warmup,
 /* ═══════════════════════════════════════════════════════════════════════
  * OT_PRECISION — Skalierungshilfe: in × F + 0.5-Rounding
  * ═══════════════════════════════════════════════════════════════════════
- * F = (1<<OT_PRECISION).  Alle logit/log(p)-Werte werden mit F skaliert
- * in int32/int64 gespeichert.  ot_precision() rundet kaufmännisch.
+ * F = (1<<OT_PRECISION).  All logit values are scaled by F
+ * in int32/int64 gespeichert.  ot_precision() rundet kaufmaennisch.
  */
 #define OT_F (1 << OT_PRECISION)
 static inline double ot_precision(double in) {
     return in * (double)OT_F + (in >= 0 ? 0.5 : -0.5);
 }
 
-/* ── Mode-String mit Parameter (für TRAINING Header und --help) ── */
-/* Gibt "pow(2.4)", "const(155)", "cos-time" etc. zurück.
- * Nutzt static buffer für snprintf-Modi.
- * Das ist eine reine Anzeigefunktion — der eigentliche step-Wert
- * wird im TRAINING-Header separat ausgegeben. */
+/* ── Mode string with parameter (for TRAINING header and --help) ── */
+/* Returns "pow()", "const()", "cos-time" etc..
+ * Uses static buffer for snprintf-Modi.
+ * This is purely for display — the actual step value
+ * is output separately in the TRAINING header. */
 __attribute__((unused))
 static const char *mode_str(void) {
     static char _mode_buf[64];
@@ -881,7 +881,7 @@ static const char *mode_str(void) {
 /* ── Color-String (für --help und SETUP Header) ────────────────── */
 /* Gibt "R,G,B", "packed:MNIST", "LUM,RG,BY" etc. aus der
  * aa.channel Maske + aa.packedB Flag.
- * Nutzt static buffer für snprintf, analog zu mode_str(). */
+ * Uses static buffer for snprintf, similar to mode_str(). */
 __attribute__((unused))
 static const char *color_str(void) {
     static char _color_buf[64];
@@ -908,7 +908,7 @@ static const char *color_str(void) {
 
 /* ── Encoding-String (für --help und TRAINING Header) ──────────── */
 /* Gibt "R=exp8,G=lin8,B=sig8" etc. aus — immer aus enc_array[].
- * Bei MNIST (single channel) ohne Color-Präfix: "exp8,sig8".
+ * For MNIST without color prefix: "exp8,sig8".
  * Nutzt static buffer, analog zu color_str(). */
 __attribute__((unused))
 static const char *enc_str(void) {
@@ -937,14 +937,14 @@ static const char *enc_str(void) {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
- * CORRECTION — atomare Target-Updates (für Einzelsample-Korrektur)
+ * CORRECTION — atomic target updates (for single-sample correction)
  * ═══════════════════════════════════════════════════════════════════════
- * Für ein fehlklassifiziertes Sample (true_k ≠ pred):
- *   target[true_k][h][v] += step   für jedes aktive virtuelle Neuron
+ * For a misclassified sample (true_k ≠ pred):
+ *   target[true_k][h][v] += step   for each active virtual neuron
  *   target[pred][h][v]   -= step
  *
- * Schreibt per `#pragma omp atomic` direkt auf shared target
- * (im Gegensatz zu ki_batch_correct, das Thread-Caches nutzt).
+ * Writes via #pragma omp atomic directly to shared target
+ * (unlike ki_batch_correct, which uses thread caches).
  */
 
 
@@ -970,7 +970,7 @@ static inline void *ki_xcalloc(size_t nmemb, size_t size) {
 /* ═══════════════════════════════════════════════════════════════════════
  * VIRTUAL NEURON (VN) KERNELS — compile-time-optimized per splitVN
  * ═══════════════════════════════════════════════════════════════════════
- * (Makros sind in mlp-bin32-otto-trn.c definiert)
+ * (macros defined in mlp-bin32-otto-trn.c)
  */
 
 /* ═══════════════════════════════════════════════════════════════════════
@@ -979,7 +979,7 @@ static inline void *ki_xcalloc(size_t nmemb, size_t size) {
  * KI_PACK=4 (KI_NC=196): 4 px/cont, p0|p1<<8|p2<<16|p3<<24
  * KI_PACK=1 (KI_NC=784): 1 px/cont, byte-repeat (*0x01010101)
  *
- * Guard KI_COMMON_LOAD_INPUT: überschreibe in eigener Datei
+ * Guard KI_COMMON_LOAD_INPUT: override in own file
  *   #define KI_COMMON_LOAD_INPUT
  *   #include "ki-common.h"
  *   // eigener load_input
@@ -1030,7 +1030,7 @@ static __attribute__((unused)) uint32_t *load_input(const uint8_t *X_raw, int n_
 
 
 /* ═══════════════════════════════════════════════════════════════════════
- * SHUFFLE — Fisher-Yates (für Adam/Ref-Trainer)
+ * SHUFFLE — Fisher-Yates (for Adam/Ref trainers)
  * ═══════════════════════════════════════════════════════════════════════ */
 static inline void ki_shuffle(int *indices, int n) {
     for (int i = n - 1; i > 0; i--) {
@@ -1040,10 +1040,10 @@ static inline void ki_shuffle(int *indices, int n) {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
- * LR CONVERSION — uint32↔float (für alte Adam-Trainer)
+ * LR CONVERSION — uint32↔float (for old Adam trainers)
  * ═══════════════════════════════════════════════════════════════════════
- * Alte ki_Args-Version hatte uint32 LR Felder. Die Konverter
- * sind für Kompatibilität mit mlp-flt32-w1-adam-trn etc.
+ * Old ki_Args version had uint32 LR fields. Die Konverter
+ * are for compatibility mit mlp-flt32-w1-adam-trn etc.
  */
 static inline float ki_lr_uint_to_float(uint32_t lr_uint) {
     return (float)lr_uint / (float)UINT32_MAX;
@@ -1075,7 +1075,7 @@ static inline void ki_report_show(int train_ok, int train_n,
 /* ═══════════════════════════════════════════════════════════════════
  * CONFUSION MATRIX — [true][pred] Tabelle (K×K), generisch
  * ═══════════════════════════════════════════════════════════════════
- * Kann von jedem Trainer verwendet werden.
+ * Can be used by any trainer.
  * is_final: 1 = Endausgabe, 0 = per-epoch
  */
 __attribute__((unused))
@@ -1091,7 +1091,7 @@ static void print_confusion_debug(const uint8_t *y_true, const uint8_t *y_pred,
             cm[t][p]++;
     }
 
-    /* Nur Klassen mit Samples anzeigen (wichtig bei --filter) */
+    /* Only classes with samples anzeigen (important with --filter) */
     int active_cols[KI_NCLASSES], n_active = 0;
     for (int k = 0; k < KI_NCLASSES; k++) {
         int has = 0;
@@ -1124,7 +1124,7 @@ static void print_confusion_debug(const uint8_t *y_true, const uint8_t *y_pred,
             row_tot += cm[r][cc];
             if (cc != r) row_err += cm[r][cc];
         }
-        if (row_tot == 0) continue;  /* nur Zeilen mit Samples anzeigen */
+        if (row_tot == 0) continue;  /* only show rows with samples */
         float err_pct = (float)row_err * 100.0f / (float)row_tot;
         printf("  %-12s", ki_class_names[r]);
         for (int ci = 0; ci < n_active; ci++) {

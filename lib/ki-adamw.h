@@ -62,7 +62,7 @@ static inline void ki_init_kaiming_w0(ki_LinearLayer *layer, uint64_t seed) {
         layer->W[i] = (float)w0_random() / (float)UINT32_MAX * 2.0f * bound - bound;
 }
 
-/* Für ENS_SEED_ONCE: kein Reset, liest aus aktuellem w0_random()-Stream */
+/* For ENS_SEED_ONCE: no reset, reads from current w0_random() stream */
 static inline void ki_init_kaiming_w0_seq(ki_LinearLayer *layer) {
     float bound = 1.0f / sqrtf((float)layer->in_features);
     int n = layer->out_features * layer->in_features;

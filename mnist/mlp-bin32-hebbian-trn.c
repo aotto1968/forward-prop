@@ -321,7 +321,7 @@ static void model_free(Bin32Model *m) { if (m) { free(m->W0); free(m->W1); free(
  * MAIN
  * ═══════════════════════════════════════════════════════════════════════ */
 
-/* ── Global args (defaults, überschrieben durch --flags) ─────── */
+/* ── Global args (defaults, overridden by --flags) ─────── */
 ki_Args aa = {
     .hidden   = 256,
     .epochs   = 3,
@@ -380,8 +380,8 @@ int main(int argc, char *argv[]) {
 
         ki_Dataset data = { .dry_run = aa.dry_run };
         if (ki_dataset_read(&data) != 0) return 1;
-        /* NOTE: --filter wirkt NUR auf Training (in der Trainingsschleife),
-         * nicht auf Evaluation.  Kein ki_filter_dataset() nötig. */
+        /* NOTE: --filter affects training only (in the training loop),
+         * not evaluation.  No ki_filter_dataset() needed. */
         if (data.pixels != KI_PX) return 1;
         uint32_t *X_all = load_input(data.X_raw, data.num_images);
         int te = aa.evalN > data.num_images ? data.num_images : aa.evalN;
@@ -420,7 +420,7 @@ int main(int argc, char *argv[]) {
     int total_all = aa.trainN + aa.evalN;
     ki_Dataset data = { .dry_run = aa.dry_run };
     if (ki_dataset_read(&data) != 0) return 1;
-    /* NOTE: --filter wirkt NUR auf Training, nicht auf Evaluation */
+    /* NOTE: --filter affects TRAINING only, not evaluation */
     if (data.pixels != KI_PX) return 1;
     if (total_all > data.num_images) total_all = data.num_images;
 
@@ -543,7 +543,7 @@ int main(int argc, char *argv[]) {
     float acc = 0.0f;
     for (int ep = 0; ep < epochs; ep++) {
         int total_flips = 0;
-        /* Dynamischer Threshold: 50→30 über Epochen */
+        /* Dynamic threshold: 50→30 over epochs */
         int pct = 50 - ep * 20 / (epochs > 1 ? epochs - 1 : 1);
         if (pct < 30) pct = 30;
         for (int m = 0; m < total_members && m < HEB_MAX_MEM; m++) {

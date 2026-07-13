@@ -56,7 +56,7 @@ models: models-mnist models-cifar
         model-cifar-otto model-cifar-hebbian model-cifar-adam
 
 # ═══════════════════════════════════════════════════════════════
-# Test — baut nur fehlende Modelle, dann eval via --import
+# Test — build missing models only, then eval via --import
 # ═══════════════════════════════════════════════════════════════
 test: all
 	$(MAKE) -s test-mnist

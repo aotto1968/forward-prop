@@ -23,8 +23,8 @@
 #endif
 #define KI_PX                     3072    /* 32 × 32 × 3 = 3072 pixels per image */
 #define KI_NCLASSES               10
-#define KI_DEFAULT_LR             0.01f   /* → step = 0.005 × 131072 = 655 (großes lr fürhrt zu starken trn und schwachem evl*/
-#define KI_DEFAULT_STEP_POWER     7.0f    /* höher erzeugt kleiners trn */
+#define KI_DEFAULT_LR             0.01f   /* → step = 0.005 × 131072 = 655 (high lr leads to strong trn and weak evl */
+#define KI_DEFAULT_STEP_POWER     7.0f    /* higher yields smaller trn */
 #define KI_DEFAULT_STEP_MODE      STEP_COS_TIME
 #define KI_DEFAULT_BATCH_N        128     /* optimum */
 #define KI_DEFAULT_ENSEMBLE_SEED  ENS_SEED_ONCE
@@ -44,7 +44,7 @@
 #define OT_PRECISION              17
 #endif
 
-/* Für mlp-flt32-trn-*-adam.c (Alt-Trainer) */
+/* For mlp-flt32-trn-*-adam.c (old trainer) */
 #ifndef KI_BITS_PER_CONT
 #define KI_BITS_PER_CONT          32
 #endif
@@ -100,7 +100,7 @@ static inline void ki_blocks_from_rgb(int r, int g, int b, uint8_t blocks[COLOR_
     blocks[COLOR_RB] = (uint8_t)ki_clamp_u8(128 + (r - b));               /* RB */
     blocks[COLOR_GB] = (uint8_t)ki_clamp_u8(128 + (g - b));               /* GB */
 
-    /* Hue (Farbwinkel) — atan2(2R-G-B, G-B) normiert auf 0..255 */
+    /* Hue — atan2(2R-G-B, G-B) normiert auf 0..255 */
     {   float dx = 2.0f * (float)r - (float)g - (float)b;
         float dy = 1.0f * ((float)g - (float)b);
         float hue_f = atan2f(dy, dx) / (2.0f * 3.14159265358979323846f);
@@ -109,14 +109,14 @@ static inline void ki_blocks_from_rgb(int r, int g, int b, uint8_t blocks[COLOR_
         if (hue > 255) { hue = 255; }
         blocks[COLOR_H] = (uint8_t)hue;
     }
-    /* Saturation (Farbsättigung) — max(R,G,B) - min(R,G,B) */
+    /* Saturation — max(R,G,B) - min(R,G,B) */
     {   int bv = b;  /* copy to avoid -Wshadow */
         int mx = r, mn = r;
         if (g > mx) { mx = g; } if (g < mn) { mn = g; }
         if (bv > mx) { mx = bv; } if (bv < mn) { mn = bv; }
         blocks[COLOR_S] = (uint8_t)(mx - mn);
     }
-    /* Contrast (wird nach Sobel in load_input berechnet — hier Platzhalter) */
+    /* Contrast (computed by Sobel in load_input — placeholder here) */
     blocks[COLOR_C] = (uint8_t)r;
 
     blocks[COLOR_CL] = (uint8_t)((g + b) >> 1);                           /* CL */

@@ -102,9 +102,9 @@ model-adam: mnist-mlp-flt32-adam-trn.exe
 # ── MNIST ──────────────────────────────────────────────────
 test-otto: otto
 	@test -f $(MODEL_DIR)/mnist-otto-h512-e10/model.otto || $(MAKE) model-otto
-	@echo -e "\n=== Otto Score MNIST (H=512, 10 ep, exp8) ==="
+	@echo -e "\n=== Otto Score MNIST (H=512, 10 ep, latest) ==="
 	@./mnist-mlp-bin32-otto-trn-xnor.exe \
-	  --import $(MODEL_DIR)/mnist-otto-h512-e10 --evalN 10000 --encoding exp 2>&1 | grep '^REPORT'
+	  --import $(MODEL_DIR)/mnist-otto-h512-e10 --evalN 10000 --encoding latest 2>&1 | grep '^REPORT'
 
 test-adam: adam
 	@test -f $(MODEL_DIR)/mnist-adam-h512-e10/weights-0.meta || $(MAKE) model-adam
@@ -114,9 +114,9 @@ test-adam: adam
 
 test-hebbian: hebbian
 	@test -f $(MODEL_DIR)/mnist-hebbian-h512-e10/weights-0.meta || $(MAKE) model-hebbian
-	@echo -e "\n=== Bin32 Hebbian MNIST (H=512, 10 ep, exp8) ==="
+	@echo -e "\n=== Bin32 Hebbian MNIST (H=512, 10 ep, latest) ==="
 	@./mnist-mlp-bin32-hebbian-trn-xnor.exe \
-	  --import $(MODEL_DIR)/mnist-hebbian-h512-e10 --evalN 10000 --encoding exp 2>&1 | grep '^REPORT'
+	  --import $(MODEL_DIR)/mnist-hebbian-h512-e10 --evalN 10000 --encoding latest 2>&1 | grep '^REPORT'
 
 test: test-otto test-adam test-hebbian
 

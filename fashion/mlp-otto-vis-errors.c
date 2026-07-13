@@ -1,0 +1,1 @@
+../mnist/mlp-otto-vis-errors.c

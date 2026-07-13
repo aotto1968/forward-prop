@@ -101,6 +101,7 @@ static inline int ki_color_parse(const char *tok) {
      * rgb=-4, diff=-5. */
     static const struct { const char *name; int idx; } _lut[] = {
         {"mnist", COLOR_MNIST},
+
         {"r",     COLOR_R},
         {"g",     COLOR_G},
         {"b",     COLOR_B},
@@ -154,6 +155,16 @@ static inline int ki_color_parse(const char *tok) {
  * ═══════════════════════════════════════════════════════════════════════ */
 #include "ki-local.h"
 
+/* ── Encoding alias lookup (dataset-specific, defined in ki-local.h) ──
+ * Each dataset provides its own ki_alias_lookup() via KI_COMMON_ALIAS_LOOKUP
+ * guard.  Fallback returns NULL (no aliases). */
+#ifndef KI_COMMON_ALIAS_LOOKUP
+static const char *ki_alias_lookup(const char *name) {
+    (void)name;
+    return NULL;
+}
+#endif
+
 #ifndef MAX
 #define MAX(a,b) ((a) > (b) ? (a) : (b))
 #endif
@@ -199,59 +210,59 @@ typedef struct {
 } ki_EncSlot;
 
 typedef struct {
-    int    hidden;          /* Hidden neurons (--hiddenN, default: 64) */
-    int    epochs;          /* Iterations (--epochsN, default: 1) */
-    int    batchN;          /* Mini-batch size (--batchN, default: 64) */
-    int    trainN;          /* Training samples (--trainN, default: 50000) */
-    int    evalN;           /* Eval samples (--evalN, default: 10000) */
-    int    dry_run;         /* --dry-run: print arch and exit */
-    int    debug;           /* --debug: verbose output */
-    unsigned int seed;      /* Random seed (--seed, default: 42) */
-    char   exportD[256];    /* --export DIR: export directory */
-    char   predictions[256]; /* --predictions FILE: export per-sample predictions (for vis-errors) */
-    char   export_merge_scores[256];   /* --export-merge-scores DIR: save per-member scores to archive files */
-    char   export_scores[256]; /* --export-scores FILE: save per-sample scores (10×int64+uint8) */
-    char   export_neurons[256]; /* --export-neurons FILE: save gb_buf+Target+Offset für Adam-on-neurons */
-    float  lr;              /* Step size (--lr, default: 0.05) */
-    float  lr_min;          /* Min LR fraction (--lr-min, default: 0.1) */
-    int    lr_step;         /* round(aa.lr * (1<<OT_PRECISION)) */
-    int    threadN;         /* OpenMP threads (--threadN, default: 8) */
-    int    debug_h0;        /* --debug-h0: per-neuron debug */
-    int    shuffle;         /* --shuffle: randomize train/eval split */
-    int    warmup_epochs;   /* --warmup N: linear warmup epochs (default: 2) */
-    int    step_mode;       /* enum step_mode: Algorithmus (siehe oben) */
-    int    stepN;           /* --step-const N: const step value (0=use lr, default: 0) */
-    float  step_power;      /* --step-power F: exponent für pow/cos (default: 0.7) */
-    float  gap_k;           /* --gap-k K: exp(-K×gap) step damping when train/eval gap widens (default: 0.0=off) */
-    int    err_rollback;    /* --err-rollback: rollback targets when err increases (default: 0) */
-    int    ensembleN;       /* --ensembleN N: independent W0 copies (default: 1) */
-    int    splitVN;         /* --splitVN N: vertical H split (default: 1) */
-    int    splitHN;         /* --splitHN N: horizontal NC split (default: 1) */
-    int    channel;        /* --channels bitmask of selected blocks */
-    int    channel_explicit; /* 1=--channels was set explicitly */
-    int    packedB;    /* 1=4px/cont (256/blk), 0=1px/cont (1024/blk) */
-    int    debug_flat;      /* 1=all selected blocks in one flat array, 0=separate members */
-    int    debug_binarize;  /* 1=threshold block values at 128 → 0x00/0xFF per pixel */
-    int    hebbian_pct;     /* --hebbian-pct: flip threshold % (reference, default 50) */
-    int8_t enc[COLOR_NB];         /* --encoding: per-block encoding type (-1=not set, derived from enc_array) */
-    int8_t enc_width[COLOR_NB];  /* --encoding: per-block width (derived from enc_array) */
-    int8_t enc_default_type;      /* --encoding: fallback type for blocks without specific setting */
-    int8_t enc_default_width;     /* --encoding: fallback width (8, 16, 32) */
-    ki_EncSlot enc_array[KI_ENC_MAX];  /* Alle aktiven Encodings als (type,width)-Paare */
-    int         enc_count;             /* number of Eintraege in enc_array */
-    int    opt_target_norm;    /* --optional target-norm: vote normalisierung aktivieren */
-    char   seed_file[256]; /* --seed-file PATH: true random source */
-    char   importD[512];    /* --import DIR: load model for inference */
-    int    seed_splitmix;  /* --seed-splitmix: ignore seed_file, use splitmix64 PRNG */
-    int    multi_correct;  /* --multi-correct: punish all over true_k (default: 1) */
-    int    target_random_init; /* --target-random-init: random targets statt counting (default: 0) */
-    int    ensemble_seed;    /* ENS_SEED_ONCE|CONST|INCR (default: ONCE) */
-    int    debug_class_voting; /* --debug-class-voting: Member × Class accuracy (end only) */
-    int    debug_class_voting_all; /* --debug-class-voting-all: every epoch */
-    int    debug_confusion;    /* --debug-confusion-matrix: confusion matrix (end only) */
-    int    debug_confusion_all; /* --debug-confusion-matrix-all: every epoch */
-    char   filter_str[128];    /* --filter "0,1,airplan,cat": raw string */
-    int    filter_mask;        /* computed bitmask from filter_str (0 = no filter) */
+    int    hidden;          			/* Hidden neurons (--hiddenN, default: 64) */
+    int    epochs;          			/* Iterations (--epochsN, default: 1) */
+    int    batchN;          			/* Mini-batch size (--batchN, default: 64) */
+    int    trainN;          			/* Training samples (--trainN, default: 50000) */
+    int    evalN;           			/* Eval samples (--evalN, default: 10000) */
+    int    dry_run;         			/* --dry-run: print arch and exit */
+    int    debug;           			/* --debug: verbose output */
+    unsigned int seed;      			/* Random seed (--seed, default: 42) */
+    char   exportD[256];    			/* --export DIR: export directory */
+    char   predictions[256]; 			/* --predictions FILE: export per-sample predictions (for vis-errors) */
+    char   export_merge_scores[256];   		/* --export-merge-scores DIR: save per-member scores to archive files */
+    char   export_scores[256]; 			/* --export-scores FILE: save per-sample scores (10×int64+uint8) */
+    char   export_neurons[256]; 		/* --export-neurons FILE: save gb_buf+Target+Offset für Adam-on-neurons */
+    float  lr;              			/* Step size (--lr, default: 0.05) */
+    float  lr_min;          			/* Min LR fraction (--lr-min, default: 0.1) */
+    int    lr_step;         			/* round(aa.lr * (1<<OT_PRECISION)) */
+    int    threadN;         			/* OpenMP threads (--threadN, default: 8) */
+    int    debug_h0;        			/* --debug-h0: per-neuron debug */
+    int    shuffle;         			/* --shuffle: randomize train/eval split */
+    int    warmup_epochs;   			/* --warmup N: linear warmup epochs (default: 2) */
+    int    step_mode;       			/* enum step_mode: Algorithmus (siehe oben) */
+    int    stepN;           			/* --step-const N: const step value (0=use lr, default: 0) */
+    float  step_power;      			/* --step-power F: exponent für pow/cos (default: 0.7) */
+    float  gap_k;           			/* --gap-k K: exp(-K×gap) step damping when train/eval gap widens (default: 0.0=off) */
+    int    err_rollback;    			/* --err-rollback: rollback targets when err increases (default: 0) */
+    int    ensembleN;       			/* --ensembleN N: independent W0 copies (default: 1) */
+    int    splitVN;         			/* --splitVN N: vertical H split (default: 1) */
+    int    splitHN;         			/* --splitHN N: horizontal NC split (default: 1) */
+    int    channel;        			/* --channels bitmask of selected blocks */
+    int    channel_explicit; 			/* 1=--channels was set explicitly */
+    int    packedB;    			        /* 1=4px/cont (256/blk), 0=1px/cont (1024/blk) */
+    int    debug_flat;      			/* 1=all selected blocks in one flat array, 0=separate members */
+    int    debug_binarize;  			/* 1=threshold block values at 128 → 0x00/0xFF per pixel */
+    int    hebbian_pct;     			/* --hebbian-pct: flip threshold % (reference, default 50) */
+    int8_t enc[COLOR_NB];         		/* --encoding: per-block encoding type (-1=not set, derived from enc_array) */
+    int8_t enc_width[COLOR_NB];  		/* --encoding: per-block width (derived from enc_array) */
+    int8_t enc_default_type;      		/* --encoding: fallback type for blocks without specific setting */
+    int8_t enc_default_width;     		/* --encoding: fallback width (8, 16, 32) */
+    ki_EncSlot enc_array[KI_ENC_MAX];  		/* Alle aktiven Encodings als (type,width)-Paare */
+    int         enc_count;             		/* number of Eintraege in enc_array */
+    int    opt_target_norm;    			/* --optional target-norm: vote normalisierung aktivieren */
+    char   seed_file[256]; 			/* --seed-file PATH: true random source */
+    char   importD[512];    			/* --import DIR: load model for inference */
+    int    seed_splitmix;  			/* --seed-splitmix: ignore seed_file, use splitmix64 PRNG */
+    int    multi_correct;  			/* --multi-correct: punish all over true_k (default: 1) */
+    int    target_random_init; 			/* --target-random-init: random targets statt counting (default: 0) */
+    int    ensemble_seed;    			/* ENS_SEED_ONCE|CONST|INCR (default: ONCE) */
+    int    debug_class_voting; 			/* --debug-class-voting: Member × Class accuracy (end only) */
+    int    debug_class_voting_all; 		/* --debug-class-voting-all: every epoch */
+    int    debug_confusion;    			/* --debug-confusion-matrix: confusion matrix (end only) */
+    int    debug_confusion_all; 		/* --debug-confusion-matrix-all: every epoch */
+    char   filter_str[128];    			/* --filter "0,1,airplan,cat": raw string */
+    int    filter_mask;        			/* computed bitmask from filter_str (0 = no filter) */
 } ki_Args;
 /* ── Global args (defined in each main .c file) ────────────── */
 extern ki_Args aa;
@@ -313,6 +324,7 @@ static inline void ki_parse_args(int argc, char *argv[]) {
             printf("                    incr    : unique seed per member.\n");
             printf("  ---------------------------------------------------------------------------------------------\n");
             printf("  --channels [packed|full,][flat,]...                                             (default: %s)\n", color_str());
+#if KI_COLORS > 1
             printf("                    Channel selection (comma-sep).  Encoding via --encoding.\n");
             printf("                    packed/full   : 4px/cont or 1px/cont,\n");
             printf("                    flat          : all selected blocks in one wide W0,\n");
@@ -324,9 +336,11 @@ static inline void ki_parse_args(int argc, char *argv[]) {
             printf("                    h             : hue (Farbwinkel, atan2-basiert)\n");
             printf("                    s             : saturation (Farbsaettigung, max-min)\n");
             printf("                    c             : contrast (Sobel-Kanten auf LUM)\n");
-            printf("                    edge          : edges via Sobel on Y luminance (like MNIST, for CIFAR)\n");
+            printf("                    edge          : edges via Sobel on Y luminance\n");
             printf("                    bin           : Otsu-binarized Y luminance (filled black/white regions)\n");
-            printf("                    mnist         : single grayscale.\n");
+#else
+            printf("                    mnist         : single grayscale block (only available channel)\n");
+#endif
             printf("  --encoding [raw|lin7|lin8|down|up|mid|log|exp|sig]                              (default: %s)\n", enc_str());
             printf("                    OR <color>=<enc>[width] per-block: r=exp16,g=lin8   \n");
             printf("                    Pixel-Encoding pro Farb-Block.\n");
@@ -589,57 +603,30 @@ static inline void ki_parse_args(int argc, char *argv[]) {
             buf[sizeof(buf) - 1] = '\0';
 
             /* ── Encoding-Alias-Expansion ─────────────────────────────
-             * Erlaubt --encoding latest statt langer Komma-Listen.
-             * New aliases: add here (keep both arrays in sync).
-             * Expandiert rekursiv bis 5 Tiefe: zunaechst voller String,
-             * dann pro Komma-Token. */
-            #define KI_ENC_ALIAS_N 8
-            static const char * const _alias_name[KI_ENC_ALIAS_N] = {
-                "ey-a",
-                "ey-b",
-                "ey-c",
-                "ey-h",
-                "best-mnist",
-                "top-rgb",
-                "latest",
-                "latest-2"
-            };
-            static const char * const _alias_val[KI_ENC_ALIAS_N] = {
-                "b=up,al=down,am=sig,ap=sig",
-                "g=up,bl=down,bm=sig,bp=sig",
-                "r=up,cl=down,cm=sig,cp=sig",
-                "h=down,c=exp,gb=sig",
-                "exp,log,log",
-                "r=down,g=down,b=down",
-                "ey-b,ey-a,ey-h",
-                "g=lin8,bl=lin8,bm=sig,bp=sig,ey-a,ey-h",
-            };
+             * Dataset-specific aliases defined in ki-local.h
+             * via ki_alias_lookup().  Iterative 5-pass expansion:
+             * Phase 1: full-string match, Phase 2: per-token. */
             for (int _iter = 0; _iter < 5; _iter++) {
-                /* Phase 1: voller String match */
-                int _any = 0;
-                for (int _a = 0; _a < KI_ENC_ALIAS_N; _a++) {
-                    if (strcasecmp(buf, _alias_name[_a]) == 0) {
-                        strncpy(buf, _alias_val[_a], sizeof(buf) - 1);
-                        buf[sizeof(buf) - 1] = '\0';
-                        _any = 1; break;
-                    }
+                /* Phase 1: full string match */
+                const char *_full = ki_alias_lookup(buf);
+                if (_full) {
+                    strncpy(buf, _full, sizeof(buf) - 1);
+                    buf[sizeof(buf) - 1] = '\0';
+                    continue;
                 }
-                if (_any) continue;
-                /* Phase 2: pro Token expandieren */
+                /* Phase 2: per-token expand */
                 char _tmp[256], _new[256] = "";
                 strncpy(_tmp, buf, sizeof(_tmp) - 1);
                 _tmp[sizeof(_tmp) - 1] = '\0';
                 char *_t = strtok(_tmp, ",");
+                int _any = 0;
                 while (_t) {
-                    int _hit = 0;
-                    for (int _a = 0; _a < KI_ENC_ALIAS_N; _a++) {
-                        if (strcasecmp(_t, _alias_name[_a]) == 0) {
-                            if (_new[0]) strncat(_new, ",", sizeof(_new) - 1);
-                            strncat(_new, _alias_val[_a], sizeof(_new) - strlen(_new) - 1);
-                            _hit = 1; _any = 1; break;
-                        }
-                    }
-                    if (!_hit) {
+                    const char *_val = ki_alias_lookup(_t);
+                    if (_val) {
+                        if (_new[0]) strncat(_new, ",", sizeof(_new) - 1);
+                        strncat(_new, _val, sizeof(_new) - strlen(_new) - 1);
+                        _any = 1;
+                    } else {
                         if (_new[0]) strncat(_new, ",", sizeof(_new) - 1);
                         strncat(_new, _t, sizeof(_new) - strlen(_new) - 1);
                     }
@@ -649,7 +636,6 @@ static inline void ki_parse_args(int argc, char *argv[]) {
                 strncpy(buf, _new, sizeof(buf) - 1);
                 buf[sizeof(buf) - 1] = '\0';
             }
-            #undef KI_ENC_ALIAS_N
 
             for (char *tok = strtok(buf, ","); tok; tok = strtok(NULL, ",")) {
                 while (*tok == ' ' || *tok == '\t') tok++;
@@ -1062,8 +1048,8 @@ static inline void ki_report_show(int train_ok, int train_n,
                                    int eval_ok,  int eval_n,
                                    int elapsed_ms, int threadN,
                                    int err, float lr) {
-    float tp  = (float)train_ok * 100.0f / (float)train_n;
-    float ep  = (float)eval_ok  * 100.0f / (float)eval_n;
+    float tp  = (train_n > 0) ? (float)train_ok * 100.0f / (float)train_n : 0.0f;
+    float ep  = (eval_n  > 0) ? (float)eval_ok  * 100.0f / (float)eval_n  : 0.0f;
     printf("\n============================================================\n");
     printf("REPORT train=%.1f%% (%d) eval=%.1f%% (%d)"
            " err=%d lr=%.4f time=%dms threads=%d\n",

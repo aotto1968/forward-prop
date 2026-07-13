@@ -1,10 +1,15 @@
 /*
- * mnist-1/ki-local.h — MNIST-specific constants + data loader
- * ===========================================================
+ * mnist-fashion/ki-local.h — Fashion-MNIST-specific constants + data loader
+ * ========================================================================
  *
  * Included by ki-common.h (shared between mnist-1/ and cifar-1/).
  * Provides dataset-specific definitions: pixel size, containers,
  * data struct and loader.
+ *
+ * Fashion-MNIST: 28×28 grayscale, 10 classes (clothing items).
+ * Same format as MNIST (IDX3, 60000 train + 10000 test), different labels:
+ *   0=T-shirt/top, 1=Trouser, 2=Pullover, 3=Dress, 4=Coat,
+ *   5=Sandal, 6=Shirt, 7=Sneaker, 8=Bag, 9=Ankle boot
  */
 #ifndef KI_LOCAL_H
 #define KI_LOCAL_H
@@ -16,23 +21,23 @@
 #include <zlib.h>
 
 /* ═══════════════════════════════════════════════════════════════════════
- * CONSTANTS — MNIST
+ * CONSTANTS — Fashion-MNIST
  * ═══════════════════════════════════════════════════════════════════════ */
 
-#define KI_DATASET_ID           0       /* unique for cache key */
-#define KI_DATASET_NAME         "MNIST"
+#define KI_DATASET_ID             3       /* unique for cache key (0=MNIST, 1=CIFAR, 2=CINIC) */
+#define KI_DATASET_NAME         "FASHION"
 #define KI_PX                   784
 #define KI_NCLASSES             10
 #define KI_DEFAULT_LR           0.05f   /* → step = 0.05 × 131072 = 6554 */
 #define KI_DEFAULT_STEP_POWER   0.1f    /* higher yields smaller trn */
 #define KI_DEFAULT_STEP_MODE    STEP_COS_TIME
 #define KI_DEFAULT_BATCH_N      64      /* optimum */
-#define KI_COLORS               1       /* MNIST is grayscale */
-#define KI_DEFAULT_COLOR        (1<<COLOR_MNIST)  /* MNIST: single grayscale block */
+#define KI_COLORS               1       /* Fashion-MNIST is grayscale */
+#define KI_DEFAULT_COLOR        (1<<COLOR_MNIST)  /* single grayscale block */
 #ifndef KI_NC
 #define KI_NC                   196     /* Packed containers per image: 784/4 */
 #endif
-#define KI_NC_TOTAL             (KI_NC * KI_COLORS)  /* = 196 (same as KI_NC for grayscale) */
+#define KI_NC_TOTAL             (KI_NC * KI_COLORS)
 #ifndef KI_PACK
 #define KI_PACK                 (784 / KI_NC)  /* Pixels per container */
 #endif
@@ -46,7 +51,7 @@
 #endif
 
 /* ═══════════════════════════════════════════════════════════════════════
- * MNIST DATA STRUCT + LOADER
+ * FASHION-MNIST DATA STRUCT + LOADER
  * ═══════════════════════════════════════════════════════════════════════ */
 
 typedef struct {
@@ -60,10 +65,10 @@ typedef struct {
     int dry_run;      /* skip pixel data (fast metadata only) */
     int n_train;      /* default training count (set by loader) */
     int n_eval;       /* default eval count (set by loader) */
-} ki_MNISTData;
+} ki_FashionData;
 
 /* Generic dataset aliases (used by ki-common.h) */
-typedef ki_MNISTData ki_Dataset;
+typedef ki_FashionData ki_Dataset;
 
 /* ── GZIP decompression ────────────────────────────────────────── */
 static int ki_decompress_gz(const char *path, uint8_t **out_data, size_t *out_size) {
@@ -117,12 +122,13 @@ static int ki_decompress_gz(const char *path, uint8_t **out_data, size_t *out_si
     return 0;
 }
 
-/* ── MNIST read ──────────────────────────────────────────────────── */
-static int ki_mnist_read(ki_MNISTData *out) {
+/* ── Fashion-MNIST read ──────────────────────────────────────────── */
+static int ki_fashion_read(ki_FashionData *out) {
     const char *candidates[] = {
-        "data/mnist",
-        "../data/mnist",
-        "www/data/mnist",
+        "data/mnist-fashion",
+        "../data/mnist-fashion",
+        "www/data/mnist-fashion",        /* from fashion/ subdir */
+        "../www/data/mnist-fashion",     /* from project root */
         NULL
     };
     const char *data_dir = NULL;
@@ -135,7 +141,7 @@ static int ki_mnist_read(ki_MNISTData *out) {
         }
     }
     if (!data_dir) {
-        fprintf(stderr, "[FATAL] Cannot find MNIST data.\n");
+        fprintf(stderr, "[FATAL] Cannot find Fashion-MNIST data.\n");
         return -1;
     }
 
@@ -156,11 +162,11 @@ static int ki_mnist_read(ki_MNISTData *out) {
     int cols     = (raw[12] << 24) | (raw[13] << 16) | (raw[14] << 8) | raw[15];
     int pixels   = rows * cols;
 
-    printf("  [MNIST] images: magic=0x%08X %d x %d px=%d\n",
+    printf("  [FASHION] images: magic=0x%08X %d x %d px=%d\n",
            magic, rows, cols, pixels);
 
     if (magic != 0x00000803) {
-        fprintf(stderr, "[FATAL] Not MNIST image file (magic=0x%08X)\n", magic);
+        fprintf(stderr, "[FATAL] Not Fashion-MNIST image file (magic=0x%08X)\n", magic);
         free(raw); return -1;
     }
 
@@ -174,7 +180,7 @@ static int ki_mnist_read(ki_MNISTData *out) {
     /* Dry-run: header already parsed, skip pixel data */
     if (dry_run) {
         free(raw);
-        printf("  [MNIST] dry-run: %d images, %d px each\n", num_img, pixels);
+        printf("  [FASHION] dry-run: %d images, %d px each\n", num_img, pixels);
         return 0;
     }
 
@@ -193,10 +199,10 @@ static int ki_mnist_read(ki_MNISTData *out) {
     int lbl_magic = (raw[0] << 24) | (raw[1] << 16) | (raw[2] << 8) | raw[3];
     int lbl_count = (raw[4] << 24) | (raw[5] << 16) | (raw[6] << 8) | raw[7];
 
-    printf("  [MNIST] labels: magic=0x%08X count=%d\n", lbl_magic, lbl_count);
+    printf("  [FASHION] labels: magic=0x%08X count=%d\n", lbl_magic, lbl_count);
 
     if (lbl_magic != 0x00000801) {
-        fprintf(stderr, "[FATAL] Not MNIST label file (magic=0x%08X)\n", lbl_magic);
+        fprintf(stderr, "[FATAL] Not Fashion-MNIST label file (magic=0x%08X)\n", lbl_magic);
         free(raw); free(out->X); return -1;
     }
 
@@ -245,18 +251,18 @@ static int ki_mnist_read(ki_MNISTData *out) {
         }
     }
 
-    printf("  [MNIST] Loaded %d samples (%d px)\n", out->num_images, out->pixels);
+    printf("  [FASHION] Loaded %d samples (%d px)\n", out->num_images, out->pixels);
     return 0;
 }
 
-static inline void ki_mnist_free(ki_MNISTData *data) {
+static inline void ki_fashion_free(ki_FashionData *data) {
     free(data->X);
     free(data->X_raw);
     free(data->y);
     memset(data, 0, sizeof(*data));
 }
 
-/* ── PNG writer (dataset-specific: grayscale for MNIST) ────── */
+/* ── PNG writer (dataset-specific: grayscale for Fashion-MNIST) ── */
 __attribute__((unused))
 static void _png_be32(FILE *f, uint32_t v) {
     uint8_t buf[4] = {
@@ -325,13 +331,14 @@ static void ki_write_png(const char *path,
 }
 
 /* Dataset function aliases */
-#define ki_dataset_read ki_mnist_read
-#define ki_dataset_free ki_mnist_free
+#define ki_dataset_read ki_fashion_read
+#define ki_dataset_free ki_fashion_free
 
 /* ── Class names (dataset-specific) ────────────────────────────── */
 __attribute__((unused))
 static const char *ki_class_names[KI_NCLASSES] = {
-    "0","1","2","3","4","5","6","7","8","9"
+    "T-shirt/top", "Trouser", "Pullover", "Dress", "Coat",
+    "Sandal", "Shirt", "Sneaker", "Bag", "Ankle boot"
 };
 
 /* ── Encoding aliases (dataset-specific) ──────────────────────── */

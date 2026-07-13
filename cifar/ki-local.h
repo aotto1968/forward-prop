@@ -20,6 +20,7 @@
 
 #ifndef KI_DATASET_ID
 #define KI_DATASET_ID             1       /* unique for cache key (overridable) */
+#define KI_DATASET_NAME           "CIFAR-10"
 #endif
 #define KI_PX                     3072    /* 32 × 32 × 3 = 3072 pixels per image */
 #define KI_NCLASSES               10
@@ -364,5 +365,19 @@ static const char *ki_class_names[KI_NCLASSES] = {
     "airplan","automob","bird","cat","deer",
     "dog","frog","horse","ship","truck"
 };
+
+/* ── Encoding aliases (dataset-specific) ──────────────────────── */
+#define KI_COMMON_ALIAS_LOOKUP
+static const char *ki_alias_lookup(const char *name) {
+    if (strcasecmp(name, "ey-a") == 0) return "b=up,al=down,am=sig,ap=sig";
+    if (strcasecmp(name, "ey-b") == 0) return "g=up,bl=down,bm=sig,bp=sig";
+    if (strcasecmp(name, "ey-c") == 0) return "r=up,cl=down,cm=sig,cp=sig";
+    if (strcasecmp(name, "ey-h") == 0) return "h=down,c=exp,gb=sig";
+    if (strcasecmp(name, "best-mnist") == 0) return "exp,log,log";
+    if (strcasecmp(name, "top-rgb") == 0) return "r=down,g=down,b=down";
+    if (strcasecmp(name, "latest") == 0) return "ey-b,ey-a,ey-h";
+    if (strcasecmp(name, "latest-2") == 0) return "g=lin8,bl=lin8,bm=sig,bp=sig,ey-a,ey-h";
+    return NULL;
+}
 
 #endif /* KI_LOCAL_H */

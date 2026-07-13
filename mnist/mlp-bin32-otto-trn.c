@@ -791,7 +791,7 @@ static void print_setup(int H, int epochs, int trainN, int evalN,
     int total_slots = ensembleN * eff_colors * splitHN;    /* VN no longer multiplies members */
     size_t tgt_total = (size_t)H_local * KI_NCLASSES * (size_t)V * (size_t)total_slots;
     printf("══════════════════════════════════════════════════════════════════════\n");
-    printf("══╡ OTTO-SCORE ╞══  %s\n", H0_STR);
+    printf("══╡ OTTO-SCORE ╞══  %s  %s\n", KI_DATASET_NAME, H0_STR);
     printf("  Args:        H=%d  B=%d  Ep=%d  NC=%d V=%d  HN=%d  H_sub=%d  NC_sub=%d\n", 
             H, batchN, epochs, nc_per_blk, V, splitHN, H_local, NC_slice);
     printf("\n");
@@ -878,14 +878,11 @@ static void print_member_structure(int ensembleN, int splitVN, int splitHN,
         for (int hi = 0; hi < splitHN && _n < 64; hi++) {
             _c[_n] = col;
             _t[_n] = -1; _w[_n] = -1;
-            /* Lookup: enc_array for this color (or default -1) */
-            for (int ei = 0; ei < aa.enc_count && ei < KI_ENC_MAX; ei++) {
-                int ec = (int)aa.enc_array[ei].color;
-                if (ec == col || ec < 0) {  /* explizite Farbe oder default */
-                    _t[_n] = (int)aa.enc_array[ei].type;
-                    _w[_n] = (int)aa.enc_array[ei].width;
-                    break;
-                }
+            /* Multi-encoding: use enc_array index directly (not color match)
+             * so same-channel members with different encodings display correctly */
+            if (ci < aa.enc_count) {
+                _t[_n] = (int)aa.enc_array[ci].type;
+                _w[_n] = (int)aa.enc_array[ci].width;
             }
             _n++;
         }

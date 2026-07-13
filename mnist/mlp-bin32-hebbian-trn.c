@@ -476,8 +476,8 @@ int main(int argc, char *argv[]) {
     }
 
     printf("══════════════════════════════════════════════════════════════════════\n");
-    printf("══╡ HEBBIAN ╞══  %s  H=%-4d  Ep=%-2d   EN=%-2d  enc=%-2d  members=%-2d  %s\n",
-           H0_STR, H, epochs, aa.ensembleN, n_enc, total_members, KI_COLORS > 1 ? "CIFAR" : "MNIST");
+    printf("══╡ HEBBIAN ╞══  %s  %s  H=%-4d  Ep=%-2d   EN=%-2d  enc=%-2d  members=%-2d\n",
+           KI_DATASET_NAME, H0_STR, H, epochs, aa.ensembleN, n_enc, total_members);
     printf("══╡ SETUP ╞══════════════════════════════════════════════════════════\n");
     printf("  Input:       %d px → %d blocks × %d = %d total  (%s)\n",
            KI_PX, n_enc, ncs[0], cum_off,
@@ -547,6 +547,7 @@ int main(int argc, char *argv[]) {
     struct timeval tv0; gettimeofday(&tv0, NULL);
     int ms = 0;
     float acc = 0.0f;
+    float trn_acc = 0.0f;
     for (int ep = 0; ep < epochs; ep++) {
         int total_flips = 0;
         /* Dynamic threshold: 50→30 over epochs */
@@ -560,21 +561,24 @@ int main(int argc, char *argv[]) {
                            &flips, pct);
             total_flips += flips;
         }
+        trn_acc = accuracy_multi(X_all, data.y, off,
+                                 (const uint32_t *const *)W0s, (const uint32_t *const *)W1s,
+                                 ncs, offs, H, total_members);
         acc = accuracy_multi(X_all + (size_t)off * (size_t)cum_off, y_te, te,
                              (const uint32_t *const *)W0s, (const uint32_t *const *)W1s,
                              ncs, offs, H, total_members);
         if (acc > best_acc) best_acc = acc;
         struct timeval tv1; gettimeofday(&tv1, NULL);
         ms = (int)((tv1.tv_sec - tv0.tv_sec) * 1000 + (tv1.tv_usec - tv0.tv_usec) / 1000);
-        printf("  Ep %2d/%d  evl=%.1f%%  best=%.1f%%  flips=%d  time=%dms\n",
-               ep + 1, epochs, acc, best_acc, total_flips, ms);
+        printf("  Ep %2d/%d  trn=%.1f%%  evl=%.1f%%  best=%.1f%%  flips=%d  time=%dms\n",
+               ep + 1, epochs, trn_acc, acc, best_acc, total_flips, ms);
     }
     /* ── RESULT ──────────────────────────────────────────────── */
     printf("\n══╡ RESULT ╞══════════════════════════════════════════════════════\n");
     printf("  H=%d  EN=%d  mem=%d  ep=%d  trn=%.1f%%  evl=%.1f%%  best=%.1f%%  time=%dms\n",
-           H, aa.ensembleN, total_members, epochs, 0.0, (double)acc, (double)best_acc, ms);
-    int eval_ok = (int)(best_acc * (float)te / 100.0f + 0.5f);
-    int train_ok = (int)(best_acc * (float)aa.trainN / 100.0f + 0.5f);
+           H, aa.ensembleN, total_members, epochs, (double)trn_acc, (double)acc, (double)best_acc, ms);
+    int eval_ok = (int)(acc * (float)te / 100.0f + 0.5f);
+    int train_ok = (int)(trn_acc * (float)aa.trainN / 100.0f + 0.5f);
     ki_report_show(train_ok, aa.trainN, eval_ok, te, ms, aa.threadN, 0, 0.0f);
 
     /* ── Confusion matrix (end only) ───────────────────────────── */

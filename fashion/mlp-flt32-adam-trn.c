@@ -1,0 +1,1 @@
+../mnist/mlp-flt32-adam-trn.c

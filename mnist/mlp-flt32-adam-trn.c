@@ -346,8 +346,8 @@ int main(int argc, char *argv[]) {
         }
     }
     printf("══════════════════════════════════════════════════════════════════════\n");
-    printf("══╡ ADAM ╞══  Float32  H=%d  Ep=%d  nc=%d  lr=%.4f\n",
-           H, aa.epochs, nc_per_sample, (double)aa.lr);
+    printf("══╡ ADAM ╞══  %s  Float32  H=%d  Ep=%d  nc=%d  lr=%.4f\n",
+           KI_DATASET_NAME, H, aa.epochs, nc_per_sample, (double)aa.lr);
     printf("══╡ SETUP ╞══════════════════════════════════════════════════════════\n");
     printf("  Input:       %d px → %d/%d blocks (%s) × %d = %d total  (packed)\n",
            KI_PX, n_blocks, COLOR_NB, chan_str[0] ? chan_str : "?",

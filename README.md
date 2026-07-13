@@ -1,6 +1,6 @@
 # Otto Score — DRAM-Native MLP Classifier
 
-**MNIST: 99.0% in 4s  |  CIFAR-10: 61.2% single-run / 61.66% ensemble** — Zero floating point, zero matmul in inference.
+**MNIST: 99.0% in 4s  |  CIFAR-10: 61.2% single-run / 61.66% ensemble  |  Fashion-MNIST: 90.2%** — Zero floating point, zero matmul in inference.
 Only `&|~` + int32 + popcount. Also includes float32 AdamW + multi-member Hebbian baselines.
 
 ---
@@ -8,10 +8,10 @@ Only `&|~` + int32 + popcount. Also includes float32 AdamW + multi-member Hebbia
 ## 🚀 Quick Start
 
 ```bash
-# Step 1: Build everything (6 binaries)
+# Step 1: Build everything (9 binaries)
 make all
 
-# Step 2: Download datasets (MNIST + CIFAR-10)
+# Step 2: Download datasets (MNIST + CIFAR-10 + Fashion-MNIST)
 make setup
 
 # Step 3: Train models + run tests (first run ~5min, then cached <1s)
@@ -27,24 +27,31 @@ make test
 === Otto Score CIFAR-10 (H=256, 5 ep)     ===      eval=55.0%
 === Float32 AdamW CIFAR-10 (H=256, 5 ep)  ===      eval=41.2%
 === Bin32 Hebbian CIFAR-10 (H=256, 5 ep)  ===      eval=32.4%
+=== Otto Score Fashion (H=512, 10 ep)     ===      eval=90.2%
+=== Float32 AdamW Fashion (H=512, 10 ep)  ===      eval=73.6%
+=== Bin32 Hebbian Fashion (H=512, 10 ep)  ===      eval=69.4%
 ```
 
 ---
 
 ## 🎯 Test Targets
 
-| Command                   | What it tests               |
-| ------------------------- | --------------------------- |
-| `make test-mnist`         | All 3 MNIST approaches      |
-| `make test-mnist-otto`    | Otto Score MNIST only       |
-| `make test-mnist-adam`    | Float32 AdamW MNIST only    |
-| `make test-mnist-hebbian` | Bin32 Hebbian MNIST only    |
-| `make test-cifar`         | All 3 CIFAR-10 approaches   |
-| `make test-cifar-otto`    | Otto Score CIFAR-10 only    |
-| `make test-cifar-adam`    | Float32 AdamW CIFAR-10 only |
-| `make test-cifar-hebbian` | Bin32 Hebbian CIFAR-10 only |
+| Command                       | What it tests                     |
+| ----------------------------- | --------------------------------- |
+| `make test-mnist`             | All 3 MNIST approaches            |
+| `make test-mnist-otto`        | Otto Score MNIST only             |
+| `make test-mnist-adam`        | Float32 AdamW MNIST only          |
+| `make test-mnist-hebbian`     | Bin32 Hebbian MNIST only          |
+| `make test-cifar`             | All 3 CIFAR-10 approaches         |
+| `make test-cifar-otto`        | Otto Score CIFAR-10 only          |
+| `make test-cifar-adam`        | Float32 AdamW CIFAR-10 only       |
+| `make test-cifar-hebbian`     | Bin32 Hebbian CIFAR-10 only       |
+| `make test-fashion`           | All 3 Fashion-MNIST approaches    |
+| `make test-fashion-otto`      | Otto Score Fashion-MNIST only     |
+| `make test-fashion-adam`      | Float32 AdamW Fashion-MNIST only  |
+| `make test-fashion-hebbian`   | Bin32 Hebbian Fashion-MNIST only  |
 
-First run trains all 6 models. Subsequent runs use cached models (<1s total).
+First run trains all 9 models. Subsequent runs use cached models (<1s total).
 
 ---
 
@@ -68,12 +75,20 @@ otto-score-ifc/
 │   ├── mlp-flt32-adam-trn.c      → ../mnist/...
 │   ├── ki-common.h               → ../mnist/ki-common.h
 │   └── ki-local.h                ← CIFAR dataset config
+├── fashion/              ← Fashion-MNIST (symlinks to mnist/ + Fashion ki-local.h)
+│   ├── Makefile
+│   ├── mlp-bin32-otto-trn.c      → ../mnist/...
+│   ├── mlp-bin32-hebbian-trn.c   → ../mnist/...
+│   ├── mlp-flt32-adam-trn.c      → ../mnist/...
+│   ├── ki-common.h               → ../mnist/ki-common.h
+│   └── ki-local.h                ← Fashion-MNIST dataset config
 ├── lib/                   ← Shared headers (ki-adamw.h, ki-encoding.h, maj3.h, w0_random.h)
 ├── models/                ← Cached trained models (-e10 MNIST, -e5 CIFAR)
 ├── bin/                   ← Helper scripts (run-ensemble.sh, etc.)
 ├── www/                   ← Publication site (HTML papers, style.css, datasets)
 ├── fetch_mnist.sh         ← MNIST download (https://forward-prop.nhi1.de/data/mnist/)
-├── fetch_cifar10.sh       ← CIFAR-10 download
+├── fetch_cifar10.sh       ← CIFAR-10 download (https://forward-prop.nhi1.de/data/cifar-10-batches-bin/)
+├── fetch_fashion.sh       ← Fashion-MNIST download (https://forward-prop.nhi1.de/data/mnist-fashion/)
 └── README.md              ← this file
 ```
 
@@ -85,11 +100,11 @@ Each trainer doubles as inference engine via `--import`. Zero code drift.
 
 | Command        | Builds                                            |
 | -------------- | ------------------------------------------------- |
-| `make` / `all` | All 6 binaries (Otto + Hebbian + Adam × XNOR/XOR) |
-| `make otto`    | Otto Score only (mnist/ + cifar/)                 |
-| `make hebbian` | Hebbian only (mnist/ + cifar/)                    |
-| `make adam`    | Float32 AdamW only (mnist/ + cifar/)              |
-| `make models`  | Train all 6 models (cached)                       |
+| `make` / `all` | All 9 binaries (Otto + Hebbian + Adam × XNOR/XOR, all datasets) |
+| `make otto`    | Otto Score only (mnist/ + cifar/ + fashion/)      |
+| `make hebbian` | Hebbian only (mnist/ + cifar/ + fashion/)         |
+| `make adam`    | Float32 AdamW only (mnist/ + cifar/ + fashion/)   |
+| `make models`  | Train all 9 models (cached)                       |
 | `make clean`   | Remove executables                                |
 | `make ensemble`| Build merge-ensemble only (mnist/ + cifar/)       |
 
@@ -100,7 +115,7 @@ Each trainer doubles as inference engine via `--import`. Zero code drift.
 | `--hiddenN N`              | Hidden neurons                                       | 64              |
 | `--epochsN N`              | Training epochs                                      | 1               |
 | `--splitVN N`              | Bit-Grouping: 1                                      | 1,2,3,4,8,16,32 |
-| `--encoding TYPE`          | Input encoding: exp, sig, up8, down8, raw, etc.; `latest` = 11-member ensemble (CIFAR) | raw8            |
+| `--encoding TYPE`          | Input encoding: exp, sig, up8, down8, raw, etc.; `latest` = dataset-specific alias (CIFAR: 11 members, MNIST/Fashion: exp8) | raw8            |
 | `--ensembleN N`            | Independent W0 copies                                | 1               |
 | `--export DIR`             | Model export directory                               | none            |
 | `--import DIR`             | Load model for inference                             | none            |
@@ -241,17 +256,17 @@ File naming: `H{hidden}_EP{epochs}_VN{splitVN}_HN{splitHN}_TE{te}_SD{seed}_F4_TS
 Every training binary doubles as inference engine. No separate IFC binaries:
 
 ```bash
-# MNIST Otto Score
+# MNIST Otto Score (latest = exp8, single member)
 ./mnist/mnist-mlp-bin32-otto-trn-xnor.exe \
-  --import models/mnist-otto-h512-e10 --evalN 10000 --encoding exp
+  --import models/mnist-otto-h512-e10 --evalN 10000 --encoding latest
 
 # CIFAR-10 Otto Score (--encoding latest = 11 members)
 ./cifar/cifar-mlp-bin32-otto-trn-xnor.exe \
   --import models/cifar-otto-h256-e5 --evalN 10000 --encoding latest
 
-# MNIST Hebbian
+# MNIST Hebbian (latest = exp8)
 ./mnist/mnist-mlp-bin32-hebbian-trn-xnor.exe \
-  --import models/mnist-hebbian-h512-e10 --evalN 10000 --encoding exp
+  --import models/mnist-hebbian-h512-e10 --evalN 10000 --encoding latest
 
 # CIFAR Hebbian (multi-member, 11 members via --encoding latest)
 ./cifar/cifar-mlp-bin32-hebbian-trn-xnor.exe \
@@ -283,7 +298,7 @@ All trainers export per-member weights via `--export DIR`:
 
 ```bash
 ./mnist/mnist-mlp-bin32-otto-trn-xnor.exe --hiddenN 256 --epochsN 10 \
-  --encoding exp --export models/mnist-otto/
+  --encoding latest --export models/mnist-otto/
 # → writes models/mnist-otto/weights-0.meta, W0-0.bin, W1-0.bin, ...
 ```
 
@@ -301,7 +316,7 @@ MNIST (grayscale PNG, 28×28):
 # Step 1: generate predictions
 ./mnist/mnist-mlp-bin32-otto-trn-xnor.exe \
   --import models/mnist-otto-h512-e10 \
-  --evalN 10000 --encoding exp \
+  --evalN 10000 --encoding latest \
   --predictions /tmp/mnist-preds.bin
 
 # Step 2: visualize
@@ -329,24 +344,24 @@ from `ki-local.h` (color RGB for CIFAR, grayscale for MNIST).
 
 ## Results Summary
 
-| Approach                | MNIST     | CIFAR-10   | Hardware Target  |
-| ----------------------- | --------- | ---------- | ---------------- |
-| Otto Score (single)     | **99.0%** | **61.2%**  | DRAM (bit-logic) |
-| Otto Score (ensemble)   | 99.0%     | **61.66%** | DRAM (bit-logic) |
-| Bin32 Hebbian (bitwise) | 84.4%     | 32.4%      | DRAM (bit-logic) |
-| Float32 AdamW (matmul)  | 92.6%     | 41.2%      | CPU/GPU          |
+| Approach                | MNIST     | CIFAR-10   | Fashion-MNIST | Hardware Target  |
+| ----------------------- | --------- | ---------- | ------------- | ---------------- |
+| Otto Score (single)     | **99.0%** | **61.2%**  | **90.2%**     | DRAM (bit-logic) |
+| Otto Score (ensemble)   | 99.0%     | **61.66%** | 90.2%         | DRAM (bit-logic) |
+| Bin32 Hebbian (bitwise) | 84.4%     | 32.4%      | 69.4%         | DRAM (bit-logic) |
+| Float32 AdamW (matmul)  | 92.6%     | 41.2%      | 73.6%         | CPU/GPU          |
 
 - **Otto Score**: MAJ3 + iterative Bayesian correction. Pure `&|~` + popcount.
   Better results via `--splitVN 2` (CIFAR) and ensemble (`--ensembleN 7`).
 - **Hebbian**: Counter-based co-occurrence learning with multi-encoding members.
-  MNIST: single member (exp8). CIFAR: 11 members (`--encoding latest`).
+  CIFAR: 11 members (`--encoding latest`). MNIST/Fashion: single member (`latest` → exp8).
 - **AdamW**: 1-layer float32 MLP (LeakyReLU, AdamW). Unified source with `--import` inference.
 
 ### Best Results (Latest)
 
 | Configuration                                             | Dataset  | Accuracy   | Time                            |
 | --------------------------------------------------------- | -------- | ---------- | ------------------------------- |
-| H=128, EN=7, ep=6, `--encoding exp`, evalN=100            | MNIST    | **99.0%**  | **4s**                          |
+| H=128, EN=7, ep=6, `--encoding latest`, evalN=100          | MNIST    | **99.0%**  | **4s**                          |
 | H=1024, EN=7, ep=7, `--splitVN 2`, `--encoding latest`    | CIFAR-10 | **61.2%**  | 273s (single run)               |
 | H=1024, 132 filtered members, VN=2, `--encoding latest`   | CIFAR-10 | **61.66%** | merge-ensemble (6166/10000)      |
 

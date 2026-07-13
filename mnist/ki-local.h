@@ -233,8 +233,8 @@ static int ki_mnist_read(ki_MNISTData *out) {
                     for (size_t i = 0; i < te_npix; i++)
                         out->X[old_npix + i] = ((float)te_raw[16 + i] / 255.0f) * 2.0f - 1.0f;
                     /* Realloc + copy labels */
-                    out->y = (uint8_t *)realloc(out->y, num_img + te_num);
-                    memcpy(out->y + num_img, tel + 8, te_num);
+                    out->y = (uint8_t *)realloc(out->y, (size_t)num_img + (size_t)te_num);
+                    memcpy(out->y + num_img, tel + 8, (size_t)te_num);
                     out->num_images += te_num;
                     out->n_eval = te_num;
                 }

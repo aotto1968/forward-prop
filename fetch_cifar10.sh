@@ -12,12 +12,14 @@
 #   5 train batches + 1 test batch
 #
 # Mirrors (in order of preference):
-#   1. https://www.cs.toronto.edu/~kriz/cifar-10-binary.tar.gz  (official)
-#   2. https://pjreddie.com/media/files/cifar-10-binary.tar.gz  (pjreddie)
+#   1. https://forward-prop.nhi1.de/data/cifar-10-batches-bin/cifar-10-binary.tar.gz  (local mirror)
+#   2. https://www.cs.toronto.edu/~kriz/cifar-10-binary.tar.gz  (official)
+#   3. https://pjreddie.com/media/files/cifar-10-binary.tar.gz  (pjreddie)
 
 set -euo pipefail
 
-BASE="${1:-data}"
+DIR="$(cd "$(dirname "$0")" && pwd)"
+BASE="${1:-$DIR/www/data}"
 TARGET="$BASE/cifar-10-batches-bin"
 
 if [ -f "$TARGET/data_batch_1.bin" ]; then
@@ -29,6 +31,7 @@ fi
 mkdir -p "$BASE"
 
 URLS=(
+    "https://forward-prop.nhi1.de/data/cifar-10-batches-bin/cifar-10-binary.tar.gz"
     "https://www.cs.toronto.edu/~kriz/cifar-10-binary.tar.gz"
     "https://pjreddie.com/media/files/cifar-10-binary.tar.gz"
 )

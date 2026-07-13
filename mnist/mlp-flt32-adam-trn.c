@@ -142,7 +142,7 @@ static float *ki_pack_blocks_float(const uint8_t *X_raw, int n_samples,
  * MAIN
  * ═══════════════════════════════════════════════════════════════════════ */
 int main(int argc, char *argv[]) {
-    aa.hidden = 64; aa.epochs = 1; aa.batchN = 64; aa.trainN = 50000; aa.evalN = 10000;
+    aa.hidden = 64; aa.epochs = 1; aa.batchN = 64; aa.trainN = 0; aa.evalN = 0;
     aa.seed = 42; aa.lr = 0.005f; aa.lr_min = 0.1f; aa.threadN = 8; aa.warmup_epochs = 2;
     aa.channel = KI_DEFAULT_COLOR; aa.packedB = 1; aa.ensembleN = 1;
     ki_parse_args(argc, argv);
@@ -239,13 +239,19 @@ int main(int argc, char *argv[]) {
     /* ── Load dataset ─────────────────────────────────────────── */
     ki_Dataset data = { .dry_run = aa.dry_run };
     if (ki_dataset_read(&data) != 0) return 1;
+    /* Auto-detect: use dataset defaults if not overridden by --trainN/--evalN */
+    if (aa.trainN <= 0 && data.n_train > 0) aa.trainN = data.n_train;
+    if (aa.evalN  <= 0 && data.n_eval  > 0) aa.evalN  = data.n_eval;
     /* NOTE: --filter affects training only */
     int total_all = data.num_images;
     int total_train = aa.trainN;
     int total_eval  = aa.evalN;
-    if (total_train + total_eval > total_all) {
-        total_eval = total_all - total_train;
-        if (total_eval < 0) { total_train = total_all; total_eval = 0; }
+    /* Sanity: use dataset's n_train+n_eval as upper bound (handles dry-run
+     * where num_images = training set only, but n_eval is still set) */
+    int total_max = data.n_train > 0 ? data.n_train + data.n_eval : total_all;
+    if (total_train + total_eval > total_max) {
+        total_eval = total_max - total_train;
+        if (total_eval < 0) { total_train = total_max; total_eval = 0; }
     }
     /* ── Pixel-data-dependent init (skipped for dry-run) ────── */
     uint8_t *y_tr = NULL, *y_te = NULL;

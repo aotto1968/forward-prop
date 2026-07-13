@@ -2078,14 +2078,17 @@ int main(int argc, char *argv[]) {
     int total_train = aa.trainN;
     int total_eval  = aa.evalN;
     int total_all   = total_train + total_eval;
-    if (total_train + total_eval > data.num_images) {
+    /* Upper bound: use dataset's n_train+n_eval (handles dry-run where
+     * num_images = training set only, but n_eval is still set) */
+    int total_max  = data.n_train > 0 ? data.n_train + data.n_eval : data.num_images;
+    if (total_train + total_eval > total_max) {
         fprintf(stderr, "  [WARN] Requested %d+%d=%d > %d available, adjusting eval\n",
-                total_train, total_eval, total_all, data.num_images);
-        total_eval = data.num_images - total_train;
-        if (total_eval < 0) { total_eval = 0; total_train = data.num_images; }
-        if (total_eval == 0 && total_train < data.num_images) {
-            total_train = data.num_images / 2; /* fallback */
-            total_eval  = data.num_images - total_train;
+                total_train, total_eval, total_all, total_max);
+        total_eval = total_max - total_train;
+        if (total_eval < 0) { total_eval = 0; total_train = total_max; }
+        if (total_eval == 0 && total_train < total_max) {
+            total_train = total_max / 2; /* fallback */
+            total_eval  = total_max - total_train;
         }
         total_all = total_train + total_eval;
     }

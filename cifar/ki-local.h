@@ -172,6 +172,8 @@ static int ki_cifar_read(ki_ImageData *out) {
         "cifar-1/data/cifar-10-batches-bin",    /* launch from PROJECT_ROOT */
         "../data/cifar-10-batches-bin",
         "../cifar-1/data/cifar-10-batches-bin",
+        "www/data/cifar-10-batches-bin",        /* web-accessible copy */
+        "../www/data/cifar-10-batches-bin",
         NULL
     };
     const char *data_dir = NULL;

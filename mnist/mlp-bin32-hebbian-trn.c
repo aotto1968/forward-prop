@@ -327,8 +327,8 @@ ki_Args aa = {
     .epochs   = 3,
     .batchN   = 256,
     .lr       = 0.05f,
-    .trainN   = 50000,
-    .evalN    = 10000,
+    .trainN   = 0,       /* auto: set from dataset default */
+    .evalN    = 0,       /* auto: set from dataset default */
     .threadN  = 8,
     .seed     = 42,
     .hebbian_pct = 50,
@@ -380,6 +380,9 @@ int main(int argc, char *argv[]) {
 
         ki_Dataset data = { .dry_run = aa.dry_run };
         if (ki_dataset_read(&data) != 0) return 1;
+        /* Auto-detect training/eval counts from dataset defaults */
+        if (aa.trainN <= 0 && data.n_train > 0) aa.trainN = data.n_train;
+        if (aa.evalN  <= 0 && data.n_eval  > 0) aa.evalN  = data.n_eval;
         /* NOTE: --filter affects training only (in the training loop),
          * not evaluation.  No ki_filter_dataset() needed. */
         if (data.pixels != KI_PX) return 1;
@@ -417,9 +420,12 @@ int main(int argc, char *argv[]) {
     /* ═══════════════════════════════════════════════════════════════
      * TRAINING MODE
      * ═══════════════════════════════════════════════════════════════ */
-    int total_all = aa.trainN + aa.evalN;
     ki_Dataset data = { .dry_run = aa.dry_run };
     if (ki_dataset_read(&data) != 0) return 1;
+    /* Auto-detect training/eval counts from dataset defaults */
+    if (aa.trainN <= 0 && data.n_train > 0) aa.trainN = data.n_train;
+    if (aa.evalN  <= 0 && data.n_eval  > 0) aa.evalN  = data.n_eval;
+    int total_all = aa.trainN + aa.evalN;
     /* NOTE: --filter affects TRAINING only, not evaluation */
     if (data.pixels != KI_PX) return 1;
     if (total_all > data.num_images) total_all = data.num_images;

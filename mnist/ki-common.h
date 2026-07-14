@@ -463,6 +463,18 @@ static inline void ki_parse_args(int argc, char *argv[]) {
             printf("  exp    exponential,\n");
             printf("  sig    sigmoid.\n");
             printf("  raw    no encoding (raw 8-bit bytes).\n");
+            printf("\n");
+            printf("  Dataset group aliases (multi-block, per --encoding):\n");
+#if KI_DATASET_ID == 1  /* CIFAR-10 */
+            printf("    latest : 11 members: ey-b + ey-a + ey-h\n");
+            printf("    ey-a   : b=up,al=down,am=sig,ap=sig (4 blocks)\n");
+            printf("    ey-b   : g=up,bl=down,bm=sig,bp=sig (4 blocks)\n");
+            printf("    ey-c   : r=up,cl=down,cm=sig,cp=sig (4 blocks)\n");
+            printf("    ey-h   : h=down,c=exp,gb=sig        (3 blocks)\n");
+            printf("    top-rgb: r=down,g=down,b=down       (3 blocks)\n");
+#else  /* MNIST, Fashion-MNIST (grayscale) */
+            printf("    latest : exp8 (single block)\n");
+#endif
             exit(1);   /* INTENTIONAL: non-zero so run-research.sh suppresses logging */
         } else if (strcmp(argv[i], "--help-filter") == 0) {
             printf("--filter #,#,... or name,name,...  Restrict to specific classes only             (default: none)\n");

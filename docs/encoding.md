@@ -291,6 +291,54 @@ current dataset (expanded at runtime into the full encoding table).
 
 ---
 
+## 9. Encoding Group Aliases (CIFAR-10)
+
+The CIFAR-10 dataset defines multi-block encoding aliases that combine
+channel selection with per-channel encoding. The core pattern `up+down+sig+sig`
+is applied to different raw color channels:
+
+| Alias   | Channels                              | Pattern               |
+| ------- | ------------------------------------- | --------------------- |
+| `ey-b`  | `g=up, bl=down, bm=sig, bp=sig`      | G + opponent pairs    |
+| `ey-a`  | `b=up, al=down, am=sig, ap=sig`      | B + opponent pairs    |
+| `ey-c`  | `r=up, cl=down, cm=sig, cp=sig`      | R + opponent pairs    |
+| `ey-h`  | `h=down, c=exp, gb=sig`              | Hue + Contrast + Diff |
+| `top-rgb` | `r=down, g=down, b=down`          | Raw RGB with down     |
+| `latest` | `ey-b,ey-a,ey-h`                    | 11 members (optimal)  |
+
+### 9.1 Key Findings (2026-07-14)
+
+**ey-a, ey-b, ey-c are the same pattern permuted.** All three use
+`up+down+sig+sig` but on different raw color channels (G, B, R respectively).
+After two of them are in the system, the third adds no new encoding structure
+— only another random W0 projection. Experimentally:
+
+```
+H=64, EN=1, ep=10:
+  ey-b         (4 members) → 46.9%
+  ey-a         (4 members) → 46.7%
+  ey-c         (4 members) → 46.3%   ← same pattern, ~same result
+  ey-b+ey-a    (8 members) → 51.2%   ← diversity helps
+  ey-b+ey-a+ey-c (12 members) → 52.0% ← +0.8pp, just more members
+  latest (ey-b+ey-a+ey-h, 11 members) → 54.5%  ← real diversity (ey-h adds hue+contrast)
+  ey-b+ey-a+ey-c+ey-h (15 members) → 55.1% ← more members, same ceiling
+```
+
+**At full scale (H=1024, EN=3, splitVN=2), more encodings hurt:**
+```
+  latest           (33 members) → 61.4%  ← BEST
+  ey-b+ey-a+ey-c+ey-h (45 members) → 61.2%  ← worse, extra channels add noise
+```
+
+### 9.2 Practical Guidance
+
+- **`latest` (ey-b+ey-a+ey-h, 11 members) is the empirically optimal combination.**
+- Adding `ey-c` does not help — its pattern is already covered by ey-a and ey-b.
+- `ey-h` (hue + contrast + color difference) provides genuinely orthogonal signal.
+- Beyond ∼62% eval, no combination of encodings helps — the ceiling is architectural.
+
+---
+
 ## References
 
 - [color-vision-opponent-channels.md](color-vision-opponent-channels.md) — Opponent channel theory for CIFAR-10

@@ -227,43 +227,6 @@ Voting:  Σ_members score[k]  →  argmax</pre>
             V=4 (AND4) filter too aggressively — the corrector starves even with more neurons.</p>
 
             <h3>4.5 Target init — three classes, one decisive metric</h3>
-
-            <h3>4.6 Step schedule — cos-time always beats error-based control</h3>
-            <p>Three step schedule families were tested at H=256, EN=1, ep=20, <code>--multi-correct</code>:</p>
-            <table>
-                <tr><th>Schedule</th><th>Best eval</th><th>Train</th><th>Gap</th><th>Why</th></tr>
-                <tr class="highlight-row">
-                    <td><code>cos-time</code> (default)</td><td><strong>57.2%</strong></td><td>94.2%</td><td>37pp</td>
-                    <td>Time-based decay — step independent of error, full learning budget</td>
-                </tr>
-                <tr>
-                    <td><code>pow=5</code></td><td>56.5%</td><td>86.8%</td><td>30pp</td>
-                    <td>Train-error based — step shrinks as trn drops, limits both</td>
-                </tr>
-                <tr>
-                    <td><code>pow-eval=0.5..6</code></td><td>≤54.1%</td><td>61-81%</td><td>varies</td>
-                    <td>Eval-error based — step dies too early, eval never reaches ceiling</td>
-                </tr>
-            </table>
-            <p><strong>cos-time wins every time.</strong> The step follows a fixed cosine schedule
-            independent of the current error. This gives the corrector the full learning budget
-            — the step only decays at the very end, preventing late-stage oscillation without
-            starving the early learning.</p>
-            <p><strong>Pow (error-based) self-limits.</strong> <code>pow=N</code> computes
-            <code>step = step_init × (err/total)^N</code>. As training error drops, the step
-            shrinks — which limits further progress on both trn and evl. Higher N gives faster
-            decay but lower peak accuracy. The best pow value (N=5) reaches 56.5%, still −0.7pp
-            behind cos-time.</p>
-            <p><strong>Pow-eval starves the corrector.</strong> Basing the step on eval error
-            instead of training error sounded promising (auto-stop when eval plateaus), but
-            eval error drops much faster than training error. The step collapses to near-zero
-            by epoch 5-6, leaving 40-50% of the training budget unused. Even at very low power
-            (0.5, giving <code>step × √eval_err</code>), the step stays high but oscillates
-            — the corrector never stabilizes.</p>
-            <p><strong>Conclusion:</strong> Time-based scheduling is the only safe choice.
-            Error-based schedules (whether train or eval) limit the corrector prematurely.
-            <code>--gap-k</code> (gap damping on step) can complement cos-time when
-            overfitting needs to be suppressed.</p>
             <p>Seven init modes fall into three distinct classes. The decisive metric is
             <strong>per-neuron variation</strong> — whether different neurons have different
             target values for the same class.</p>
@@ -308,6 +271,80 @@ Voting:  Σ_members score[k]  →  argmax</pre>
             for every sample. The corrector checks <code>gap = sc[pred] − sc[true]</code>,
             finds gap=0, and fires <em>zero corrections</em>. Result: 10.0% (random chance).
             The corrector requires per-neuron leverage to differentiate classes.</p>
+
+            <h3>4.6 Step schedule — cos-time always beats error-based control</h3>
+            <p>Three step schedule families were tested at H=256, EN=1, ep=20, <code>--multi-correct</code>:</p>
+            <table>
+                <tr><th>Schedule</th><th>Best eval</th><th>Train</th><th>Gap</th><th>Why</th></tr>
+                <tr class="highlight-row">
+                    <td><code>cos-time</code> (default)</td><td><strong>57.2%</strong></td><td>94.2%</td><td>37pp</td>
+                    <td>Time-based decay — step independent of error, full learning budget</td>
+                </tr>
+                <tr>
+                    <td><code>pow=5</code></td><td>56.5%</td><td>86.8%</td><td>30pp</td>
+                    <td>Train-error based — step shrinks as trn drops, limits both</td>
+                </tr>
+                <tr>
+                    <td><code>pow-eval=0.5..6</code></td><td>≤54.1%</td><td>61-81%</td><td>varies</td>
+                    <td>Eval-error based — step dies too early, eval never reaches ceiling</td>
+                </tr>
+            </table>
+            <p><strong>cos-time wins every time.</strong> The step follows a fixed cosine schedule
+            independent of the current error. This gives the corrector the full learning budget
+            — the step only decays at the very end, preventing late-stage oscillation without
+            starving the early learning.</p>
+            <p><strong>Pow (error-based) self-limits.</strong> <code>pow=N</code> computes
+            <code>step = step_init × (err/total)^N</code>. As training error drops, the step
+            shrinks — which limits further progress on both trn and evl. Higher N gives faster
+            decay but lower peak accuracy. The best pow value (N=5) reaches 56.5%, still −0.7pp
+            behind cos-time.</p>
+            <p><strong>Pow-eval starves the corrector.</strong> Basing the step on eval error
+            instead of training error sounded promising (auto-stop when eval plateaus), but
+            eval error drops much faster than training error. The step collapses to near-zero
+            by epoch 5-6, leaving 40-50% of the training budget unused. Even at very low power
+            (0.5, giving <code>step × √eval_err</code>), the step stays high but oscillates
+            — the corrector never stabilizes.</p>
+            <p><strong>Conclusion:</strong> Time-based scheduling is the only safe choice.
+            Error-based schedules (whether train or eval) limit the corrector prematurely.
+            <code>--gap-k</code> (gap damping on step) can complement cos-time when
+            overfitting needs to be suppressed.</p>
+
+            <h3>4.7 Encoding repeat — diversity beats quantity</h3>
+            <p>All runs: H=64, EN=1, ep=10, <code>--multi-correct</code>. Only the encoding repeat count varies.</p>
+            <table>
+                <tr><th>Repeat</th><th>ey-a</th><th>ey-b</th><th>ey-c</th><th>ey-h</th><th>top-rgb</th><th>latest (mixed)</th></tr>
+                <tr><td>1×</td><td>46.7%</td><td>46.9%</td><td>46.3%</td><td>39.9%</td><td>39.9%</td><td>—</td></tr>
+                <tr><td>2×</td><td>50.4%</td><td>51.2%</td><td>50.2%</td><td>44.9%</td><td>43.5%</td><td>—</td></tr>
+                <tr><td>3×</td><td>51.8%</td><td>52.0%</td><td>52.0%</td><td>47.0%</td><td>44.7%</td><td>—</td></tr>
+                <tr><td>4×</td><td>52.7%</td><td>53.0%</td><td>53.0%</td><td>48.5%</td><td>45.5%</td><td>—</td></tr>
+                <tr><td>5×</td><td>—</td><td>53.0%</td><td>—</td><td>49.0%</td><td>—</td><td>—</td></tr>
+                <tr><td>6×</td><td>—</td><td>—</td><td>—</td><td>48.9%</td><td>—</td><td>—</td></tr>
+                <tr class="highlight-row"><td><strong>1× (mixed)</strong></td><td colspan="2"><strong>54.5%</strong></td><td colspan="4"><code>--encoding latest</code> = ey-b+ey-a+ey-h (3 encodings, 11 members)</td></tr>
+                <tr><td><strong>4 diff</strong></td><td colspan="5"><strong>55.1%</strong></td><td><code>ey-b,ey-a,ey-c,ey-h</code> (4 different, 15 members)</td></tr>
+                <tr><td><strong>4 mixed</strong></td><td colspan="5"><strong>54.9%</strong></td><td><code>ey-b,ey-a,ey-b,ey-h</code> (3 diff + repeat, 15 members)</td></tr>
+            </table>
+            <p><strong>ey-a, ey-b, ey-c are the same pattern permuted.</strong> All three use
+            <code>up+down+sig+sig</code> on different raw color channels: ey-b → G, ey-a → B,
+            ey-c → R. After ey-a (B) and ey-b (G) are in the system, ey-c (R) adds no new
+            encoding structure — only another projection onto the remaining raw color channel.
+            The information from <code>up+down+sig+sig</code> on RGB is already captured by the
+            first two combinations.</p>
+            <p><strong>More members help — but only until the ceiling.</strong> Three different
+            encodings (<code>latest</code>) reach 54.5% with 11 members, beating 5× repeat of any
+            single encoding (53.0% max) which has only 4 members. Adding ey-c (15 members) improves
+            to 55.1% — but the gain is from the extra members, not from encoding diversity.
+            Repeating <code>ey-b</code> (15 members, 54.9%) gives almost the same improvement.
+            <strong>At low H, any extra member helps.</strong></p>
+            <p><strong>At high capacity, more members saturate.</strong> Running the champion config
+            (H=1024, EN=3, splitVN=2) with 4 encodings (<code>ey-b,ey-a,ey-c,ey-h</code>, <strong>45 members</strong>)
+            yields <strong>61.2%</strong> — <em>worse</em> than <code>latest</code> (61.4%, <strong>33 members</strong>).
+            The extra 12 members add noise, not signal. <strong>Ensemble scaling does not work
+            beyond ∼62%</strong> — the member ceiling has been reached.</p>
+            <p><strong>Strong encodings converge at 4× repeat</strong> — ey-a and ey-b plateau at
+            53% after 4 repeats. Weaker encodings (ey-h, top-rgb) saturate earlier and lower.
+            The 4-block encodings (ey-a, ey-b, ey-c) consistently outperform the 3-block ones
+            (ey-h, top-rgb) by 3-5pp.</p>
+            <p><strong><code>latest</code> (11 encodings) is the empirically optimal combination.</strong></p>
 
         </section>
 

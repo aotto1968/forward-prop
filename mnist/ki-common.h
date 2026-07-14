@@ -54,6 +54,7 @@ enum step_mode {
     STEP_COS_TIME   = 1,
     STEP_COS_ERR    = 2,
     STEP_CONST      = 3,
+    STEP_POW_EVAL   = 4,  /* pow using EVAL error: step = step_init × (eval_err/total)^power */
 };
 
 /* ── Enum → lesbarer String ─────────────────────────────────── */
@@ -63,6 +64,7 @@ static const char *step_mode_name[] = {
     [STEP_COS_TIME] = "cos-time",
     [STEP_COS_ERR]  = "cos-err",
     [STEP_CONST]    = "const",
+    [STEP_POW_EVAL] = "pow-eval",
 };
 
 /* Forward declaration: mode_str(), color_str(), enc_str() are defined below
@@ -74,6 +76,8 @@ __attribute__((unused))
 static const char *color_str(void);
 __attribute__((unused))
 static const char *enc_str(void);
+__attribute__((unused))
+static const char *target_init_str(void);
 
 /* ═══════════════════════════════════════════════════════════════════════
  * ENCODING — Pixel-zu-Thermometer-Transformationen
@@ -203,6 +207,17 @@ static const char *ki_alias_lookup(const char *name) {
  #define KI_ENC_MAX 16
  #define KI_DEFAULT_TARGET_NORM 0  /* --optional target-norm: default ON */
 
+ /* ── Target initialisation modes (--target-init) ──────────── */
+ enum ki_TargetInit {
+     KI_TARGET_COUNT   = 0,  /* counting (default, proven) */
+     KI_TARGET_RANDOM  = 1,  /* pure random */
+     KI_TARGET_INVERSE = 2,  /* inverse count: +1 for all classes except true */
+     KI_TARGET_UNIFORM = 3,  /* all targets = 1 (constant, class prior only) */
+     KI_TARGET_PRIOR   = 4,  /* per-class constant = class count (no per-neuron var) */
+     KI_TARGET_LAPLACE = 5,  /* count +1 per entry (additive smoothing, clamped) */
+     KI_TARGET_DAMPEN  = 6,  /* count >> 1 (shape preserved, amplitude halved) */
+ };
+
 typedef struct {
     int8_t type;   /* KI_ENC_RAW..KI_ENC_SIG */
     int8_t width;  /* 8, 16, 32 */
@@ -255,7 +270,7 @@ typedef struct {
     char   importD[512];    			/* --import DIR: load model for inference */
     int    seed_splitmix;  			/* --seed-splitmix: ignore seed_file, use splitmix64 PRNG */
     int    multi_correct;  			/* --multi-correct: punish all over true_k (default: 1) */
-    int    target_random_init; 			/* --target-random-init: random targets statt counting (default: 0) */
+    int    target_init_mode; 			/* enum ki_TargetInit (default: KI_TARGET_COUNT) */
     int    ensemble_seed;    			/* ENS_SEED_ONCE|CONST|INCR (default: ONCE) */
     int    debug_class_voting; 			/* --debug-class-voting: Member × Class accuracy (end only) */
     int    debug_class_voting_all; 		/* --debug-class-voting-all: every epoch */
@@ -282,6 +297,66 @@ static inline const char *ensemble_seed_str() {
     }
 }
 
+/* ═══════════════════════════════════════════════════════════════════════
+ * COMPLETION TABLE — for --completion flag (bash auto-completion)
+ * ═══════════════════════════════════════════════════════════════════════
+ * type: "none", "file", "dir", "num", "float", "token"
+ * values: space-separated tokens for "token" type, NULL otherwise.
+ * Sentinelle: {NULL, NULL, NULL} */
+struct _comp_entry { const char *flag; const char *type; const char *values; };
+static const struct _comp_entry _comp_table[] = {
+    {"--hiddenN",                       "num",   NULL},
+    {"--epochsN",                       "num",   NULL},
+    {"--ensembleN",                     "num",   NULL},
+    {"--splitVN",                       "token", "1 2 3 4 8 16 32"},
+    {"--splitHN",                       "num",   NULL},
+    {"--batchN",                        "num",   NULL},
+    {"--trainN",                        "num",   NULL},
+    {"--evalN",                         "num",   NULL},
+    {"--threadN",                       "num",   NULL},
+    {"--lr",                            "float", NULL},
+    {"--lr-min",                        "float", NULL},
+    {"--step-err",                      "token", "cos-time cos-err pow pow-eval const"},
+    {"--step-const",                    "num",   NULL},
+    {"--step-power",                    "float", NULL},
+    {"--gap-k",                         "float", NULL},
+    {"--err-rollback",                  "none",  NULL},
+    {"--warmup",                        "num",   NULL},
+    {"--seed",                          "num",   NULL},
+    {"--seed-file",                     "file",  NULL},
+    {"--seed-splitmix",                 "none",  NULL},
+    {"--seed-member",                   "token", "once const incr"},
+    {"--channels",                      "token", "packed full flat auge diff rgb grey h s c edge bin mnist r g b"},
+    {"--encoding",                      "token", "raw lin7 lin8 down up mid log exp sig"},
+    {"--export-merge-scores",           "dir",   NULL},
+    {"--export-scores",                 "file",  NULL},
+    {"--export-neurons",                "file",  NULL},
+    {"--export",                        "dir",   NULL},
+    {"--import",                        "dir",   NULL},
+    {"--predictions",                   "file",  NULL},
+    {"--no-multi-correct",              "none",  NULL},
+    {"--multi-correct",                 "none",  NULL},
+    {"--optional",                      "token", "target-norm"},
+    {"--target-init",         "token", "count random inverse uniform prior laplace dampen"},
+    {"--dry-run",                       "none",  NULL},
+    {"--quick",                         "none",  NULL},
+    {"--qq",                            "none",  NULL},
+    {"--debug",                         "none",  NULL},
+    {"--debug-h0",                      "none",  NULL},
+    {"--debug-class-voting",            "none",  NULL},
+    {"--debug-class-voting-all",        "none",  NULL},
+    {"--debug-confusion-matrix",        "none",  NULL},
+    {"--debug-confusion-matrix-all",    "none",  NULL},
+    {"--filter",                        "token", NULL},
+    {"--shuffle",                       "none",  NULL},
+    {"--help",                          "none",  NULL},
+    {"--help-channels",                 "none",  NULL},
+    {"--help-encoding",                 "none",  NULL},
+    {"--help-filter",                   "none",  NULL},
+    {"--help-target-init",              "none",  NULL},
+    {NULL, NULL, NULL}
+};
+
 /* ── Parse CLI ─────────────────────────────────────────────────── */
 static inline void ki_parse_args(int argc, char *argv[]) {
     /* enc[] initialisieren: -1 = "nicht gesetzt" (default resolved later) */
@@ -301,15 +376,16 @@ static inline void ki_parse_args(int argc, char *argv[]) {
             printf("  ---------------------------------------------------------------------------------------------\n");
             printf("  --lr FLOAT        Step size                                                     (default: %.4f)\n", (double)aa.lr);
             printf("  --lr-min FLOAT    Min lr fraction for cosine decay                              (default: %.1f, stop at step=1)\n", (double)aa.lr_min);
-            printf("  --step-err cos-time|cos-err|pow|pow=NUM|const|const=NUM                         (default: %s)\n", mode_str());
+            printf("  --step-err cos-time|cos-err|pow[=NUM]|pow-eval[=NUM]|const[=NUM]                  (default: %s)\n", mode_str());
             printf("                    Step mode: N=err-proportional, auto=compute,\n");
             printf("                    cos-time  : time-based cosine\n");
             printf("                    cos-err   : error cosine\n");
-            printf("                    pow       : step_init×(err/total)^power\n");
+            printf("                    pow       : step_init×(train_err/total)^power\n");
+            printf("                    pow-eval  : step_init×(eval_err/total)^power  (self-regularizing)\n");
             printf("                    const     : step_init (const=NUM: fixed step NUM)\n");
             printf("  --step-const N    alias for --step-err const=####                               (default: %d)\n", aa.stepN);
             printf("  --step-power F    alias for --step-err pow=####                                 (default: %.1f, 1.0=linear)\n", (double)aa.step_power);
-            printf("  --gap-k F         Exp(-K × gap) step damping when overfitting gap widens          (default: %.1f)\n", (double)aa.gap_k);
+            printf("  --gap-k F         Exp(-K × gap) step damping when overfitting gap widens        (default: %.1f)\n", (double)aa.gap_k);
             printf("                    gap = train_err%% - eval_err%%  |  step *= exp(-K × gap)\n");
             printf("  --err-rollback    Rollback targets when training err increases                  (default: off)\n");
             printf("  --warmup N        Linear warmup epochs                                          (default: %d, 0=off)\n", aa.warmup_epochs);
@@ -317,46 +393,16 @@ static inline void ki_parse_args(int argc, char *argv[]) {
             printf("  --seed N          Random seed                                                   (default: %d)\n", aa.seed);
             printf("  --seed-file PATH-TO-RANDOM-FILE                                                 (default: none)\n");
             printf("                    Use true random data from file instead of PRNG\n");
-            printf("  --seed-splitmix   Use splitmix64 PRNG (default: on)                                      (default: off)\n");
+            printf("  --seed-splitmix   Use splitmix64 PRNG                                           (default: on)\n");
             printf("  --seed-member const|incr|once  W0 seeding mode.                                 (default: %s)\n", ensemble_seed_str());
             printf("                    once    : one seed, all sequential.\n");
             printf("                    const   : same W0 per ensemble (tests color diversity).\n");
             printf("                    incr    : unique seed per member.\n");
             printf("  ---------------------------------------------------------------------------------------------\n");
             printf("  --channels [packed|full,][flat,]...                                             (default: %s)\n", color_str());
-#if KI_COLORS > 1
-            printf("                    Channel selection (comma-sep).  Encoding via --encoding.\n");
-            printf("                    packed/full   : 4px/cont or 1px/cont,\n");
-            printf("                    flat          : all selected blocks in one wide W0,\n");
-            printf("                    auge          : lum|al=(R+G)/2, rg|am=R-G, by|ap=B-(R+G)/2,\n");
-            printf("                                  :     bl=(R+B)/2,    bm=R-B,    bp=G-(R+B)/2,\n");
-            printf("                    diff          : rg=R-G, rb=R-B, gb=G-B (color opponent),\n");
-            printf("                    rgb           : r=R, g=G, b=B,\n");
-            printf("                    grey          : y|601=ITU-601, yl|709=ITU-709\n");
-            printf("                    h             : hue (Farbwinkel, atan2-basiert)\n");
-            printf("                    s             : saturation (Farbsaettigung, max-min)\n");
-            printf("                    c             : contrast (Sobel-Kanten auf LUM)\n");
-            printf("                    edge          : edges via Sobel on Y luminance\n");
-            printf("                    bin           : Otsu-binarized Y luminance (filled black/white regions)\n");
-#else
-            printf("                    mnist         : single grayscale block (only available channel)\n");
-#endif
-            printf("  --encoding [raw|lin7|lin8|down|up|mid|log|exp|sig]                              (default: %s)\n", enc_str());
-            printf("                    OR <color>=<enc>[width] per-block: r=exp16,g=lin8   \n");
-            printf("                    Pixel-Encoding pro Farb-Block.\n");
-            printf("                    Optionaler Width-Suffix: exp16=16-bit, lin32=32-bit\n");
-            printf("                    8-bit  : 4 px/cont, 8 Stufen (default, exp=0.3)\n");
-            printf("                    16-bit : 2 px/cont, 16 Stufen (exp=0.5, 2× Breite)\n");
-            printf("                    32-bit : 1 px/cont, 32 Stufen (exp=0.7, 4× Breite)\n");
-            printf("                    lin7   7-level thermometer (old bin),\n");
-            printf("                    lin8   linear (pv*width/256),\n");
-            printf("                    down   shadow emphasis,\n");
-            printf("                    up     highlight emphasis,\n");
-            printf("                    mid    midtone emphasis,\n");
-            printf("                    log    logarithmic,\n");
-            printf("                    exp    exponential,\n");
-            printf("                    sig    sigmoid.\n");
-            printf("                    raw    no encoding (raw 8-bit bytes).\n");
+            printf("                    See --help-channels for details\n");
+            printf("  --encoding [raw|lin7|lin8|down|up|mid|log|exp|sig]                              (default: latest)\n");
+            printf("                    See --help-encoding for details\n");
             printf("  --export-merge-scores DIR  Save per-member scores to archive files for merge    (default: none)\n");
             printf("  --export-scores FILE  Save per-sample ensemble scores (10×int64+uint8)          (default: none)\n");
             printf("  --export-neurons FILE  Save gb_buf+Target+Offset per member (v3) for Adam..     (default: none)\n");
@@ -366,7 +412,8 @@ static inline void ki_parse_args(int argc, char *argv[]) {
             printf("                    Export per-sample predictions (for vis-errors, eval only)\n");
             printf("  --optional target-norm  Vote normalisierung (equal voting power)                (default: off)\n");
             printf("  --?no-?multi-correct  Only punish argmax, not all over true_k                   (default: multi-correct)\n");
-            printf("  --?no-?target-random-init  Random targets statt counting (correction baut auf)  (default: off)\n");
+            printf("  --target-init count|random|inverse|uniform|prior|laplace|dampen  Target initialisation              (default: %s)\n", target_init_str());
+            printf("                    See --help-target-init for details\n");
             printf("  ---------------------------------------------------------------------------------------------\n");
             printf("  --dry-run         Print architecture and exit                                   (default: off)\n");
             printf("  --quick           5000 train / 2000 eval\n");
@@ -376,13 +423,88 @@ static inline void ki_parse_args(int argc, char *argv[]) {
             printf("  --debug-class-voting?-all?  Member × Class accuracy table (end only)            (default: off)\n");
             printf("  --debug-confusion-matrix?-all?  Confusion matrix table (end only)               (default: off)\n");
             printf("  --filter #,#,... or name,name,...  Restrict to specific classes only            (default: none)\n");
+            printf("                    See --help-filter for class names\n");
+            printf("  --shuffle         Shuffle data before train/eval split                          (default: off)\n");
+            exit(1);
+        } else if (strcmp(argv[i], "--help-channels") == 0) {
+            printf("--channels [packed|full,][flat,]...                                             (default: %s)\n", color_str());
+#if KI_COLORS > 1
+            printf("  Channel selection (comma-sep).  Encoding via --encoding.\n");
+            printf("  packed/full   : 4px/cont or 1px/cont,\n");
+            printf("  flat          : all selected blocks in one wide W0,\n");
+            printf("  auge          : lum|al=(R+G)/2, rg|am=R-G, by|ap=B-(R+G)/2,\n");
+            printf("                :     bl=(R+B)/2,    bm=R-B,    bp=G-(R+B)/2,\n");
+            printf("  diff          : rg=R-G, rb=R-B, gb=G-B (color opponent),\n");
+            printf("  rgb           : r=R, g=G, b=B,\n");
+            printf("  grey          : y|601=ITU-601, yl|709=ITU-709\n");
+            printf("  h             : hue (Farbwinkel, atan2-basiert)\n");
+            printf("  s             : saturation (Farbsaettigung, max-min)\n");
+            printf("  c             : contrast (Sobel-Kanten auf LUM)\n");
+            printf("  edge          : edges via Sobel on Y luminance\n");
+            printf("  bin           : Otsu-binarized Y luminance (filled black/white regions)\n");
+#else
+            printf("  mnist         : single grayscale block (only available channel)\n");
+#endif
+            exit(1);   /* INTENTIONAL: non-zero so run-research.sh suppresses logging */
+        } else if (strcmp(argv[i], "--help-encoding") == 0) {
+            printf("--encoding [raw|lin7|lin8|down|up|mid|log|exp|sig]                              (default: latest)\n");
+            printf("  OR <color>=<enc>[width] per-block: r=exp16,g=lin8   \n");
+            printf("  Pixel-Encoding pro Farb-Block.\n");
+            printf("  Optionaler Width-Suffix: exp16=16-bit, lin32=32-bit\n");
+            printf("  8-bit  : 4 px/cont, 8 Stufen (default, exp=0.3)\n");
+            printf("  16-bit : 2 px/cont, 16 Stufen (exp=0.5, 2x Breite)\n");
+            printf("  32-bit : 1 px/cont, 32 Stufen (exp=0.7, 4x Breite)\n");
+            printf("  lin7   7-level thermometer (old bin),\n");
+            printf("  lin8   linear (pv*width/256),\n");
+            printf("  down   shadow emphasis,\n");
+            printf("  up     highlight emphasis,\n");
+            printf("  mid    midtone emphasis,\n");
+            printf("  log    logarithmic,\n");
+            printf("  exp    exponential,\n");
+            printf("  sig    sigmoid.\n");
+            printf("  raw    no encoding (raw 8-bit bytes).\n");
+            exit(1);   /* INTENTIONAL: non-zero so run-research.sh suppresses logging */
+        } else if (strcmp(argv[i], "--help-filter") == 0) {
+            printf("--filter #,#,... or name,name,...  Restrict to specific classes only             (default: none)\n");
             printf("                    Examples: --filter 0,1 or --filter name1,name2\n");
             printf("                    Available:");
             for (int _k = 0; _k < KI_NCLASSES; _k++)
                 printf(" %s(%d)", ki_class_names[_k], _k);
             printf("\n");
-            printf("  --shuffle         Shuffle data before train/eval split                          (default: off)\n");
-            exit(0);
+            exit(1);   /* INTENTIONAL: non-zero so run-research.sh suppresses logging */
+        } else if (strcmp(argv[i], "--help-target-init") == 0) {
+            printf("--target-init count|random|inverse|uniform|prior|laplace|dampen  Target initialisation  (default: %s)\n", target_init_str());
+            printf("  count   : count-based (default). Accumulate corrections from counting.\n");
+            printf("  random  : uniform random [0, n_k] per neuron×class.\n");
+            printf("  inverse : negated count logits. +1 for all classes EXCEPT true class.\n");
+            printf("  uniform : all targets = 1 (constant, class prior only).\n");
+            printf("  prior   : per-class constant = class_count[k] (no per-neuron variation).\n");
+            printf("  laplace : count +1 per entry (additive smoothing, clamped to n_k).\n");
+            printf("  dampen  : count >> 1 (shape preserved, peak/valley amplitude halved).\n");
+            exit(1);   /* INTENTIONAL: non-zero so run-research.sh suppresses logging */
+        } else if (strcmp(argv[i], "--completion") == 0) {
+            if (i + 1 < argc && argv[i+1][0] == '-' && argv[i+1][1] == '-') {
+                /* --completion --<flag> → print hint for that flag */
+                const char *target = argv[++i];
+                const struct _comp_entry *e;
+                for (e = _comp_table; e->flag; e++) {
+                    if (strcmp(e->flag, target) == 0) {
+                        if (e->values)
+                            printf("%s %s\n", e->type, e->values);
+                        else
+                            printf("%s\n", e->type);
+                        exit(0);
+                    }
+                }
+                fprintf(stderr, "[ERROR] --completion: unknown flag '%s'\n", target);
+                exit(1);
+            } else {
+                /* --completion (alone) → print all valid flag names */
+                const struct _comp_entry *e;
+                for (e = _comp_table; e->flag; e++)
+                    puts(e->flag);
+                exit(0);
+            }
         } else if (strcmp(argv[i], "--dry-run") == 0) {
             aa.dry_run = 1;
             aa.epochs  = 0;
@@ -424,13 +546,17 @@ static inline void ki_parse_args(int argc, char *argv[]) {
                 if (val[5] == '=')               /* --step-err const=1000 → fester Step 1000 */
                     aa.stepN = atoi(val + 6);
                 if (aa.stepN < 0) aa.stepN = 0;
+            } else if (strncmp(val, "pow-eval", 8) == 0) {
+                aa.step_mode  = STEP_POW_EVAL;
+                if (val[8] == '=')               /* --step-err pow-eval=0.5 → setzt step_power */
+                    aa.step_power = (float)atof(val + 9);
             } else if (strncmp(val, "pow", 3) == 0) {
                 aa.step_mode  = STEP_POW;
                 if (val[3] == '=')               /* --step-err pow=0.5 → setzt step_power */
                     aa.step_power = (float)atof(val + 4);
             } else {
                 fprintf(stderr, "[ERROR] --step-err: unknown mode '%s'. "
-                        "Valid: cos-time, cos-err, pow[=NUM], const[=NUM]\n", val);
+                        "Valid: cos-time, cos-err, pow[=NUM], pow-eval[=NUM], const[=NUM]\n", val);
                 exit(1);
             }
         } else if (strcmp(argv[i], "--step-const") == 0 && i + 1 < argc) {
@@ -559,10 +685,27 @@ static inline void ki_parse_args(int argc, char *argv[]) {
             aa.multi_correct = 1;
         } else if (strcmp(argv[i], "--no-multi-correct") == 0) {
             aa.multi_correct = 0;
-        } else if (strcmp(argv[i], "--target-random-init") == 0) {
-            aa.target_random_init = 1;
-        } else if (strcmp(argv[i], "--no-target-random-init") == 0) {
-            aa.target_random_init = 0;
+        } else if (strcmp(argv[i], "--target-init") == 0 && i + 1 < argc) {
+            const char *val = argv[++i];
+            if (strcmp(val, "count") == 0) {
+                aa.target_init_mode = KI_TARGET_COUNT;
+            } else if (strcmp(val, "random") == 0) {
+                aa.target_init_mode = KI_TARGET_RANDOM;
+            } else if (strcmp(val, "inverse") == 0) {
+                aa.target_init_mode = KI_TARGET_INVERSE;
+            } else if (strcmp(val, "uniform") == 0) {
+                aa.target_init_mode = KI_TARGET_UNIFORM;
+            } else if (strcmp(val, "prior") == 0) {
+                aa.target_init_mode = KI_TARGET_PRIOR;
+            } else if (strcmp(val, "laplace") == 0) {
+                aa.target_init_mode = KI_TARGET_LAPLACE;
+            } else if (strcmp(val, "dampen") == 0) {
+                aa.target_init_mode = KI_TARGET_DAMPEN;
+            } else {
+                fprintf(stderr, "[ERROR] --target-init: unknown mode '%s'. "
+                        "Valid: count, random, inverse, uniform, prior, laplace, dampen\n", val);
+                exit(1);
+            }
         } else if (strcmp(argv[i], "--channels") == 0 && i + 1 < argc) {
             const char *val = argv[++i];
             int mask = 0;
@@ -759,15 +902,87 @@ static inline void ki_parse_args(int argc, char *argv[]) {
             if (aa.enc_array[i].color < 0) { first_bare = i; break; }
 
         if (aa.enc_count == 0) {
-            /* Kein --encoding: Defaults pro aktivem Kanal */
-            int def_type = aa.debug_binarize ? KI_ENC_LIN7 : KI_ENC_RAW;
-            for (int b = 0; b < COLOR_NB; b++) {
-                if (!(aa.channel & (1 << b))) continue;
-                if (aa.enc_count < KI_ENC_MAX) {
-                    aa.enc_array[aa.enc_count].type  = (int8_t)def_type;
-                    aa.enc_array[aa.enc_count].width = KI_ENC_WIDTH_DEFAULT;
-                    aa.enc_array[aa.enc_count].color = (int8_t)b;
-                    aa.enc_count++;
+            /* Default: resolve "latest" alias with iterative alias expansion
+             * (same multi-pass logic as the --encoding parser, lines 609-638).
+             * Fallback to lin7/raw if alias is not defined. */
+            {
+                aa.debug_binarize = 1;  /* thermometer mode */
+                char _def_buf[256] = "latest";
+                for (int _iter = 0; _iter < 5; _iter++) {
+                    /* Phase 1: full-string match */
+                    const char *_full = ki_alias_lookup(_def_buf);
+                    if (_full) {
+                        strncpy(_def_buf, _full, sizeof(_def_buf) - 1);
+                        _def_buf[sizeof(_def_buf) - 1] = '\0';
+                        continue;
+                    }
+                    /* Phase 2: per-token expand */
+                    char _tmp[256], _new[256] = "";
+                    strncpy(_tmp, _def_buf, sizeof(_tmp) - 1);
+                    _tmp[sizeof(_tmp) - 1] = '\0';
+                    char *_t = strtok(_tmp, ",");
+                    int _any = 0;
+                    while (_t) {
+                        while (*_t == ' ' || *_t == '\t') _t++;
+                        const char *_val = ki_alias_lookup(_t);
+                        if (_val) {
+                            if (_new[0]) strncat(_new, ",", sizeof(_new) - 1);
+                            strncat(_new, _val, sizeof(_new) - strlen(_new) - 1);
+                            _any = 1;
+                        } else {
+                            if (_new[0]) strncat(_new, ",", sizeof(_new) - 1);
+                            strncat(_new, _t, sizeof(_new) - strlen(_new) - 1);
+                        }
+                        _t = strtok(NULL, ",");
+                    }
+                    if (!_any) break;
+                    strncpy(_def_buf, _new, sizeof(_def_buf) - 1);
+                    _def_buf[sizeof(_def_buf) - 1] = '\0';
+                }
+                /* Parse the fully expanded string into enc_array */
+                for (char *_tok = strtok(_def_buf, ","); _tok; _tok = strtok(NULL, ",")) {
+                    while (*_tok == ' ' || *_tok == '\t') _tok++;
+                    const char *_eq = strchr(_tok, '=');
+                    int _enc, _w = KI_ENC_WIDTH_DEFAULT;
+                    if (_eq) {
+                        /* per-block: color=enc */
+                        char _col_buf[32];
+                        size_t _col_len = (size_t)(_eq - _tok);
+                        if (_col_len >= sizeof(_col_buf)) _col_len = sizeof(_col_buf) - 1;
+                        memcpy(_col_buf, _tok, _col_len); _col_buf[_col_len] = '\0';
+                        int _bit = ki_color_parse(_col_buf);
+                        if (_bit >= 0) {
+                            _enc = ki_enc_parse(_eq + 1, &_w);
+                            if (_enc >= 0 && aa.enc_count < KI_ENC_MAX) {
+                                aa.enc_array[aa.enc_count].type  = (int8_t)_enc;
+                                aa.enc_array[aa.enc_count].width = (int8_t)_w;
+                                aa.enc_array[aa.enc_count].color = (int8_t)_bit;
+                                aa.enc_count++;
+                            }
+                        }
+                    } else {
+                        /* bare token: color=-1, expanded later by first_bare logic */
+                        _enc = ki_enc_parse(_tok, &_w);
+                        if (_enc >= 0 && aa.enc_count < KI_ENC_MAX) {
+                            aa.enc_array[aa.enc_count].type  = (int8_t)_enc;
+                            aa.enc_array[aa.enc_count].width = (int8_t)_w;
+                            aa.enc_array[aa.enc_count].color = -1;
+                            aa.enc_count++;
+                        }
+                    }
+                }
+            }
+            if (aa.enc_count == 0) {
+                /* Fallback: kein Alias definiert → lin7/raw per active channel */
+                int def_type = aa.debug_binarize ? KI_ENC_LIN7 : KI_ENC_RAW;
+                for (int b = 0; b < COLOR_NB; b++) {
+                    if (!(aa.channel & (1 << b))) continue;
+                    if (aa.enc_count < KI_ENC_MAX) {
+                        aa.enc_array[aa.enc_count].type  = (int8_t)def_type;
+                        aa.enc_array[aa.enc_count].width = KI_ENC_WIDTH_DEFAULT;
+                        aa.enc_array[aa.enc_count].color = (int8_t)b;
+                        aa.enc_count++;
+                    }
                 }
             }
         } else if (first_bare >= 0) {
@@ -854,6 +1069,9 @@ static const char *mode_str(void) {
       case STEP_COS_TIME: 
           snprintf(_mode_buf, sizeof(_mode_buf), "cos-time(%d)", aa.warmup_epochs);
           return _mode_buf;
+      case STEP_POW_EVAL:
+          snprintf(_mode_buf, sizeof(_mode_buf), "pow-eval(%.3g)", (double)aa.step_power);
+          return _mode_buf;
       case STEP_COS_ERR:  return "cos-err";
       case STEP_CONST: {
           int cstep = (aa.stepN > 0) ? aa.stepN : (int)(aa.lr * (double)OT_F + 0.5);
@@ -920,6 +1138,23 @@ static const char *enc_str(void) {
     if (pos == 0) { _enc_buf[pos++] = '?'; }
     _enc_buf[pos] = '\0';
     return _enc_buf;
+}
+
+/* ── Target-init string (for --help and SETUP Header) ───────── */
+/* Returns "count", "random", or "?" for unknown mode.
+ * Uses static buffer, analog to mode_str(). */
+__attribute__((unused))
+static const char *target_init_str(void) {
+    switch (aa.target_init_mode) {
+        case KI_TARGET_COUNT:   return "count";
+        case KI_TARGET_RANDOM:  return "random";
+        case KI_TARGET_INVERSE: return "inverse";
+        case KI_TARGET_UNIFORM: return "uniform";
+        case KI_TARGET_PRIOR:   return "prior";
+        case KI_TARGET_LAPLACE: return "laplace";
+        case KI_TARGET_DAMPEN:  return "dampen";
+        default:                return "?";
+    }
 }
 
 /* ═══════════════════════════════════════════════════════════════════════

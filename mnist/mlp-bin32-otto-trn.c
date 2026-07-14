@@ -276,7 +276,7 @@ ki_Args aa = {
     .enc_count          = 0,     /* 0 = kein enc_array (legacy single) */
     .opt_target_norm    = KI_DEFAULT_TARGET_NORM,
     .ensemble_seed      = ENS_SEED_ONCE,
-    .target_random_init = 0,
+    .target_init_mode = KI_TARGET_COUNT,
     .multi_correct      = 0,
     .seed_splitmix      = 1,
 };
@@ -543,7 +543,7 @@ static int32_t *ki_build_target_from_gb(const uint8_t *Y, int N,
     const int class_counts[KI_NCLASSES]) {
     size_t sz = (size_t)H_local * KI_NCLASSES * (size_t)V;
     int32_t *target = (int32_t *)ki_xcalloc(sz, sizeof(int32_t));
-    if (aa.target_random_init) {
+    if (aa.target_init_mode == KI_TARGET_RANDOM) {
         /* Random init: target = uniform [0, nk] per class.
          * class_counts is provided by the caller (1× in main). */
         for (int k = 0; k < KI_NCLASSES; k++) {
@@ -554,6 +554,109 @@ static int32_t *ki_build_target_from_gb(const uint8_t *Y, int N,
                     target[TGT_IDX(k, h, v, H_local, V)] =
                         (int32_t)(w0_random() % (uint32_t)(nk + 1));
         }
+    } else if (aa.target_init_mode == KI_TARGET_UNIFORM) {
+        /* Uniform: all raw counts = 1 (constant, no per-class or
+         * per-neuron variation). After logit: same logit for all
+         * entries — only the class prior n_k differentiates. */
+        for (size_t _i = 0; _i < sz; _i++)
+            target[_i] = 1;
+    } else if (aa.target_init_mode == KI_TARGET_PRIOR) {
+        /* Prior: per-class constant = class_count[k] for all (h,v).
+         * After logit: class-specific constant logit, no per-neuron
+         * variation — tests whether per-neuron structure matters. */
+        for (int k = 0; k < KI_NCLASSES; k++) {
+            int nk = class_counts[k];
+            if (nk <= 0) continue;
+            for (int h = 0; h < H_local; h++)
+                for (int v = 0; v < V; v++)
+                    target[TGT_IDX(k, h, v, H_local, V)] = nk;
+        }
+    } else if (aa.target_init_mode == KI_TARGET_INVERSE) {
+        /* Inverse: count-mode raw counts (same as count below), then
+         * logits are NEGATED after logit_convert in the caller.
+         * This works because inverse in logit-space = -count_logit,
+         * and using count-mode raw counts keeps logit_convert() /
+         * compute_class_offset() valid (avoids t > nk overflow). */
+        #pragma omp parallel
+        {
+            int32_t *lt = (int32_t *)ki_xcalloc(sz, sizeof(int32_t));
+            #pragma omp for schedule(static)
+            for (int s = 0; s < N; s++) {
+                int k = (int)Y[s];
+                const uint32_t *gb_row = gb_buf + (size_t)s * (size_t)H_local;
+                for (int h = 0; h < H_local; h++) {
+                    uint32_t gbits = gb_row[h];
+                    while (gbits) {
+                        int v = __builtin_ctz(gbits);
+                        lt[TGT_IDX(k, h, v, H_local, V)]++;
+                        gbits &= gbits - 1;
+                    }
+                }
+            }
+            #pragma omp critical
+            { for (size_t i = 0; i < sz; i++) target[i] += lt[i]; }
+            free(lt);
+        }
+    } else if (aa.target_init_mode == KI_TARGET_LAPLACE) {
+        /* Laplace: count-mode raw counts, then +1 per entry (additive smoothing).
+         * Clamped to n_k to avoid p = 1 overflow in logit_convert. */
+        #pragma omp parallel
+        {
+            int32_t *lt = (int32_t *)ki_xcalloc(sz, sizeof(int32_t));
+            #pragma omp for schedule(static)
+            for (int s = 0; s < N; s++) {
+                int k = (int)Y[s];
+                const uint32_t *gb_row = gb_buf + (size_t)s * (size_t)H_local;
+                for (int h = 0; h < H_local; h++) {
+                    uint32_t gbits = gb_row[h];
+                    while (gbits) {
+                        int v = __builtin_ctz(gbits);
+                        lt[TGT_IDX(k, h, v, H_local, V)]++;
+                        gbits &= gbits - 1;
+                    }
+                }
+            }
+            #pragma omp critical
+            { for (size_t i = 0; i < sz; i++) target[i] += lt[i]; }
+            free(lt);
+        }
+        /* Laplace +1: add 1 to each (k, h, v) but never exceed n_k. */
+        for (int k = 0; k < KI_NCLASSES; k++) {
+            int nk = class_counts[k];
+            if (nk <= 0) continue;
+            for (int h = 0; h < H_local; h++)
+                for (int v = 0; v < V; v++) {
+                    size_t idx = TGT_IDX(k, h, v, H_local, V);
+                    if (target[idx] < nk) target[idx]++;
+                }
+        }
+    } else if (aa.target_init_mode == KI_TARGET_DAMPEN) {
+        /* Dampen: count-mode raw counts, then right-shift by 1 (÷2).
+         * Preserves the "mountain range" shape but halves peak/valley
+         * amplitude — initial log-odds are less extreme. */
+        #pragma omp parallel
+        {
+            int32_t *lt = (int32_t *)ki_xcalloc(sz, sizeof(int32_t));
+            #pragma omp for schedule(static)
+            for (int s = 0; s < N; s++) {
+                int k = (int)Y[s];
+                const uint32_t *gb_row = gb_buf + (size_t)s * (size_t)H_local;
+                for (int h = 0; h < H_local; h++) {
+                    uint32_t gbits = gb_row[h];
+                    while (gbits) {
+                        int v = __builtin_ctz(gbits);
+                        lt[TGT_IDX(k, h, v, H_local, V)]++;
+                        gbits &= gbits - 1;
+                    }
+                }
+            }
+            #pragma omp critical
+            { for (size_t i = 0; i < sz; i++) target[i] += lt[i]; }
+            free(lt);
+        }
+        /* Dampen: divide all raw counts by 2 (right-shift preserves sign). */
+        for (size_t _i = 0; _i < sz; _i++)
+            target[_i] >>= 1;
     } else {
         #pragma omp parallel
         {
@@ -838,8 +941,6 @@ static void print_setup(int H, int epochs, int trainN, int evalN,
         printf("  from %s", aa.seed_file);
     }
     printf("  seed-member: %s", ensemble_seed_str());
-    printf("  multi-correct: %s", aa.multi_correct ? "on" : "off");
-    printf("  target-init: %s", aa.target_random_init ? "random" : "counting");
     if (aa.filter_mask) {
         printf("  filter:");
         for (int _k = 0; _k < KI_NCLASSES; _k++)
@@ -2334,12 +2435,12 @@ int main(int argc, char *argv[]) {
         int step = (int)(aa.lr * (float)OT_F + 0.5f);
         printf("══╡ TRAINING ╞══  lr=%.4f  step=%d  mode=%s  F=%d",
              (double)aa.lr, step, mode_str(), OT_F);
+        printf("  tgt-init=%s", target_init_str());
+        printf("  multi-correct=%s", aa.multi_correct ? "on" : "off");
         if (aa.opt_target_norm)
             printf("  tgt-nrm=%d", aa.opt_target_norm ? 1 : 0);
         if (aa.gap_k > 0.0f)
             printf("  gap-k=%.1f", (double)aa.gap_k);
-        if (aa.target_random_init)
-            printf("  tgt-rnd");
         printf("\n");
         fflush(stdout);
     }
@@ -2467,6 +2568,12 @@ int main(int argc, char *argv[]) {
             compute_class_offset(off_m, mem->target, mem->H_local, class_counts);
             memcpy(mem->offset, off_m, KI_NCLASSES * sizeof(int64_t));
             logit_convert(mem->target, mem->H_local, class_counts);
+            /* Inverse: negate logits → target = -count_logit.
+             * Offset stays unchanged (class prior, not per-neuron). */
+            if (aa.target_init_mode == KI_TARGET_INVERSE) {
+                for (size_t _i = 0; _i < m_tgt_sz; _i++)
+                    mem->target[_i] = -mem->target[_i];
+            }
             /* First snapshot in best/err (for export / Rollback) */
             memcpy(mem->best_target, mem->target, m_tgt_sz * sizeof(int32_t));
             memcpy(mem->best_offset, mem->offset, KI_NCLASSES * sizeof(int64_t));
@@ -2525,13 +2632,23 @@ int main(int argc, char *argv[]) {
             int s;
             switch (aa.step_mode) {
                case STEP_POW:
-                   {
-                       float ratio = (float)members[_a]->last_err / (float)total_train;
-                       float p = powf(ratio, aa.step_power);
-                       s = (int)((float)step_init * p + 0.5f);
-                       if (s < 1) s = 1;
-                   }
-                   break;
+                    {
+                        float ratio = (float)members[_a]->last_err / (float)total_train;
+                        float p = powf(ratio, aa.step_power);
+                        s = (int)((float)step_init * p + 0.5f);
+                        if (s < 1) s = 1;
+                    }
+                    break;
+               case STEP_POW_EVAL:
+                    {
+                        float evl_err = (float)(total_eval - evl_ok);
+                        float evl_total = (float)(total_eval > 0 ? total_eval : 1);
+                        float ratio = evl_err / evl_total;
+                        float p = powf(ratio, aa.step_power);
+                        s = (int)((float)step_init * p + 0.5f);
+                        if (s < 1) s = 1;
+                    }
+                    break;
                case STEP_COS_ERR:
                   {
                       float err_ratio = (float)members[_a]->last_err / (float)total_train;

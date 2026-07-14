@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>CIFAR-10 — DRAM-Native Binary Classifier (61.4%)</title>
+    <meta name="description" content="CIFAR-10 benchmark for Otto Score: 61.4% with H=1024, EN=3, splitVN=2. Frozen random projection, Bayes log-Score correction, DRAM-native &amp;|~+popcount.">
+    <meta name="author" content="Andreas Otto">
+    <meta name="robots" content="index, follow">
+    <meta name="googlebot" content="index, follow">
+    <link rel="icon" type="image/svg+xml" href="../assets/favicon.svg">
+    <link rel="preload" href="../style.css" as="style">
+    <link rel="stylesheet" href="../style.css">
+    <link rel="canonical" href="https://forward-prop.nhi1.de/papers/cifar-10.html">
+    <meta property="og:title" content="CIFAR-10 — DRAM-Native Binary Classifier (61.4%)">
+    <meta property="og:description" content="Otto Score reaches 61.4% on CIFAR-10 using only bit-logic. Frozen random projection, Bayes log-Score correction, ensemble voting.">
+    <meta property="og:type" content="article">
+    <meta property="og:url" content="https://forward-prop.nhi1.de/papers/cifar-10.html">
+    <meta property="og:image" content="https://forward-prop.nhi1.de/assets/og-image.png">
+    <meta property="og:site_name" content="Forward-Prop Research">
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="CIFAR-10 DRAM-Native — 61.4%">
+    <meta name="twitter:description" content="Otto Score: frozen binary hash + Bayes log-Score, 61.4% on CIFAR-10.">
+    <meta name="twitter:image" content="https://forward-prop.nhi1.de/assets/og-image.png">
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "ScholarlyArticle",
+      "headline": "CIFAR-10 DRAM-Native Binary Classification via Otto Score",
+      "description": "61.3% on CIFAR-10 using frozen random binary projection (MAJ3) plus Bayes log-Score target correction — only bit-logic, no multiply-accumulate.",
+      "author": { "@type": "Person", "name": "Andreas Otto" },
+      "datePublished": "2026-07-14",
+      "about": { "@type": "Thing", "name": "CIFAR-10 DRAM-native classifier" }
+    }
+    </script>
+    <style>
+        .paper-section { margin-bottom: 2.5rem; }
+        .paper-section h2 { margin-top: 2rem; border-bottom: 2px solid var(--amber, #e6a817); padding-bottom: 0.3rem; }
+        .paper-section h3 { margin-top: 1.5rem; color: var(--navy, #1a1a2e); }
+        .paper-section p, .paper-section li { line-height: 1.7; }
+        table { width: 100%; border-collapse: collapse; margin: 1rem 0; font-size: 0.9rem; }
+        th, td { padding: 0.5rem 0.75rem; text-align: left; border-bottom: 1px solid #ddd; }
+        th { background: var(--navy, #0d1b2a); color: white; }
+        tr.highlight-row { background: #e8f5e9; }
+        .abstract-box { background: #f5f5f5; border-left: 4px solid var(--amber, #e6a817); padding: 1.2rem 1.5rem; border-radius: 4px; margin: 1rem 0; }
+        .abstract-box p { margin: 0; }
+        code { background: #f0f0f0; padding: 0.1rem 0.3rem; border-radius: 3px; font-size: 0.85rem; }
+        pre { background: #1a1a2e; color: #e0e0e0; padding: 0.8rem 1rem; border-radius: 6px; font-size: 0.82rem; overflow-x: auto; }
+        .content-split { display: flex; gap: 2rem; margin: 1.5rem 0; }
+        .content-split > * { flex: 1; }
+        @media (max-width: 768px) { .content-split { flex-direction: column; } }
+    </style>
+</head>
+<body>
+
+<header id="top">
+    <div class="header-inner">
+        <div class="header-brand">
+            <a href="../index.html" style="color:inherit; text-decoration:none;"><span class="header-logo">Otto Score</span></a>
+            <span class="header-subtitle">DRAM-Native &amp;|~ Classification</span>
+        </div>
+        <nav>
+            <ul>
+                <li><a href="../index.html">Top</a></li>
+                <li><a href="cifar-10.html" style="color:var(--amber);">CIFAR-10</a></li>
+                <li><a href="status-2026-07.html">Status</a></li>
+                <li><a href="https://github.com/aotto1968/forward-prop">Source</a></li>
+            </ul>
+        </nav>
+    </div>
+</header>
+
+<main>
+    <div class="container" style="max-width: 800px; margin-top: 2rem;">
+
+        <h1>CIFAR-10 — DRAM-Native Binary Classifier</h1>
+        <p style="font-size: 1.1rem; color: #555; margin-bottom: 0.25rem;">
+            Best result: <strong>61.4%</strong> — H=1024, EN=3, ep=10, splitVN=2 (182s)
+        </p>
+        <p style="font-size: 0.9rem; color: #888; margin-bottom: 2rem;">
+            Andreas Otto — 14 July 2026
+        </p>
+
+        <div class="abstract-box">
+            <p>The Otto Score classifier is a purely bit-logic MLP for DRAM-native inference.
+            A <strong>frozen random binary projection (W0)</strong> via MAJ3 (majority-of-3 random containers)
+            produces binary hash bits. A <strong>trainable Bayes log-Score layer</strong> accumulates per-class
+            log-odds via iterative target correction — no backprop, no multiply-accumulate.
+            On CIFAR-10, Otto Score achieves <strong>61.4%</strong> with H=1024, EN=3, ep=10, splitVN=2 (182s).
+            The 62% ceiling is architectural: the corrector can only <em>reweight</em> features, not <em>change</em> them.
+            ∼50% of CIFAR-10 eval samples are inaccessible without ensemble voting.</p>
+        </div>
+
+        <!-- Table of Contents -->
+        <div style="background: #f9f9f9; padding: 1rem 1.5rem; border-radius: 6px; margin: 1.5rem 0;">
+            <strong>Contents</strong>
+            <ul style="margin: 0.5rem 0 0 1.2rem; font-size: 0.9rem;">
+                <li><a href="#data">1. Experiment Data</a></li>
+                <li><a href="#leaderboard">2. Leaderboard</a></li>
+                <li><a href="#architecture">3. Architecture</a></li>
+                <li><a href="#findings">4. Key Findings</a></li>
+                <li><a href="#ceiling">5. Why 62% is a Hard Ceiling</a></li>
+                <li><a href="#recommendations">6. Practical Recommendations</a></li>
+            </ul>
+        </div>
+
+        <!-- 1. Data -->
+        <section id="data" class="paper-section">
+            <h2>1. Experiment Data</h2>
+            <ul>
+                <li><strong>Code:</strong> <a href="https://github.com/aotto1968/forward-prop">github.com/aotto1968/forward-prop</a> (<code>otto-score-ifc/</code> tree)</li>
+                <li><strong>Dataset:</strong> <a href="https://forward-prop.nhi1.de/data/cifar-10-batches-bin/cifar-10-binary.tar.gz">forward-prop.nhi1.de/data/cifar-10-batches-bin/</a> (5 train + 1 test batch, binary planar RGB, 60000×3072 bytes)</li>
+                <li><strong>Project:</strong> <a href="https://forward-prop.nhi1.de">forward-prop.nhi1.de</a></li>
+            </ul>
+        </section>
+
+        <!-- 2. Leaderboard -->
+        <section id="leaderboard" class="paper-section">
+            <h2>2. Leaderboard (2026-07-14)</h2>
+            <table>
+                <tr><th>#</th><th>Eval</th><th>Train</th><th>EN</th><th>H</th><th>Ep</th><th>V</th><th>Time</th><th>Config</th></tr>
+                <tr><td>1</td><td><strong>61.4%</strong></td><td>98.1%</td><td>3</td><td>1024</td><td>10</td><td>2</td><td>182s</td><td><code>--multi-correct --splitVN 2</code></td></tr>
+                <tr><td>2</td><td><strong>61.3%</strong></td><td>96.5%</td><td>7</td><td>512</td><td>10</td><td>2</td><td>187s</td><td><code>--multi-correct --splitVN 2</code></td></tr>
+                <tr><td>3</td><td>61.2%</td><td>96.2%</td><td>7</td><td>1024</td><td>7</td><td>2</td><td>420s</td><td><code>--splitVN 2</code></td></tr>
+                <tr><td>4</td><td>61.2%</td><td>96.7%</td><td>7</td><td>256</td><td>20</td><td>1</td><td>282s</td><td><code>--target-init dampen</code></td></tr>
+                <tr><td>5</td><td>60.2%</td><td>96.1%</td><td>3</td><td>256</td><td>20</td><td>1</td><td>120s</td><td>Sweet Spot</td></tr>
+            </table>
+        </section>
+
+        <!-- 3. Architecture -->
+        <section id="architecture" class="paper-section">
+            <h2>3. Architecture</h2>
+            <pre>Input:  3072 px → 11 encoding blocks × 256 uint32 = 2816 containers
+Layer 0: W0 (frozen, random MAJ3): NC_slice × H
+Layer 1: Bayes log-Score: H → K=10 (target + offset)
+Voting:  Σ_members score[k]  →  argmax</pre>
+            <p>Each W0 row picks 3 random containers, MAJ3 outputs 1 if ≥2 are set → frozen binary hash.
+            The correction loop:</p>
+            <ol>
+                <li><strong>Score:</strong> <code>score[k] = Σ_active target[k][bit] + offset[k]</code></li>
+                <li><strong>Correct:</strong> If argmax ≠ true, <code>target[true] += step</code>, <code>target[pred] −= step</code></li>
+                <li><strong>Iterate</strong> N epochs with cosine step decay</li>
+            </ol>
+        </section>
+
+        <!-- 4. Key Findings -->
+        <section id="findings" class="paper-section">
+            <h2>4. Key Findings</h2>
+
+            <h3>4.1 Frozen W0 = fixed hash</h3>
+            <p>Each neuron computes a fixed MAJ3 hash. If it fires for 57% of class A and 43% of non-A,
+            the corrector can upweight it but cannot suppress the 43% false positives. <strong>This is the
+            fundamental limit of a frozen representation.</strong></p>
+
+            <h3>4.2 More H gives √H returns — new record at H=1024</h3>
+            <p>All runs: EN=3, ep=10, <code>--multi-correct --splitVN 2</code>. Only H varies.</p>
+            <table>
+                <tr><th>H</th><th>Eval</th><th>Train</th><th>Time</th><th>Config</th></tr>
+                <tr><td>64</td><td>52.4%</td><td>71.1%</td><td>10s</td><td><code>--hiddenN 64</code></td></tr>
+                <tr><td>128</td><td>56.4%</td><td>82.7%</td><td>20s</td><td><code>--hiddenN 128</code></td></tr>
+                <tr><td>256</td><td>58.6%</td><td>91.1%</td><td>39s</td><td><code>--hiddenN 256</code></td></tr>
+                <tr><td>512</td><td>59.8%</td><td>95.8%</td><td>85s</td><td><code>--hiddenN 512</code></td></tr>
+                <tr class="highlight-row"><td><strong>1024</strong></td><td><strong>61.4%</strong></td><td><strong>98.1%</strong></td><td><strong>182s</strong></td><td><code>--hiddenN 1024</code></td></tr>
+                <tr><td>2048</td><td>61.2%</td><td>98.9%</td><td>367s</td><td><code>--hiddenN 2048</code></td></tr>
+            </table>
+            <p>Accuracy scales with <strong>√H</strong>: each doubling of H adds roughly
+            +2-4pp up to H=1024, where the 61.4% record was set. Beyond H=1024, returns
+            <strong>invert</strong> — H=2048 reaches only 61.2% (−0.2pp) at 2× the compute
+            (367s vs 182s). The corrector cannot exploit the extra neurons effectively;
+            the frozen random projection has exhausted its discriminative capacity at H=1024.
+            H=512 remains the cost/benefit sweet spot (59.8% in 85s, 2.1× faster than H=1024
+            for −1.6pp).</p>
+
+            <h3>4.3 EN=3+ is the only lever — each EN has its own optimum epoch</h3>
+            <p>Different W0 seeds draw from the same distribution. Ensemble voting with independent
+            projections is the only lever: 3× independent random features beat 3× more features
+            from the same projection.</p>
+
+            <p>All runs: H=512, <code>--multi-correct --splitVN 2</code>. Only EN and epochs vary.</p>
+            <table>
+                <tr><th>EN</th><th>Members</th><th>Ep 6</th><th>Ep 7</th><th>Ep 8</th><th>Ep 9</th><th>Ep 10</th><th>Ep 11</th><th>Optimum</th><th>Time</th></tr>
+                <tr><td>1</td><td>11</td><td>56.4</td><td>56.4</td><td><strong>56.9</strong></td><td>56.5</td><td>56.3</td><td>56.4</td><td>ep 8</td><td>24s</td></tr>
+                <tr class="highlight-row"><td><strong>3</strong></td><td><strong>33</strong></td><td><strong>58.7</strong></td><td><strong>59.4</strong></td><td><strong>59.6</strong></td><td><strong>60.0</strong></td><td><strong>59.8</strong></td><td><strong>59.9</strong></td><td><strong>ep 9</strong></td><td><strong>73s</strong></td></tr>
+                <tr><td>7</td><td>77</td><td>60.1</td><td>60.6</td><td>61.0</td><td>61.2</td><td><strong>61.3</strong></td><td>61.3</td><td>ep 10</td><td>187s</td></tr>
+            </table>
+
+            <p><strong>From EN=3 onward, the ensemble–epoch correlation becomes visible.</strong>
+            Each EN has its own optimum: EN=1 peaks at ep 8, EN=3 at ep 9, EN=7 at ep 10.
+            More members suppress overfitting — the corrector can learn longer before eval
+            stagnates.</p>
+
+            <p><strong>Best choice: EN=3, ep=9</strong> — 60.0% in 73s. EN=7 gibt nur +1.3pp
+            für 2.6× mehr Zeit.</p>
+
+            <h3>4.4 splitVN — constant target bit-mass, only filter hardness changes</h3>
+            <p>All V configurations have <strong>identical target bit-mass</strong>:
+            <code>10 × H × 32/V × int32 = constant</code>. When H is scaled inversely with V
+            (e.g. H=256 at V=1, H=512 at V=2), the target matrix consumes the identical
+            number of bits in memory. The <em>only</em> difference between V values is the
+            filter hardness of the virtual neuron grouping.</p>
+
+            <p>All runs: EN=7, ep=10, <code>--multi-correct</code>. Only <code>--splitVN</code> and H vary.
+            Target bit-mass is constant: <code>H × 32/V = 8192</code> for all rows.</p>
+            <table>
+                <tr><th>V</th><th>Filter</th><th>Retention</th><th>H</th><th>Best eval</th><th>Time</th><th>Config</th></tr>
+                <tr>
+                    <td>1</td><td>soft majority</td><td>~50%</td><td>256</td><td>60.2%</td>
+                    <td>155s</td><td><code>--splitVN 1</code></td>
+                </tr>
+                <tr class="highlight-row">
+                    <td><strong>2</strong></td><td><strong>AND2</strong></td><td><strong>25%</strong></td><td><strong>512</strong></td><td><strong>61.3%</strong></td>
+                    <td><strong>187s</strong></td><td><code>--splitVN 2</code></td>
+                </tr>
+                <tr>
+                    <td>3</td><td>AND3</td><td>12.5%</td><td>819</td><td>59.8%</td>
+                    <td>238s</td><td><code>--splitVN 3</code></td>
+                </tr>
+                <tr>
+                    <td>4</td><td>AND4</td><td>6.25%</td><td>1024</td><td>56.4%</td>
+                    <td>222s</td><td><code>--splitVN 4</code></td>
+                </tr>
+            </table>
+
+            <p><strong>V=2 at H=512 is the champion</strong> — 61.3% in 187s. The AND2
+            filter removes 75% of noise while preserving enough signal. V=1 (soft majority)
+            reaches 60.2% at the same bit-mass but lets more noise through. V=3 (AND3) and
+            V=4 (AND4) filter too aggressively — the corrector starves even with more neurons.</p>
+
+            <h3>4.5 Target init — three classes, one decisive metric</h3>
+
+            <h3>4.6 Step schedule — cos-time always beats error-based control</h3>
+            <p>Three step schedule families were tested at H=256, EN=1, ep=20, <code>--multi-correct</code>:</p>
+            <table>
+                <tr><th>Schedule</th><th>Best eval</th><th>Train</th><th>Gap</th><th>Why</th></tr>
+                <tr class="highlight-row">
+                    <td><code>cos-time</code> (default)</td><td><strong>57.2%</strong></td><td>94.2%</td><td>37pp</td>
+                    <td>Time-based decay — step independent of error, full learning budget</td>
+                </tr>
+                <tr>
+                    <td><code>pow=5</code></td><td>56.5%</td><td>86.8%</td><td>30pp</td>
+                    <td>Train-error based — step shrinks as trn drops, limits both</td>
+                </tr>
+                <tr>
+                    <td><code>pow-eval=0.5..6</code></td><td>≤54.1%</td><td>61-81%</td><td>varies</td>
+                    <td>Eval-error based — step dies too early, eval never reaches ceiling</td>
+                </tr>
+            </table>
+            <p><strong>cos-time wins every time.</strong> The step follows a fixed cosine schedule
+            independent of the current error. This gives the corrector the full learning budget
+            — the step only decays at the very end, preventing late-stage oscillation without
+            starving the early learning.</p>
+            <p><strong>Pow (error-based) self-limits.</strong> <code>pow=N</code> computes
+            <code>step = step_init × (err/total)^N</code>. As training error drops, the step
+            shrinks — which limits further progress on both trn and evl. Higher N gives faster
+            decay but lower peak accuracy. The best pow value (N=5) reaches 56.5%, still −0.7pp
+            behind cos-time.</p>
+            <p><strong>Pow-eval starves the corrector.</strong> Basing the step on eval error
+            instead of training error sounded promising (auto-stop when eval plateaus), but
+            eval error drops much faster than training error. The step collapses to near-zero
+            by epoch 5-6, leaving 40-50% of the training budget unused. Even at very low power
+            (0.5, giving <code>step × √eval_err</code>), the step stays high but oscillates
+            — the corrector never stabilizes.</p>
+            <p><strong>Conclusion:</strong> Time-based scheduling is the only safe choice.
+            Error-based schedules (whether train or eval) limit the corrector prematurely.
+            <code>--gap-k</code> (gap damping on step) can complement cos-time when
+            overfitting needs to be suppressed.</p>
+            <p>Seven init modes fall into three distinct classes. The decisive metric is
+            <strong>per-neuron variation</strong> — whether different neurons have different
+            target values for the same class.</p>
+
+            <table>
+                <tr><th>Group</th><th>Modes</th><th>Per-neuron var</th><th>Best eval</th><th>Why</th></tr>
+                <tr class="highlight-row">
+                    <td><strong>Normal (intelligent)</strong></td>
+                    <td><code>count, dampen, inverse, laplace</code></td>
+                    <td>✅ data-driven co-occurrence</td>
+                    <td><strong>57.2%</strong></td>
+                    <td>True signal — corrector starts near the attractor</td>
+                </tr>
+                <tr>
+                    <td><strong>Random</strong></td>
+                    <td><code>random</code></td>
+                    <td>✅ noise (no structure)</td>
+                    <td><strong>55.2%</strong></td>
+                    <td>Per-neuron variation suffices for learning, but −2pp vs structured</td>
+                </tr>
+                <tr>
+                    <td><strong>Constant</strong></td>
+                    <td><code>uniform, prior</code></td>
+                    <td>❌ identical across neurons</td>
+                    <td><strong>10.0%</strong></td>
+                    <td>All scores equal → gap=0 → no correction fires → no learning</td>
+                </tr>
+            </table>
+
+            <p><strong>Normal (intelligent) is consistently ∼2pp better than random.</strong>
+            Whether count, dampen, inverse, or laplace — any data-driven co-occurrence structure
+            gives the corrector a genuine head start. <em>Polarity</em> (count vs inverse) is
+            irrelevant — the corrector converges to the same attractor regardless of sign.</p>
+
+            <p><strong>Random (any seed) always correlates worse.</strong>
+            Random per-neuron variation does enable learning (55.2% vs 10% for constant),
+            but the lack of co-occurrence structure costs a consistent 2pp — independent of
+            the seed. Variance between different seeds is &lt;0.5pp.</p>
+
+            <p><strong>Constant does not work at all.</strong> When all targets are identical
+            per class (uniform: all = 1, prior: all = n_k), every class gets the same score
+            for every sample. The corrector checks <code>gap = sc[pred] − sc[true]</code>,
+            finds gap=0, and fires <em>zero corrections</em>. Result: 10.0% (random chance).
+            The corrector requires per-neuron leverage to differentiate classes.</p>
+
+        </section>
+
+        <!-- 5. Ceiling -->
+        <section id="ceiling" class="paper-section">
+            <h2>5. Why 62% is a Hard Ceiling</h2>
+            <ol>
+                <li><strong>Frozen W0</strong> — corrector can only reweight, not create features.</li>
+                <li><strong>√H scaling</strong> — after H=512, diminishing returns dominate.</li>
+                <li><strong>Seeds ≈ same distribution</strong> — EN is the only lever.</li>
+                <li><strong>Training W0 collapses MAJ3</strong> — destroys hash distribution.</li>
+                <li><strong>Deeper layers lose information</strong> — 2-layer MAJ3 lost 4pp on MNIST.</li>
+                <li><strong>Results &gt;62% use tricks excluded by DRAM-native:</strong> pretrained weights, data augmentation, multi-crop eval, soft labels, backprop.</li>
+            </ol>
+        </section>
+
+        <!-- 6. Recommendations -->
+        <section id="recommendations" class="paper-section">
+            <h2>6. Practical Recommendations</h2>
+            <table>
+                <tr><th>Goal</th><th>Config</th><th>Result</th></tr>
+                <tr class="highlight-row"><td>Best cost/benefit</td><td><code>--hiddenN 512 --ensembleN 3 --epochsN 9 --multi-correct --splitVN 2</code></td><td><strong>60.0% in 73s</strong></td></tr>
+                <tr><td>Max eval</td><td><code>--hiddenN 1024 --ensembleN 3 --epochsN 10 --multi-correct --splitVN 2</code></td><td><strong>61.4% in 182s</strong></td></tr>
+            </table>
+            <p>All configs use default encoding (<code>latest</code> = 11 members via ey-b+ey-a+ey-h),
+            default <code>count</code> target init, and <code>cos-time</code> step schedule.</p>
+        </section>
+
+    </div>
+</main>
+
+<footer>
+    <p>© 2026 Andreas Otto — <a href="https://github.com/aotto1968/forward-prop">Forward-Prop Research</a></p>
+</footer>
+
+</body>
+</html>

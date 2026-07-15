@@ -364,6 +364,7 @@ static __attribute__((unused)) uint32_t *load_input(const uint8_t *X_raw,
         ki_compute_dir(px, 32, 32);
         ki_compute_range(px, 32, 32);
         ki_compute_lbp_rg(px, 32, 32);
+        ki_compute_dist(px, 32, 32);
         for (int i = 0; i < n_enc; i++) {
             int col = (int)aa.enc_array[i].color;
             int typ = (int)aa.enc_array[i].type;

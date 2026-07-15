@@ -40,21 +40,21 @@ extern "C" {
 
 /* ── Thermometer encoding: popcount(encode(pv)) ∝ brightness ──── */
 enum ki_encoding {
-    KI_ENC_RAW  = 0,   /* Raw pixel value (0..255), keine Transformation */
-    KI_ENC_LIN7 = 1,   /* Uniform, 7 Stufen (pv>>5 → popcount=1..7)  */
-    KI_ENC_LIN8 = 2,   /* Uniform, 8 Stufen (pv*8>>8 → popcount=1..8) */
-    KI_ENC_DOWN = 3,   /* Bottom-weighted (more resolution in shadows)       */
-    KI_ENC_UP   = 4,   /* Top-weighted (more resolution in highlights)        */
-    KI_ENC_MID  = 5,   /* Mid-weighted (more resolution in midtones)   */
-    KI_ENC_LOG  = 6,   /* Logarithmisch (natural brightness perception) */
-    KI_ENC_EXP  = 7,   /* Exponentiell (heavily top-weighted)                */
-    KI_ENC_SIG     = 8,   /* S-shaped (Sigmoid, smooth transition)            */
-    KI_ENC_SQRT    = 9,   /* Square root — softer than exp, more bright res  */
-    KI_ENC_CBRT    = 10,  /* Cube root — even softer, natural image curve    */
-    KI_ENC_GAMMA   = 11,  /* Gamma 0.45 — tunable power-law (complementary)  */
-    KI_ENC_TRIANGLE = 12, /* Triangle — peaks at midtones (128), zero ends   */
-    KI_ENC_INV_EXP = 13,  /* Inverse exp — dark emphasis, 1-e^(-k·pv)        */
-    KI_ENC_COUNT = 14
+    KI_ENC_RAW      = 0,   /* Raw pixel value (0..255), keine Transformation  */
+    KI_ENC_LIN7     = 1,   /* Uniform, 7 Stufen (pv>>5 → popcount=1..7)       */
+    KI_ENC_LIN8     = 2,   /* Uniform, 8 Stufen (pv*8>>8 → popcount=1..8)     */
+    KI_ENC_DOWN     = 3,   /* Bottom-weighted (more resolution in shadows)    */
+    KI_ENC_UP       = 4,   /* Top-weighted (more resolution in highlights)    */
+    KI_ENC_MID      = 5,   /* Mid-weighted (more resolution in midtones)      */
+    KI_ENC_LOG      = 6,   /* Logarithmisch (natural brightness perception)   */
+    KI_ENC_EXP      = 7,   /* Exponentiell (heavily top-weighted)             */
+    KI_ENC_SIG      = 8,   /* S-shaped (Sigmoid, smooth transition)           */
+    KI_ENC_SQRT     = 9,   /* Square root — softer than exp, more bright res  */
+    KI_ENC_CBRT     = 10,  /* Cube root — even softer, natural image curve    */
+    KI_ENC_GAMMA    = 11,  /* Gamma 0.45 — tunable power-law (complementary)  */
+    KI_ENC_TRIANGLE = 12,  /* Triangle — peaks at midtones (128), zero ends   */
+    KI_ENC_INV_EXP  = 13,  /* Inverse exp — dark emphasis, 1-e^(-k·pv)        */
+    KI_ENC_COUNT    = 14
 };
 
 #define KI_ENC_WIDTH_DEFAULT 8
@@ -85,6 +85,22 @@ static inline const char *ki_enc_name_short(int enc) {
     return "?";
 }
 
+/* ── All encoding names as comma-separated string (for error messages) ─ */
+static inline const char *ki_enc_names_all(void) {
+    static char _buf[256];
+    if (_buf[0]) return _buf;  /* cached after first call */
+    int pos = 0;
+    for (int e = 0; e < KI_ENC_COUNT; e++) {
+        const char *n = ki_enc_name_short(e);
+        if (!n || n[0] == '?') continue;
+        if (pos > 0) _buf[pos++] = ',';
+        while (*n && pos < (int)sizeof(_buf) - 2) _buf[pos++] = *n++;
+    }
+    _buf[pos] = '\0';
+    return _buf;
+}
+
+/* ── All color names as comma-separated string (for error messages) ─── */
 /* ═══════════════════════════════════════════════════════════════════════
  * ENCODING PARSER — String → (encoding, width)
  * ═══════════════════════════════════════════════════════════════════════
@@ -344,8 +360,9 @@ enum ki_color_bit {
     COLOR_DIR   = 26,  /* Gradient direction (8-bin quantized) */
     COLOR_RANGE = 27,  /* Local range (max-min in 3×3) */
     COLOR_LBP_RG = 28, /* LBP on RG opponent (chromatic texture) */
+    COLOR_DIST  = 29,  /* Center distance (positional encoding) */
 
-    COLOR_NB    = 29   /* number of Farben */
+    COLOR_NB    = 30   /* number of Farben */
 };
 
 /* ── Block-Namen for display ────────────────────────────────── */
@@ -380,9 +397,25 @@ static inline const char *ki_color_name(int bit) {
         [COLOR_DIR]   = "dir",
         [COLOR_RANGE] = "range",
         [COLOR_LBP_RG]= "lbp-rg",
+        [COLOR_DIST]  = "dist",
     };
     if ((unsigned)bit < COLOR_NB) return names[bit];
     return "?";
+}
+
+/* ── All color names as comma-separated string (for error messages) ─── */
+static inline const char *ki_color_names_all(void) {
+    static char _buf[512];
+    if (_buf[0]) return _buf;
+    int pos = 0;
+    for (int c = 0; c < COLOR_NB; c++) {
+        const char *n = ki_color_name(c);
+        if (!n || n[0] == '?') continue;
+        if (pos > 0) _buf[pos++] = ',';
+        while (*n && pos < (int)sizeof(_buf) - 2) _buf[pos++] = *n++;
+    }
+    _buf[pos] = '\0';
+    return _buf;
 }
 
 /* ── clamp to 0..255 (helper for ki_blocks_from_rgb) ───────── */
@@ -446,6 +479,7 @@ static inline void ki_blocks_from_rgb(int r, int g, int b, uint8_t blocks[COLOR_
     blocks[COLOR_DIR] = 0;
     blocks[COLOR_RANGE] = 0;
     blocks[COLOR_LBP_RG] = 0;
+    blocks[COLOR_DIST] = 0;
 
     blocks[COLOR_CL] = (uint8_t)((g + b) >> 1);
     blocks[COLOR_CM] = (uint8_t)ki_clamp_u8(128 + (g - b));
@@ -889,6 +923,24 @@ static inline void ki_compute_lbp_rg(uint8_t px[COLOR_NB][1024], int w, int h) {
     for (int x = 0; x < w; x++) {
         px[COLOR_LBP_RG][0 * w + x]       = px[COLOR_LBP_RG][1 * w + x];
         px[COLOR_LBP_RG][(h - 1) * w + x] = px[COLOR_LBP_RG][(h - 2) * w + x];
+    }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+ * CENTER DISTANCE — positional encoding for spatial context
+ * ═══════════════════════════════════════════════════════════════════════
+ * Computes: COLOR_DIST — Manhattan distance from center (15.5,15.5).
+ * Inverted: center=255, border=0. Static map, same for all images. */
+__attribute__((unused))
+static inline void ki_compute_dist(uint8_t px[COLOR_NB][1024], int w, int h) {
+    int cx = w / 2, cy = h / 2;  /* center pixel */
+    for (int y = 0; y < h; y++) {
+        for (int x = 0; x < w; x++) {
+            int d = abs(x - cx) + abs(y - cy);
+            int v = 255 - (d * 255 / (cx + cy));  /* invert: center=255 */
+            if (v < 0) v = 0;
+            px[COLOR_DIST][y * w + x] = (uint8_t)v;
+        }
     }
 }
 

@@ -141,6 +141,7 @@ static inline int ki_color_parse(const char *tok) {
         {"dir",   COLOR_DIR},
         {"range", COLOR_RANGE},
         {"lbp-rg", COLOR_LBP_RG},
+        {"dist",  COLOR_DIST},
 
         {"cl",    COLOR_CL},
         {"cm",    COLOR_CM},
@@ -210,7 +211,7 @@ static const char *ki_alias_lookup(const char *name) {
  * ARGS — CLI Parameters (Otto Score only)
  * ═══════════════════════════════════════════════════════════════════════ */
 
- #define KI_ENC_MAX 16
+ #define KI_ENC_MAX 24
  #define KI_DEFAULT_TARGET_NORM 0  /* --optional target-norm: default ON */
 
  /* ── Target initialisation modes (--target-init) ──────────── */
@@ -332,7 +333,7 @@ static const struct _comp_entry _comp_table[] = {
     {"--seed-file",                     "file",  NULL},
     {"--seed-splitmix",                 "none",  NULL},
     {"--seed-member",                   "token", "once const incr"},
-    {"--channels",                      "token", "packed full flat auge diff rgb grey h s c edge bin lbp dog var dir range lbp-rg mnist r g b"},
+    {"--channels",                      "token", "packed full flat auge diff rgb grey h s c edge bin lbp dog var dir range lbp-rg dist mnist r g b"},
     {"--encoding",                      "token", "raw lin7 lin8 down up mid log exp sig sqrt cbrt gamma tri inv-exp"},
     {"--export-merge-scores",           "dir",   NULL},
     {"--export-scores",                 "file",  NULL},
@@ -407,7 +408,7 @@ static inline void ki_parse_args(int argc, char *argv[]) {
             printf("  ---------------------------------------------------------------------------------------------\n");
             printf("  --channels [packed|full,][flat,]...                                             (default: %s)\n", color_str());
             printf("                    See --help-channels for details\n");
-            printf("  --encoding [raw|lin7|lin8|down|up|mid|log|exp|sig|sqrt|cbrt|gamma|tri|inv-exp]  (default: latest)\n");
+            printf("  --encoding [%s]  (default: latest)\n", ki_enc_names_all());
             printf("                    See --help-encoding for details\n");
             printf("  --export-merge-scores DIR  Save per-member scores to archive files for merge    (default: none)\n");
             printf("  --export-scores FILE  Save per-sample ensemble scores (10×int64+uint8)          (default: none)\n");
@@ -454,12 +455,13 @@ static inline void ki_parse_args(int argc, char *argv[]) {
             printf("  dir           : Gradient direction (8-bin quantized, 0..248)\n");
             printf("  range         : Local range (max-min in 3×3, texture sharpness)\n");
             printf("  lbp-rg        : LBP on RG opponent (chromatic texture)\n");
+            printf("  dist          : Center distance (positional encoding, 255=center)\n");
 #else
             printf("  mnist         : single grayscale block (only available channel)\n");
 #endif
             exit(1);   /* INTENTIONAL: non-zero so run-research.sh suppresses logging */
         } else if (strcmp(argv[i], "--help-encoding") == 0) {
-            printf("--encoding [raw|lin7|lin8|down|up|mid|log|exp|sig|sqrt|cbrt|gamma|tri|inv-exp]  (default: latest)\n");
+            printf("--encoding [%s]                              (default: latest)\n", ki_enc_names_all());
             printf("  OR <color>=<enc>[width] per-block: r=exp16,g=lin8,b=sqrt8   \n");
             printf("  Pixel-Encoding pro Farb-Block.\n");
             printf("  Optionaler Width-Suffix: exp16=16-bit, lin32=32-bit\n");
@@ -760,7 +762,7 @@ static inline void ki_parse_args(int argc, char *argv[]) {
                 if (bit == -5) { mask |= (1<<COLOR_RG)|(1<<COLOR_RB)|(1<<COLOR_GB); continue; }
                 if (bit >= 0) { mask |= (1 << bit); continue; }
                 fprintf(stderr, "[ERROR] --channels: unknown '%s'. "
-                        "Valid: r,g,b,y,lum,l,rg,by,yl,h,s,c,mnist,601,709,packed,full,flat\n", tok);
+                        "Valid: %s\n", tok, ki_color_names_all());
                 exit(1);
             }
             if (mask == 0) {
@@ -827,13 +829,13 @@ static inline void ki_parse_args(int argc, char *argv[]) {
                     int bit = ki_color_parse(col_buf);
                     if (bit < 0) {
                         fprintf(stderr, "[ERROR] --encoding: unknown color '%s' in '%s'. "
-                                "Valid: r,g,b,rg,rb,gb,lum,by,y,yl\n", col_buf, tok);
+                                "Valid: %s\n", col_buf, tok, ki_color_names_all());
                         exit(1);
                     }
                     enc = ki_enc_parse(eq + 1, &w);
                     if (enc < 0) {
                         fprintf(stderr, "[ERROR] --encoding: unknown encoding '%s' in '%s'. "
-                                "Valid: raw,lin7,lin8,down,up,mid,log,exp,sig\n", eq + 1, tok);
+                                "Valid: %s\n", eq + 1, tok, ki_enc_names_all());
                         exit(1);
                     }
                     /* In enc_array eintragen — the only encoding path */
@@ -863,7 +865,7 @@ static inline void ki_parse_args(int argc, char *argv[]) {
                     enc = ki_enc_parse(tok, &w);
                     if (enc < 0) {
                         fprintf(stderr, "[ERROR] --encoding: unknown '%s'. "
-                                "Valid: raw,lin7,lin8,down,up,mid,log,exp,sig\n", tok);
+                                "Valid: %s\n", tok, ki_enc_names_all());
                         exit(1);
                     }
                     if (aa.enc_count < KI_ENC_MAX) {

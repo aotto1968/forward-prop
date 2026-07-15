@@ -3,8 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>CIFAR-10 — DRAM-Native Binary Classifier (61.4%)</title>
-    <meta name="description" content="CIFAR-10 benchmark for Otto Score: 61.4% with H=1024, EN=3, splitVN=2. Frozen random projection, Bayes log-Score correction, DRAM-native &amp;|~+popcount.">
+            <title>CIFAR-10 — DRAM-Native Binary Classifier (63.7%)</title>
+    <meta name="description" content="CIFAR-10 benchmark for Otto Score: 63.7% with H=1024, EN=3, spatial channels (LBP, DoG, Variance, Gradient Direction, Local Range). Frozen random projection, Bayes log-Score, DRAM-native &amp;|~+popcount.">
     <meta name="author" content="Andreas Otto">
     <meta name="robots" content="index, follow">
     <meta name="googlebot" content="index, follow">
@@ -12,15 +12,15 @@
     <link rel="preload" href="../style.css" as="style">
     <link rel="stylesheet" href="../style.css">
     <link rel="canonical" href="https://forward-prop.nhi1.de/papers/cifar-10.html">
-    <meta property="og:title" content="CIFAR-10 — DRAM-Native Binary Classifier (61.4%)">
-    <meta property="og:description" content="Otto Score reaches 61.4% on CIFAR-10 using only bit-logic. Frozen random projection, Bayes log-Score correction, ensemble voting.">
+    <meta property="og:title" content="CIFAR-10 — DRAM-Native Binary Classifier (63.7%)">
+    <meta property="og:description" content="Otto Score reaches 63.7% on CIFAR-10 using bit-logic + spatial channels (LBP, DoG, Variance, Direction, Range). 17-member ensemble, frozen random projection.">
     <meta property="og:type" content="article">
     <meta property="og:url" content="https://forward-prop.nhi1.de/papers/cifar-10.html">
     <meta property="og:image" content="https://forward-prop.nhi1.de/assets/og-image.png">
     <meta property="og:site_name" content="Forward-Prop Research">
     <meta name="twitter:card" content="summary_large_image">
-    <meta name="twitter:title" content="CIFAR-10 DRAM-Native — 61.4%">
-    <meta name="twitter:description" content="Otto Score: frozen binary hash + Bayes log-Score, 61.4% on CIFAR-10.">
+    <meta name="twitter:title" content="CIFAR-10 DRAM-Native — 63.7%">
+    <meta name="twitter:description" content="Otto Score: frozen binary hash + spatial channels, 63.7% on CIFAR-10.">
     <meta name="twitter:image" content="https://forward-prop.nhi1.de/assets/og-image.png">
     <script type="application/ld+json">
     {
@@ -75,7 +75,7 @@
 
         <h1>CIFAR-10 — DRAM-Native Binary Classifier</h1>
         <p style="font-size: 1.1rem; color: #555; margin-bottom: 0.25rem;">
-            Best result: <strong>61.4%</strong> — H=1024, EN=3, ep=10, splitVN=2 (182s)
+            Best result: <strong>63.7%</strong> — H=1024, EN=3, ep=16, 17 members (ey-b+ey-a+ey-h+ey-s-1+ey-s-2) (538s)
         </p>
         <p style="font-size: 0.9rem; color: #888; margin-bottom: 2rem;">
             Andreas Otto — 14 July 2026
@@ -86,7 +86,9 @@
             A <strong>frozen random binary projection (W0)</strong> via MAJ3 (majority-of-3 random containers)
             produces binary hash bits. A <strong>trainable Bayes log-Score layer</strong> accumulates per-class
             log-odds via iterative target correction — no backprop, no multiply-accumulate.
-            On CIFAR-10, Otto Score achieves <strong>61.4%</strong> with H=1024, EN=3, ep=10, splitVN=2 (182s).
+            On CIFAR-10, Otto Score achieves <strong>63.7%</strong> with H=1024, EN=3, ep=16,
+            and 6 spatial channels (LBP, DoG, Variance, Direction, Range, Color-LBP) added via
+            <code>--encoding ey-b,ey-a,ey-h,ey-s-1,ey-s-2</code> (538s).
             The 62% ceiling is architectural: the corrector can only <em>reweight</em> features, not <em>change</em> them.
             ∼50% of CIFAR-10 eval samples are inaccessible without ensemble voting.</p>
         </div>
@@ -119,11 +121,11 @@
             <h2>2. Leaderboard (2026-07-14)</h2>
             <table>
                 <tr><th>#</th><th>Eval</th><th>Train</th><th>EN</th><th>H</th><th>Ep</th><th>V</th><th>Time</th><th>Config</th></tr>
-                <tr><td>1</td><td><strong>61.4%</strong></td><td>98.1%</td><td>3</td><td>1024</td><td>10</td><td>2</td><td>182s</td><td><code>--multi-correct --splitVN 2</code></td></tr>
-                <tr><td>2</td><td><strong>61.3%</strong></td><td>96.5%</td><td>7</td><td>512</td><td>10</td><td>2</td><td>187s</td><td><code>--multi-correct --splitVN 2</code></td></tr>
-                <tr><td>3</td><td>61.2%</td><td>96.2%</td><td>7</td><td>1024</td><td>7</td><td>2</td><td>420s</td><td><code>--splitVN 2</code></td></tr>
-                <tr><td>4</td><td>61.2%</td><td>96.7%</td><td>7</td><td>256</td><td>20</td><td>1</td><td>282s</td><td><code>--target-init dampen</code></td></tr>
-                <tr><td>5</td><td>60.2%</td><td>96.1%</td><td>3</td><td>256</td><td>20</td><td>1</td><td>120s</td><td>Sweet Spot</td></tr>
+                <tr><td>1</td><td><strong>63.7%</strong></td><td>98.7%</td><td>3</td><td>1024</td><td>16</td><td>1</td><td>538s</td><td><code>--encoding ey-b,ey-a,ey-h,ey-s-1,ey-s-2</code></td></tr>
+                <tr><td>2</td><td>63.6%</td><td>99.8%</td><td>3</td><td>1024</td><td>16</td><td>2</td><td>362s</td><td><code>--splitVN 2 --encoding ey-b,ey-a,ey-h,ey-s-1,ey-s-2</code></td></tr>
+                <tr><td>3</td><td>63.5%</td><td>98.0%</td><td>3</td><td>512</td><td>16</td><td>1</td><td>272s</td><td><code>--encoding ey-b,ey-a,ey-h,ey-s-1,ey-s-2</code></td></tr>
+                <tr><td>4</td><td>62.3%</td><td>98.6%</td><td>3</td><td>1024</td><td>10</td><td>2</td><td>227s</td><td><code>--multi-correct --splitVN 2 --encoding ey-b,ey-a,ey-h,ey-s</code></td></tr>
+                <tr><td>5</td><td>61.4%</td><td>98.1%</td><td>3</td><td>1024</td><td>10</td><td>2</td><td>182s</td><td><code>--multi-correct --splitVN 2</code></td></tr>
             </table>
         </section>
 
@@ -164,25 +166,22 @@ Voting:  Σ_members score[k]  →  argmax</pre>
                 <tr><td>2048</td><td>61.2%</td><td>98.9%</td><td>367s</td><td><code>--hiddenN 2048</code></td></tr>
             </table>
             <p>Accuracy scales with <strong>√H</strong>: each doubling of H adds roughly
-            +2-4pp up to H=1024, where the 61.4% record was set. Beyond H=1024, returns
-            <strong>invert</strong> — H=2048 reaches only 61.2% (−0.2pp) at 2× the compute
-            (367s vs 182s). The corrector cannot exploit the extra neurons effectively;
-            the frozen random projection has exhausted its discriminative capacity at H=1024.
-            H=512 remains the cost/benefit sweet spot (59.8% in 85s, 2.1× faster than H=1024
-            for −1.6pp).</p>
+            +2-4pp up to H=1024. Beyond H=1024, returns <strong>invert</strong> —
+            H=2048 reaches only 61.2% (−0.2pp) at 2× the compute. With spatial channels
+            (ey-s-1+ey-s-2), H=512 reaches 63.5% at 16 epochs — the new sweet spot.</p>
 
             <h3>4.3 EN=3+ is the only lever — each EN has its own optimum epoch</h3>
             <p>Different W0 seeds draw from the same distribution. Ensemble voting with independent
             projections is the only lever: 3× independent random features beat 3× more features
             from the same projection.</p>
 
-            <p>All runs: H=512, <code>--multi-correct --splitVN 2</code>. Only EN and epochs vary.</p>
+            <p>All runs: H=512, encoding=ey-b,ey-a,ey-h,ey-s-1,ey-s-2 (17 members). EN and epochs vary.</p>
             <table>
-                <tr><th>EN</th><th>Members</th><th>Ep 6</th><th>Ep 7</th><th>Ep 8</th><th>Ep 9</th><th>Ep 10</th><th>Ep 11</th><th>Optimum</th><th>Time</th></tr>
-                <tr><td>1</td><td>11</td><td>56.4</td><td>56.4</td><td><strong>56.9</strong></td><td>56.5</td><td>56.3</td><td>56.4</td><td>ep 8</td><td>24s</td></tr>
-                <tr class="highlight-row"><td><strong>3</strong></td><td><strong>33</strong></td><td><strong>58.7</strong></td><td><strong>59.4</strong></td><td><strong>59.6</strong></td><td><strong>60.0</strong></td><td><strong>59.8</strong></td><td><strong>59.9</strong></td><td><strong>ep 9</strong></td><td><strong>73s</strong></td></tr>
-                <tr><td>7</td><td>77</td><td>60.1</td><td>60.6</td><td>61.0</td><td>61.2</td><td><strong>61.3</strong></td><td>61.3</td><td>ep 10</td><td>187s</td></tr>
+                <tr><th>EN</th><th>Members</th><th>Ep 10</th><th>Ep 12</th><th>Ep 14</th><th>Ep 16</th><th>Ep 17</th><th>Optimum</th><th>Time</th></tr>
+                <tr class="highlight-row"><td><strong>3</strong></td><td><strong>51</strong></td><td><strong>62.6</strong></td><td><strong>63.1</strong></td><td><strong>63.3</strong></td><td><strong>63.5</strong></td><td><strong>63.5</strong></td><td><strong>ep 16</strong></td><td><strong>272s</strong></td></tr>
             </table>
+            <p>Spatial channels need more epochs to converge (ep 16 vs ep 10 for color-only).
+            splitVN=2 <strong>hurts</strong> spatial channels — they need full bit resolution.</p>
 
             <p><strong>From EN=3 onward, the ensemble–epoch correlation becomes visible.</strong>
             Each EN has its own optimum: EN=1 peaks at ep 8, EN=3 at ep 9, EN=7 at ep 10.
@@ -350,14 +349,26 @@ Voting:  Σ_members score[k]  →  argmax</pre>
 
         <!-- 5. Ceiling -->
         <section id="ceiling" class="paper-section">
-            <h2>5. Why 62% is a Hard Ceiling</h2>
+            <h2>5. Ceiling Update: 63.7% via Spatial Channels</h2>
+            <p>Spatial channels break through the 62% encoding-only ceiling. Six spatial members
+            (LBP, DoG, Variance, Gradient Direction, Local Range, Color-LBP on RG) combine with
+            11 color members to reach <strong>63.7%</strong> (H=1024, EN=3, ep=16).</p>
+            <p><strong>Since record: 61.4% → 63.7% (+2.3pp) through spatial channel engineering.</strong></p>
+            <p><strong>Every accuracy improvement has come from a better channel, not from an algorithm tweak.</strong>
+            Target init (7 modes tested), step schedule (cos-time, pow, pow-eval), multi-correct,
+            splitVN — none of these moved the needle beyond the encoding-only ceiling of 61.4%.
+            Only adding genuinely new information sources (LBP → 62.3%, then dir+range+lbp-rg → 63.7%)
+            produced measurable gains. The color-only pixel evaluation seems exhausted at ∼62%.
+            Future improvements will almost certainly come from <strong>new channel code that better
+            connects pixels spatially</strong> — not from further algorithm optimization.</p>
             <ol>
                 <li><strong>Frozen W0</strong> — corrector can only reweight, not create features.</li>
                 <li><strong>√H scaling</strong> — after H=512, diminishing returns dominate.</li>
                 <li><strong>Seeds ≈ same distribution</strong> — EN is the only lever.</li>
+                <li><strong>Spatial channels add orthogonal info</strong> — direction, range, chromatic texture provide features invisible to single-pixel channels.</li>
+                <li><strong>splitVN=2 hurts spatial</strong> — AND2 filter discards too much signal from direction/range channels. Use no splitVN.</li>
                 <li><strong>Training W0 collapses MAJ3</strong> — destroys hash distribution.</li>
                 <li><strong>Deeper layers lose information</strong> — 2-layer MAJ3 lost 4pp on MNIST.</li>
-                <li><strong>Results &gt;62% use tricks excluded by DRAM-native:</strong> pretrained weights, data augmentation, multi-crop eval, soft labels, backprop.</li>
             </ol>
         </section>
 
@@ -366,11 +377,12 @@ Voting:  Σ_members score[k]  →  argmax</pre>
             <h2>6. Practical Recommendations</h2>
             <table>
                 <tr><th>Goal</th><th>Config</th><th>Result</th></tr>
-                <tr class="highlight-row"><td>Best cost/benefit</td><td><code>--hiddenN 512 --ensembleN 3 --epochsN 9 --multi-correct --splitVN 2</code></td><td><strong>60.0% in 73s</strong></td></tr>
-                <tr><td>Max eval</td><td><code>--hiddenN 1024 --ensembleN 3 --epochsN 10 --multi-correct --splitVN 2</code></td><td><strong>61.4% in 182s</strong></td></tr>
+                <tr class="highlight-row"><td>Best cost/benefit</td><td><code>--hiddenN 512 --ensembleN 3 --epochsN 16 --encoding ey-b,ey-a,ey-h,ey-s-1,ey-s-2</code></td><td><strong>63.5% in 272s</strong></td></tr>
+                <tr><td>Max eval</td><td><code>--hiddenN 1024 --ensembleN 3 --epochsN 16 --encoding ey-b,ey-a,ey-h,ey-s-1,ey-s-2</code></td><td><strong>63.7% in 538s</strong></td></tr>
             </table>
-            <p>All configs use default encoding (<code>latest</code> = 11 members via ey-b+ey-a+ey-h),
-            default <code>count</code> target init, and <code>cos-time</code> step schedule.</p>
+            <p>All configs use default <code>count</code> target init and <code>cos-time</code> step schedule.
+            <code>latest</code> = 17 members (ey-b+ey-a+ey-h+ey-s-1+ey-s-2). Avoid <code>--splitVN</code>
+            with spatial channels — they need full bit resolution.</p>
         </section>
 
     </div>

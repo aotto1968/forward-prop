@@ -164,7 +164,7 @@ int main(int argc, char *argv[]) {
     omp_set_num_threads(aa.threadN);
 
     /* ── Single matrix or multi-member? ────────────────────────── */
-    int n_mem = 0;          /* number of Members (für Training) */
+    int n_mem = 0;          /* number of Members (for training) */
     int n_blocks = 0;       /* number of packed blocks in buffer */
     int mem_nc[ADAM_MAX_MEM], mem_off[ADAM_MAX_MEM];
     int block_order[ADAM_MAX_MEM];

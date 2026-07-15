@@ -12,7 +12,7 @@
  *   enc_lut_init_enc()       — LUT vorberechnen
  *   enc_lut_get()            — schneller LUT-Lookup
  *   enum ki_color_bit        — Farbblock-Definitionen
- *   COLOR_NB                 — number of Blöcke
+ *   COLOR_NB                 — number of color blocks
  *   ki_blocks_from_rgb()     — RGB → Block-Array
  *   ki_color_name()          — Blockname for display
  *
@@ -27,6 +27,7 @@
 #include <stdint.h>
 #include <string.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <math.h>
 
 #ifdef __cplusplus
@@ -47,8 +48,13 @@ enum ki_encoding {
     KI_ENC_MID  = 5,   /* Mid-weighted (more resolution in midtones)   */
     KI_ENC_LOG  = 6,   /* Logarithmisch (natural brightness perception) */
     KI_ENC_EXP  = 7,   /* Exponentiell (heavily top-weighted)                */
-    KI_ENC_SIG  = 8,   /* S-shaped (Sigmoid, smooth transition)            */
-    KI_ENC_COUNT = 9
+    KI_ENC_SIG     = 8,   /* S-shaped (Sigmoid, smooth transition)            */
+    KI_ENC_SQRT    = 9,   /* Square root — softer than exp, more bright res  */
+    KI_ENC_CBRT    = 10,  /* Cube root — even softer, natural image curve    */
+    KI_ENC_GAMMA   = 11,  /* Gamma 0.45 — tunable power-law (complementary)  */
+    KI_ENC_TRIANGLE = 12, /* Triangle — peaks at midtones (128), zero ends   */
+    KI_ENC_INV_EXP = 13,  /* Inverse exp — dark emphasis, 1-e^(-k·pv)        */
+    KI_ENC_COUNT = 14
 };
 
 #define KI_ENC_WIDTH_DEFAULT 8
@@ -60,15 +66,20 @@ enum ki_encoding {
 /* ── Kurzname (ohne Width-Suffix) ──────────────────────────────── */
 static inline const char *ki_enc_name_short(int enc) {
     static const char *names[] = {
-        [KI_ENC_RAW]  = "raw",
-        [KI_ENC_LIN7] = "lin7",
-        [KI_ENC_LIN8] = "lin",
-        [KI_ENC_DOWN] = "down",
-        [KI_ENC_UP]   = "up",
-        [KI_ENC_MID]  = "mid",
-        [KI_ENC_LOG]  = "log",
-        [KI_ENC_EXP]  = "exp",
-        [KI_ENC_SIG]  = "sig",
+        [KI_ENC_RAW]     = "raw",
+        [KI_ENC_LIN7]    = "lin7",
+        [KI_ENC_LIN8]    = "lin",
+        [KI_ENC_DOWN]    = "down",
+        [KI_ENC_UP]      = "up",
+        [KI_ENC_MID]     = "mid",
+        [KI_ENC_LOG]     = "log",
+        [KI_ENC_EXP]     = "exp",
+        [KI_ENC_SIG]     = "sig",
+        [KI_ENC_SQRT]    = "sqrt",
+        [KI_ENC_CBRT]    = "cbrt",
+        [KI_ENC_GAMMA]   = "gamma",
+        [KI_ENC_TRIANGLE]= "tri",
+        [KI_ENC_INV_EXP] = "inv-exp",
     };
     if (enc >= 0 && enc < KI_ENC_COUNT) return names[enc];
     return "?";
@@ -81,6 +92,19 @@ static inline const char *ki_enc_name_short(int enc) {
  *         "exp"   → returns KI_ENC_EXP, *out_width=KI_ENC_WIDTH_DEFAULT
  * Returns -1 on unknown encoding. */
 
+/* Portable case-insensitive string comparison (avoids POSIX strcasecmp) */
+static inline int ki_strcasecmp(const char *a, const char *b) {
+    while (*a && *b) {
+        unsigned char ca = (unsigned char)*a;
+        unsigned char cb = (unsigned char)*b;
+        if (ca >= 'A' && ca <= 'Z') ca += 32;
+        if (cb >= 'A' && cb <= 'Z') cb += 32;
+        if (ca != cb) return (int)ca - (int)cb;
+        a++; b++;
+    }
+    return (int)(unsigned char)*a - (int)(unsigned char)*b;
+}
+
 static inline int ki_enc_parse(const char *tok, int *out_width) {
     int tok_len = (int)strlen(tok);
     if (tok_len > 32) return -1;
@@ -90,32 +114,43 @@ static inline int ki_enc_parse(const char *tok, int *out_width) {
         char wstr[4];
         snprintf(wstr, sizeof(wstr), "%d", w);
         int wslen = (int)strlen(wstr);
-        if (tok_len > wslen && strcasecmp(tok + tok_len - wslen, wstr) == 0) {
-            char prefix[32];
+        /* Number suffix: use strcmp (digits are case-insensitive by nature) */
+        if (tok_len > wslen && memcmp(tok + tok_len - wslen, wstr, (size_t)wslen) == 0) {
+            char prefix[64];  /* 64 > max tok_len 32, safe for any prefix */
             int plen = tok_len - wslen;
             memcpy(prefix, tok, (size_t)plen);
             prefix[plen] = '\0';
-            if (strcasecmp(prefix, "raw")  == 0) { if (out_width) *out_width = w; return KI_ENC_RAW; }
-            if (strcasecmp(prefix, "lin7") == 0) { if (out_width) *out_width = w; return KI_ENC_LIN7; }
-            if (strcasecmp(prefix, "lin8") == 0 || strcasecmp(prefix, "lin") == 0) { if (out_width) *out_width = w; return KI_ENC_LIN8; }
-            if (strcasecmp(prefix, "down") == 0 || strcasecmp(prefix, "unten") == 0) { if (out_width) *out_width = w; return KI_ENC_DOWN; }
-            if (strcasecmp(prefix, "up")   == 0 || strcasecmp(prefix, "oben") == 0) { if (out_width) *out_width = w; return KI_ENC_UP; }
-            if (strcasecmp(prefix, "mid")  == 0 || strcasecmp(prefix, "mitte") == 0) { if (out_width) *out_width = w; return KI_ENC_MID; }
-            if (strcasecmp(prefix, "log")  == 0) { if (out_width) *out_width = w; return KI_ENC_LOG; }
-            if (strcasecmp(prefix, "exp")  == 0) { if (out_width) *out_width = w; return KI_ENC_EXP; }
-            if (strcasecmp(prefix, "sig")  == 0) { if (out_width) *out_width = w; return KI_ENC_SIG; }
+            if (ki_strcasecmp(prefix, "raw")  == 0) { if (out_width) *out_width = w; return KI_ENC_RAW; }
+            if (ki_strcasecmp(prefix, "lin7") == 0) { if (out_width) *out_width = w; return KI_ENC_LIN7; }
+            if (ki_strcasecmp(prefix, "lin8") == 0 || ki_strcasecmp(prefix, "lin") == 0) { if (out_width) *out_width = w; return KI_ENC_LIN8; }
+            if (ki_strcasecmp(prefix, "down") == 0 || ki_strcasecmp(prefix, "unten") == 0) { if (out_width) *out_width = w; return KI_ENC_DOWN; }
+            if (ki_strcasecmp(prefix, "up")   == 0 || ki_strcasecmp(prefix, "oben") == 0) { if (out_width) *out_width = w; return KI_ENC_UP; }
+            if (ki_strcasecmp(prefix, "mid")  == 0 || ki_strcasecmp(prefix, "mitte") == 0) { if (out_width) *out_width = w; return KI_ENC_MID; }
+            if (ki_strcasecmp(prefix, "log")  == 0) { if (out_width) *out_width = w; return KI_ENC_LOG; }
+            if (ki_strcasecmp(prefix, "exp")  == 0) { if (out_width) *out_width = w; return KI_ENC_EXP; }
+            if (ki_strcasecmp(prefix, "sig")     == 0) { if (out_width) *out_width = w; return KI_ENC_SIG; }
+            if (ki_strcasecmp(prefix, "sqrt")    == 0) { if (out_width) *out_width = w; return KI_ENC_SQRT; }
+            if (ki_strcasecmp(prefix, "cbrt")    == 0) { if (out_width) *out_width = w; return KI_ENC_CBRT; }
+            if (ki_strcasecmp(prefix, "gamma")   == 0) { if (out_width) *out_width = w; return KI_ENC_GAMMA; }
+            if (ki_strcasecmp(prefix, "tri")     == 0 || ki_strcasecmp(prefix, "triangle") == 0) { if (out_width) *out_width = w; return KI_ENC_TRIANGLE; }
+            if (ki_strcasecmp(prefix, "inv-exp") == 0 || ki_strcasecmp(prefix, "invexp") == 0) { if (out_width) *out_width = w; return KI_ENC_INV_EXP; }
         }
     }
     if (out_width) *out_width = KI_ENC_WIDTH_DEFAULT;
-    if (strcasecmp(tok, "raw")  == 0) return KI_ENC_RAW;
-    if (strcasecmp(tok, "lin7") == 0) return KI_ENC_LIN7;
-    if (strcasecmp(tok, "lin8") == 0 || strcasecmp(tok, "lin") == 0) return KI_ENC_LIN8;
-    if (strcasecmp(tok, "down") == 0 || strcasecmp(tok, "unten") == 0) return KI_ENC_DOWN;
-    if (strcasecmp(tok, "up")   == 0 || strcasecmp(tok, "oben") == 0) return KI_ENC_UP;
-    if (strcasecmp(tok, "mid")  == 0 || strcasecmp(tok, "mitte") == 0) return KI_ENC_MID;
-    if (strcasecmp(tok, "log")  == 0 || strcasecmp(tok, "logarithmisch") == 0) return KI_ENC_LOG;
-    if (strcasecmp(tok, "exp")  == 0 || strcasecmp(tok, "exponentiell") == 0) return KI_ENC_EXP;
-    if (strcasecmp(tok, "sig")  == 0 || strcasecmp(tok, "sigmoid") == 0) return KI_ENC_SIG;
+    if (ki_strcasecmp(tok, "raw")  == 0) return KI_ENC_RAW;
+    if (ki_strcasecmp(tok, "lin7") == 0) return KI_ENC_LIN7;
+    if (ki_strcasecmp(tok, "lin8") == 0 || ki_strcasecmp(tok, "lin") == 0) return KI_ENC_LIN8;
+    if (ki_strcasecmp(tok, "down") == 0 || ki_strcasecmp(tok, "unten") == 0) return KI_ENC_DOWN;
+    if (ki_strcasecmp(tok, "up")   == 0 || ki_strcasecmp(tok, "oben") == 0) return KI_ENC_UP;
+    if (ki_strcasecmp(tok, "mid")  == 0 || ki_strcasecmp(tok, "mitte") == 0) return KI_ENC_MID;
+    if (ki_strcasecmp(tok, "log")  == 0 || ki_strcasecmp(tok, "logarithmisch") == 0) return KI_ENC_LOG;
+    if (ki_strcasecmp(tok, "exp")  == 0 || ki_strcasecmp(tok, "exponentiell") == 0) return KI_ENC_EXP;
+    if (ki_strcasecmp(tok, "sig")  == 0 || ki_strcasecmp(tok, "sigmoid") == 0) return KI_ENC_SIG;
+    if (ki_strcasecmp(tok, "sqrt") == 0) return KI_ENC_SQRT;
+    if (ki_strcasecmp(tok, "cbrt") == 0) return KI_ENC_CBRT;
+    if (ki_strcasecmp(tok, "gamma") == 0) return KI_ENC_GAMMA;
+    if (ki_strcasecmp(tok, "tri")  == 0 || ki_strcasecmp(tok, "triangle") == 0) return KI_ENC_TRIANGLE;
+    if (ki_strcasecmp(tok, "inv-exp") == 0 || ki_strcasecmp(tok, "invexp") == 0) return KI_ENC_INV_EXP;
     return -1;
 }
 
@@ -191,6 +226,34 @@ static inline uint32_t ki_apply_enc_w(uint8_t pv, int enc, int width) {
         level = (int)(s * (float)max_lev + 0.5f);
         break;
     }
+    case KI_ENC_SQRT: {
+        float s = sqrtf(pv / 255.0f);
+        level = (int)(s * (float)max_lev + 0.5f);
+        break;
+    }
+    case KI_ENC_CBRT: {
+        float c = powf(pv / 255.0f, 1.0f / 3.0f);
+        level = (int)(c * (float)max_lev + 0.5f);
+        break;
+    }
+    case KI_ENC_GAMMA: {
+        /* Gamma ≈ 0.45 — between exp(0.30) and sqrt(0.50) */
+        float g = powf(pv / 255.0f, 0.45f);
+        level = (int)(g * (float)max_lev + 0.5f);
+        break;
+    }
+    case KI_ENC_TRIANGLE: {
+        /* Triangle: peak at 128, zero at 0 and 255. min(pv, 255-pv) × 2 */
+        int d = (pv < 128) ? pv : (255 - pv);
+        level = (int)((uint32_t)d * (uint32_t)max_lev * 2U / 255U);
+        break;
+    }
+    case KI_ENC_INV_EXP: {
+        /* Inverse exp: 1 - e^(-k·pv/255). k≈4 gives good spread. */
+        float ie = 1.0f - expf(-4.0f * pv / 255.0f);
+        level = (int)(ie * (float)max_lev + 0.5f);
+        break;
+    }
     default: return pv;
     }
     if (level <= 0) return 0;
@@ -212,7 +275,7 @@ static inline uint8_t ki_apply_enc(uint8_t pv, int enc) {
  * Covers all 9 encodings × 3 widths (8, 16, 32) = 27 tables × 256 = 27 KB.
  * Initialized via BSS = 0, hence needed. */
 
-#define _KI_ENC_NENC  9
+#define _KI_ENC_NENC  14
 #define _KI_ENC_NWI   3
 
 static uint32_t _enc_lut_tab[_KI_ENC_NENC][_KI_ENC_NWI][256];
@@ -242,7 +305,7 @@ static inline uint32_t enc_lut_get(int enc, int width, uint8_t pv) {
  *
  * Each analysis block has a fixed bit position (0..COLOR_NB-1).
  * Bit 0.*is the single grayscale block for MNIST.
- * Alle anderen Blöcke (R,G,B,Y,…) are shifted by 1.
+ * All other blocks (R,G,B,Y,…) are shifted by 1.
  *
  * Default-Masken:
  *   CIFAR: r+g+b = (1<<COLOR_R)|(1<<COLOR_G)|(1<<COLOR_B) = 0x0E
@@ -273,10 +336,16 @@ enum ki_color_bit {
     COLOR_CM    = 19,  /* G-B opponent */
     COLOR_CP    = 20,  /* R-(G+B)/2 opponent */
 
-    COLOR_EDGE  = 21,  /* Sobel edges on Y luminance (für --channels edge) */
+    COLOR_EDGE  = 21,  /* Sobel edges on Y luminance (for --channels edge) */
     COLOR_BIN   = 22,  /* Otsu-binarized Y (filled black/white) */
+    COLOR_LBP   = 23,  /* Local Binary Pattern (texture) */
+    COLOR_DOG   = 24,  /* Difference of Gaussians (band-pass) */
+    COLOR_VAR   = 25,  /* Local variance (roughness) */
+    COLOR_DIR   = 26,  /* Gradient direction (8-bin quantized) */
+    COLOR_RANGE = 27,  /* Local range (max-min in 3×3) */
+    COLOR_LBP_RG = 28, /* LBP on RG opponent (chromatic texture) */
 
-    COLOR_NB    = 23   /* number of Farben */
+    COLOR_NB    = 29   /* number of Farben */
 };
 
 /* ── Block-Namen for display ────────────────────────────────── */
@@ -305,6 +374,12 @@ static inline const char *ki_color_name(int bit) {
         [COLOR_CP]    = "CP",
         [COLOR_EDGE]  = "edge",
         [COLOR_BIN]   = "bin",
+        [COLOR_LBP]   = "lbp",
+        [COLOR_DOG]   = "dog",
+        [COLOR_VAR]   = "var",
+        [COLOR_DIR]   = "dir",
+        [COLOR_RANGE] = "range",
+        [COLOR_LBP_RG]= "lbp-rg",
     };
     if ((unsigned)bit < COLOR_NB) return names[bit];
     return "?";
@@ -364,6 +439,13 @@ static inline void ki_blocks_from_rgb(int r, int g, int b, uint8_t blocks[COLOR_
     blocks[COLOR_EDGE] = 0;
     /* Binary.*computed by Otsu in load_input.*placeholder) */
     blocks[COLOR_BIN] = 0;
+    /* LBP, DoG, Variance — computed per image in post-processing */
+    blocks[COLOR_LBP] = 0;
+    blocks[COLOR_DOG] = 0;
+    blocks[COLOR_VAR] = 0;
+    blocks[COLOR_DIR] = 0;
+    blocks[COLOR_RANGE] = 0;
+    blocks[COLOR_LBP_RG] = 0;
 
     blocks[COLOR_CL] = (uint8_t)((g + b) >> 1);
     blocks[COLOR_CM] = (uint8_t)ki_clamp_u8(128 + (g - b));
@@ -371,7 +453,7 @@ static inline void ki_blocks_from_rgb(int r, int g, int b, uint8_t blocks[COLOR_
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
- * PRINT MEMBER STRUCTURE — unified format für Otto/Hebbian/Adam
+ * PRINT MEMBER STRUCTURE — unified format for Otto/Hebbian/Adam
  * ═══════════════════════════════════════════════════════════════════════
  * Prints a consistent Member-Liste aus:
  *   Structure: M0(COL=ENC_WIDTH), M1(COL=ENC_WIDTH), ...
@@ -394,7 +476,7 @@ static inline void ki_print_member_structure(const int *colors,
         if (colors && colors[i] >= 0)
             printf("%s", ki_color_name(colors[i]));
         if (types && types[i] >= 0)
-            printf("=%s%d", ki_enc_name_short((int8_t)types[i]),
+            printf("=%s%d", ki_enc_name_short(types[i]),
                    widths && widths[i] >= 0 ? widths[i] : 8);
         printf(")");
     }
@@ -405,14 +487,16 @@ static inline void ki_print_member_structure(const int *colors,
 /* ═══════════════════════════════════════════════════════════════════════
  * EDGE DETECTION — Sobel 3×3 auf Y-Luminanz
  * ═══════════════════════════════════════════════════════════════════════
- * Expects: px[COLOR_NB][1024] mit gültigem COLOR_Y (ITU-601 Y).
+ * Expects: px[COLOR_NB][1024] with valid COLOR_Y (ITU-601 Y).
  * Computes: COLOR_EDGE (Sobel-Magnitude) + COLOR_C (Sobel auf AL).
  * px is updated IN PLACE. Call AFTER ki_blocks_from_rgb().
  * w=32, h=32 (CIFAR-10 resolution).
  */
 __attribute__((unused))
 static inline void ki_compute_edge(uint8_t px[COLOR_NB][1024], int w, int h) {
-    /* Sobel auf Y (ITU-601) → COLOR_EDGE */
+    /* 3×3 Sobel kernel needs at least 3×3 pixels */
+    if (w < 3 || h < 3) return;
+    /* Sobel on Y (ITU-601) → COLOR_EDGE */
     {   int yn[1024];
         for (int p = 0; p < w * h; p++) yn[p] = px[COLOR_Y][p];
         for (int y = 1; y < h - 1; y++) {
@@ -428,17 +512,21 @@ static inline void ki_compute_edge(uint8_t px[COLOR_NB][1024], int w, int h) {
                 px[COLOR_EDGE][i] = (uint8_t)mag;
             }
         }
-        /* Border: copy nearest pixel */
-        for (int y = 0; y < h; y++) {
-            px[COLOR_EDGE][y*w]     = px[COLOR_EDGE][y*w+1];
-            px[COLOR_EDGE][y*w+w-1] = px[COLOR_EDGE][y*w+w-2];
+        /* 1) Left/right borders: copy from col 1 / w-2 (valid rows y=1..h-2) */
+        for (int y = 1; y < h - 1; y++) {
+            int ro = y * w;
+            uint8_t lv = px[COLOR_EDGE][ro + 1];
+            uint8_t rv = px[COLOR_EDGE][ro + w - 2];
+            px[COLOR_EDGE][ro + 0]     = lv;
+            px[COLOR_EDGE][ro + w - 1] = rv;
         }
+        /* 2) Top/bottom rows: copy from row 1 / h-2 (full width, covers corners) */
         for (int x = 0; x < w; x++) {
-            px[COLOR_EDGE][x]       = px[COLOR_EDGE][w+x];
-            px[COLOR_EDGE][(h-1)*w + x] = px[COLOR_EDGE][(h-2)*w + x];
+            px[COLOR_EDGE][0 * w + x]       = px[COLOR_EDGE][1 * w + x];
+            px[COLOR_EDGE][(h - 1) * w + x] = px[COLOR_EDGE][(h - 2) * w + x];
         }
     }
-    /* Sobel auf AL (R+G)/2 → COLOR_C (bessere Skalierung) */
+    /* Sobel on AL (R+G)/2 → COLOR_C (better scaling) */
     {   int ln[1024];
         for (int p = 0; p < w * h; p++) ln[p] = px[COLOR_AL][p];
         for (int y = 1; y < h - 1; y++) {
@@ -454,14 +542,18 @@ static inline void ki_compute_edge(uint8_t px[COLOR_NB][1024], int w, int h) {
                 px[COLOR_C][i] = (uint8_t)mag;
             }
         }
-        /* Border: copy nearest pixel */
-        for (int y = 0; y < h; y++) {
-            px[COLOR_C][y*w]     = px[COLOR_C][y*w+1];
-            px[COLOR_C][y*w+w-1] = px[COLOR_C][y*w+w-2];
+        /* 1) Left/right borders: copy from col 1 / w-2 (valid rows y=1..h-2) */
+        for (int y = 1; y < h - 1; y++) {
+            int ro = y * w;
+            uint8_t lv = px[COLOR_C][ro + 1];
+            uint8_t rv = px[COLOR_C][ro + w - 2];
+            px[COLOR_C][ro + 0]     = lv;
+            px[COLOR_C][ro + w - 1] = rv;
         }
+        /* 2) Top/bottom rows: copy from row 1 / h-2 (full width, covers corners) */
         for (int x = 0; x < w; x++) {
-            px[COLOR_C][x]       = px[COLOR_C][w+x];
-            px[COLOR_C][(h-1)*w + x] = px[COLOR_C][(h-2)*w + x];
+            px[COLOR_C][0 * w + x]       = px[COLOR_C][1 * w + x];
+            px[COLOR_C][(h - 1) * w + x] = px[COLOR_C][(h - 2) * w + x];
         }
     }
 }
@@ -469,7 +561,7 @@ static inline void ki_compute_edge(uint8_t px[COLOR_NB][1024], int w, int h) {
 /* ═══════════════════════════════════════════════════════════════════════
  * BINARY THRESHOLD — Otsu auf Y-Luminanz → filled black/white
  * ═══════════════════════════════════════════════════════════════════════
- * Expects: px[COLOR_NB][1024] mit gültigem COLOR_Y (ITU-601 Y).
+ * Expects: px[COLOR_NB][1024] with valid COLOR_Y (ITU-601 Y).
  * Computes: COLOR_BIN (Otsu-binarisiert: 0 oder 255).
  * px is updated IN PLACE. Call AFTER ki_blocks_from_rgb().
  * w=32, h=32 (CIFAR-10 resolution).
@@ -516,6 +608,288 @@ static inline void ki_compute_binary(uint8_t px[COLOR_NB][1024], int w, int h) {
     /* Binarize: Y > threshold → 255, otherwise 0 */
     for (int p = 0; p < N; p++)
         px[COLOR_BIN][p] = (px[COLOR_Y][p] > threshold) ? 255 : 0;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+ * LOCAL BINARY PATTERN — texture descriptor on Y luminance
+ * ═══════════════════════════════════════════════════════════════════════
+ * Expects: px[COLOR_NB][1024] with valid COLOR_Y (ITU-601 Y).
+ * Computes: COLOR_LBP — 8-bit LBP code per pixel.
+ * Pure comparisons, no multiply-accumulate. */
+__attribute__((unused))
+static inline void ki_compute_lbp(uint8_t px[COLOR_NB][1024], int w, int h) {
+    /* 3×3 kernel needs at least 3×3 pixels */
+    if (w < 3 || h < 3) return;
+    /* LBP for inner region (y=1..h-2, x=1..w-2) */
+    for (int y = 1; y < h - 1; y++) {
+        for (int x = 1; x < w - 1; x++) {
+            int i = y * w + x;
+            uint8_t center = px[COLOR_Y][i];
+            uint8_t code = 0;
+            /* Clockwise from top-left (standard LBP ordering) */
+            if (px[COLOR_Y][i-w-1] >= center) code |= 0x80;  /* top-left      */
+            if (px[COLOR_Y][i-w  ] >= center) code |= 0x40;  /* top           */
+            if (px[COLOR_Y][i-w+1] >= center) code |= 0x20;  /* top-right     */
+            if (px[COLOR_Y][i+1  ] >= center) code |= 0x10;  /* right         */
+            if (px[COLOR_Y][i+w+1] >= center) code |= 0x08;  /* bottom-right  */
+            if (px[COLOR_Y][i+w  ] >= center) code |= 0x04;  /* bottom        */
+            if (px[COLOR_Y][i+w-1] >= center) code |= 0x02;  /* bottom-left   */
+            if (px[COLOR_Y][i-1  ] >= center) code |= 0x01;  /* left          */
+            px[COLOR_LBP][i] = code;
+        }
+    }
+    /* 1) Left/right borders: copy from col 1 / w-2 (valid rows y=1..h-2) */
+    for (int y = 1; y < h - 1; y++) {
+        int ro = y * w;
+        uint8_t lv = px[COLOR_LBP][ro + 1];
+        uint8_t rv = px[COLOR_LBP][ro + w - 2];
+        px[COLOR_LBP][ro + 0]     = lv;
+        px[COLOR_LBP][ro + w - 1] = rv;
+    }
+    /* 2) Top/bottom rows: copy from row 1 / h-2 (full width, covers corners) */
+    for (int x = 0; x < w; x++) {
+        px[COLOR_LBP][0 * w + x]       = px[COLOR_LBP][1 * w + x];
+        px[COLOR_LBP][(h - 1) * w + x] = px[COLOR_LBP][(h - 2) * w + x];
+    }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+ * DIFFERENCE OF GAUSSIANS — band-pass edge detection on Y luminance
+ * ═══════════════════════════════════════════════════════════════════════
+ * Expects: px[COLOR_NB][1024] with valid COLOR_Y (ITU-601 Y).
+ * Computes: COLOR_DOG — DoG(3,5) band-pass.
+ * Uses integer box-blur approximations (no exp).
+ * Border 2px: DoG not defined → repeat nearest valid value. */
+__attribute__((unused))
+static inline void ki_compute_dog(uint8_t px[COLOR_NB][1024], int w, int h) {
+    /* DoG(3,5) needs at least 5×5 pixels */
+    if (w < 5 || h < 5) return;
+    /* Box blur r=1 (3×3) and r=2 (5×5), both on Y */
+    int blur3[1024], blur5[1024];
+    memset(blur3, 0, sizeof(blur3));
+    memset(blur5, 0, sizeof(blur5));
+    /* blur3: valid for y=1..h-2, x=1..w-2 */
+    for (int y = 1; y < h - 1; y++) {
+        for (int x = 1; x < w - 1; x++) {
+            int i = y * w + x;
+            int s3 = (int)px[COLOR_Y][i-w-1] + (int)px[COLOR_Y][i-w] + (int)px[COLOR_Y][i-w+1]
+                   + (int)px[COLOR_Y][i-1]   + (int)px[COLOR_Y][i]   + (int)px[COLOR_Y][i+1]
+                   + (int)px[COLOR_Y][i+w-1] + (int)px[COLOR_Y][i+w] + (int)px[COLOR_Y][i+w+1];
+            blur3[i] = s3 / 9;
+        }
+    }
+    /* blur5: valid for y=2..h-3, x=2..w-3 */
+    for (int y = 2; y < h - 2; y++) {
+        for (int x = 2; x < w - 2; x++) {
+            int i = y * w + x;
+            int s5 = 0;
+            for (int dy = -2; dy <= 2; dy++)
+                for (int dx = -2; dx <= 2; dx++)
+                    s5 += (int)px[COLOR_Y][i + dy*w + dx];
+            blur5[i] = s5 / 25;
+        }
+    }
+    /* DoG: only where blur5 is valid (y=2..h-3, x=2..w-3) */
+    for (int y = 2; y < h - 2; y++) {
+        for (int x = 2; x < w - 2; x++) {
+            int i = y * w + x;
+            int dog = blur3[i] - blur5[i] + 128;
+            if (dog < 0) dog = 0;
+            if (dog > 255) dog = 255;
+            px[COLOR_DOG][i] = (uint8_t)dog;
+        }
+    }
+    /* 1) Left/right borders: copy from column 2 / w-3 (only valid rows y=2..h-3) */
+    for (int y = 2; y < h - 2; y++) {
+        int ro = y * w;
+        uint8_t lv = px[COLOR_DOG][ro + 2];
+        uint8_t rv = px[COLOR_DOG][ro + w - 3];
+        px[COLOR_DOG][ro + 0] = lv;
+        px[COLOR_DOG][ro + 1] = lv;
+        px[COLOR_DOG][ro + w - 2] = rv;
+        px[COLOR_DOG][ro + w - 1] = rv;
+    }
+    /* 2) Top/bottom 2 rows: copy from row 2 / h-3 (covers corners too) */
+    for (int x = 0; x < w; x++) {
+        uint8_t tv = px[COLOR_DOG][2 * w + x];
+        uint8_t bv = px[COLOR_DOG][(h - 3) * w + x];
+        px[COLOR_DOG][0 * w + x] = tv;
+        px[COLOR_DOG][1 * w + x] = tv;
+        px[COLOR_DOG][(h - 2) * w + x] = bv;
+        px[COLOR_DOG][(h - 1) * w + x] = bv;
+    }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+ * LOCAL VARIANCE — texture roughness on Y luminance
+ * ═══════════════════════════════════════════════════════════════════════
+ * Expects: px[COLOR_NB][1024] with valid COLOR_Y (ITU-601 Y).
+ * Computes: COLOR_VAR — mean absolute deviation in 3×3 patch.
+ * Uses integer absolute diff, no multiply (cheaper than variance). */
+__attribute__((unused))
+static inline void ki_compute_var(uint8_t px[COLOR_NB][1024], int w, int h) {
+    /* 3×3 kernel needs at least 3×3 pixels */
+    if (w < 3 || h < 3) return;
+    /* Variance only for inner region (y=1..h-2, x=1..w-2) */
+    for (int y = 1; y < h - 1; y++) {
+        for (int x = 1; x < w - 1; x++) {
+            int i = y * w + x;
+            /* Local mean (3×3) */
+            int sum = (int)px[COLOR_Y][i-w-1] + (int)px[COLOR_Y][i-w] + (int)px[COLOR_Y][i-w+1]
+                    + (int)px[COLOR_Y][i-1]   + (int)px[COLOR_Y][i]   + (int)px[COLOR_Y][i+1]
+                    + (int)px[COLOR_Y][i+w-1] + (int)px[COLOR_Y][i+w] + (int)px[COLOR_Y][i+w+1];
+            int mean = sum / 9;
+            /* Mean absolute deviation */
+            int mad = abs((int)px[COLOR_Y][i-w-1] - mean)
+                    + abs((int)px[COLOR_Y][i-w]   - mean)
+                    + abs((int)px[COLOR_Y][i-w+1] - mean)
+                    + abs((int)px[COLOR_Y][i-1]   - mean)
+                    + abs((int)px[COLOR_Y][i]     - mean)
+                    + abs((int)px[COLOR_Y][i+1]   - mean)
+                    + abs((int)px[COLOR_Y][i+w-1] - mean)
+                    + abs((int)px[COLOR_Y][i+w]   - mean)
+                    + abs((int)px[COLOR_Y][i+w+1] - mean);
+            int v = mad / 9;  /* normalize to 0..255 (max=9*255/9=255) */
+            px[COLOR_VAR][i] = (uint8_t)v;
+        }
+    }
+    /* 1) Left/right borders: copy from col 1 / w-2 (valid rows y=1..h-2) */
+    for (int y = 1; y < h - 1; y++) {
+        int ro = y * w;
+        uint8_t lv = px[COLOR_VAR][ro + 1];
+        uint8_t rv = px[COLOR_VAR][ro + w - 2];
+        px[COLOR_VAR][ro + 0]     = lv;
+        px[COLOR_VAR][ro + w - 1] = rv;
+    }
+    /* 2) Top/bottom rows: copy from row 1 / h-2 (full width, covers corners) */
+    for (int x = 0; x < w; x++) {
+        px[COLOR_VAR][0 * w + x]       = px[COLOR_VAR][1 * w + x];
+        px[COLOR_VAR][(h - 1) * w + x] = px[COLOR_VAR][(h - 2) * w + x];
+    }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+ * GRADIENT DIRECTION — 8-bin quantized orientation on Sobel gx/gy
+ * ═══════════════════════════════════════════════════════════════════════
+ * Expects: px[COLOR_NB][1024] with valid COLOR_EDGE (Sobel computed).
+ * Computes: COLOR_DIR — 8-bin direction (0..7) mapped to 0..255.
+ * No atan2: uses gx/gy sign ratios for speed. */
+__attribute__((unused))
+static inline void ki_compute_dir(uint8_t px[COLOR_NB][1024], int w, int h) {
+    if (w < 3 || h < 3) return;
+    /* Recompute Sobel gx/gy on Y, then quantize direction */
+    for (int y = 1; y < h - 1; y++) {
+        for (int x = 1; x < w - 1; x++) {
+            int i = y * w + x;
+            int gx = -(int)px[COLOR_Y][i-w-1] + (int)px[COLOR_Y][i-w+1]
+                     -2*(int)px[COLOR_Y][i-1]  + 2*(int)px[COLOR_Y][i+1]
+                     -(int)px[COLOR_Y][i+w-1] + (int)px[COLOR_Y][i+w+1];
+            int gy = -(int)px[COLOR_Y][i-w-1] -2*(int)px[COLOR_Y][i-w] -(int)px[COLOR_Y][i-w+1]
+                     +(int)px[COLOR_Y][i+w-1] +2*(int)px[COLOR_Y][i+w] +(int)px[COLOR_Y][i+w+1];
+            /* Quantize to 8 bins based on sign ratios (no atan2) */
+            int bin = 0;
+            int agx = abs(gx), agy = abs(gy);
+            if (agx == 0 && agy == 0) { bin = 0; }
+            else if (gx >= 0 && gy >= 0) {
+                if (agx > 2*agy) bin = 0; else if (agy > 2*agx) bin = 2; else bin = 1;
+            } else if (gx < 0 && gy >= 0) {
+                if (agx > 2*agy) bin = 4; else if (agy > 2*agx) bin = 2; else bin = 3;
+            } else if (gx < 0 && gy < 0) {
+                if (agx > 2*agy) bin = 4; else if (agy > 2*agx) bin = 6; else bin = 5;
+            } else {
+                if (agx > 2*agy) bin = 0; else if (agy > 2*agx) bin = 6; else bin = 7;
+            }
+            px[COLOR_DIR][i] = (uint8_t)(bin * 32);  /* map 0..7 → 0..248 */
+        }
+    }
+    /* 1) Left/right borders */
+    for (int y = 1; y < h - 1; y++) {
+        int ro = y * w;
+        uint8_t lv = px[COLOR_DIR][ro + 1];
+        uint8_t rv = px[COLOR_DIR][ro + w - 2];
+        px[COLOR_DIR][ro + 0]     = lv;
+        px[COLOR_DIR][ro + w - 1] = rv;
+    }
+    /* 2) Top/bottom rows */
+    for (int x = 0; x < w; x++) {
+        px[COLOR_DIR][0 * w + x]       = px[COLOR_DIR][1 * w + x];
+        px[COLOR_DIR][(h - 1) * w + x] = px[COLOR_DIR][(h - 2) * w + x];
+    }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+ * LOCAL RANGE — max-min in 3×3 patch (texture sharpness)
+ * ═══════════════════════════════════════════════════════════════════════
+ * Expects: px[COLOR_NB][1024] with valid COLOR_Y (ITU-601 Y).
+ * Computes: COLOR_RANGE — max-min, 0..255, no division. */
+__attribute__((unused))
+static inline void ki_compute_range(uint8_t px[COLOR_NB][1024], int w, int h) {
+    if (w < 3 || h < 3) return;
+    for (int y = 1; y < h - 1; y++) {
+        for (int x = 1; x < w - 1; x++) {
+            int i = y * w + x;
+            uint8_t mn = 255, mx = 0;
+            for (int dy = -1; dy <= 1; dy++) {
+                for (int dx = -1; dx <= 1; dx++) {
+                    uint8_t val = px[COLOR_Y][i + dy*w + dx];
+                    if (val < mn) mn = val;
+                    if (val > mx) mx = val;
+                }
+            }
+            px[COLOR_RANGE][i] = (uint8_t)(mx - mn);
+        }
+    }
+    /* 1) Left/right borders */
+    for (int y = 1; y < h - 1; y++) {
+        int ro = y * w;
+        uint8_t lv = px[COLOR_RANGE][ro + 1];
+        uint8_t rv = px[COLOR_RANGE][ro + w - 2];
+        px[COLOR_RANGE][ro + 0]     = lv;
+        px[COLOR_RANGE][ro + w - 1] = rv;
+    }
+    /* 2) Top/bottom rows */
+    for (int x = 0; x < w; x++) {
+        px[COLOR_RANGE][0 * w + x]       = px[COLOR_RANGE][1 * w + x];
+        px[COLOR_RANGE][(h - 1) * w + x] = px[COLOR_RANGE][(h - 2) * w + x];
+    }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+ * COLOR LBP — LBP on RG opponent channel (chromatic texture)
+ * ═══════════════════════════════════════════════════════════════════════
+ * Expects: px[COLOR_NB][1024] with valid COLOR_RG (R-G opponent).
+ * Computes: COLOR_LBP_RG — 8-bit LBP code on color opponent.
+ * Captures chromatic textures invisible in luminance LBP. */
+__attribute__((unused))
+static inline void ki_compute_lbp_rg(uint8_t px[COLOR_NB][1024], int w, int h) {
+    if (w < 3 || h < 3) return;
+    for (int y = 1; y < h - 1; y++) {
+        for (int x = 1; x < w - 1; x++) {
+            int i = y * w + x;
+            uint8_t center = px[COLOR_RG][i];
+            uint8_t code = 0;
+            if (px[COLOR_RG][i-w-1] >= center) code |= 0x80;
+            if (px[COLOR_RG][i-w  ] >= center) code |= 0x40;
+            if (px[COLOR_RG][i-w+1] >= center) code |= 0x20;
+            if (px[COLOR_RG][i+1  ] >= center) code |= 0x10;
+            if (px[COLOR_RG][i+w+1] >= center) code |= 0x08;
+            if (px[COLOR_RG][i+w  ] >= center) code |= 0x04;
+            if (px[COLOR_RG][i+w-1] >= center) code |= 0x02;
+            if (px[COLOR_RG][i-1  ] >= center) code |= 0x01;
+            px[COLOR_LBP_RG][i] = code;
+        }
+    }
+    for (int y = 1; y < h - 1; y++) {
+        int ro = y * w;
+        uint8_t lv = px[COLOR_LBP_RG][ro + 1];
+        uint8_t rv = px[COLOR_LBP_RG][ro + w - 2];
+        px[COLOR_LBP_RG][ro + 0]     = lv;
+        px[COLOR_LBP_RG][ro + w - 1] = rv;
+    }
+    for (int x = 0; x < w; x++) {
+        px[COLOR_LBP_RG][0 * w + x]       = px[COLOR_LBP_RG][1 * w + x];
+        px[COLOR_LBP_RG][(h - 1) * w + x] = px[COLOR_LBP_RG][(h - 2) * w + x];
+    }
 }
 
 #ifdef __cplusplus

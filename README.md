@@ -21,15 +21,40 @@ make test
 **Expected output (cached models):**
 
 ```
-=== Otto Score MNIST (H=512, 10 ep)       ===      eval=98.8%
-=== Float32 AdamW MNIST (H=512, 10 ep)    ===      eval=92.6%
-=== Bin32 Hebbian MNIST (H=512, 10 ep)    ===      eval=84.4%
-=== Otto Score CIFAR-10 (H=256, 5 ep)     ===      eval=55.0%
-=== Float32 AdamW CIFAR-10 (H=256, 5 ep)  ===      eval=41.2%
-=== Bin32 Hebbian CIFAR-10 (H=256, 5 ep)  ===      eval=32.4%
-=== Otto Score Fashion (H=512, 10 ep)     ===      eval=90.2%
-=== Float32 AdamW Fashion (H=512, 10 ep)  ===      eval=73.6%
-=== Bin32 Hebbian Fashion (H=512, 10 ep)  ===      eval=69.4%
+=== Otto Score MNIST (H=512, 10 ep, latest)       ===      eval=97.0%
+=== Float32 AdamW MNIST (H=512, 10 ep)            ===      eval=92.5%
+=== Bin32 Hebbian MNIST (H=512, 10 ep, latest)    ===      eval=84.3%
+=== Otto Score CIFAR-10 (H=256, 5 ep, latest)     ===      eval=58.0%
+=== Float32 AdamW CIFAR-10 (H=256, 5 ep)          ===      eval=44.3%
+=== Bin32 Hebbian CIFAR-10 (H=256, 5 ep, latest)  ===      eval=31.0%
+=== Otto Score Fashion (H=512, 10 ep, latest)     ===      eval=87.5%
+=== Float32 AdamW Fashion (H=512, 10 ep)          ===      eval=82.1%
+=== Bin32 Hebbian Fashion (H=512, 10 ep, latest)  ===      eval=71.0%
+```
+
+First run trains all 9 models (~5min). Subsequent runs use cached models (<1s total).
+
+**`make models` — Train fresh models (cached):**
+```
+$ make models
+make -s -C mnist model-otto
+REPORT train=100.0% (60000) eval=97.1% (10000) ...
+make -s -C mnist model-adam
+REPORT train=92.5% (60000) eval=92.5% (10000) ...
+make -s -C mnist model-hebbian
+REPORT train=83.2% (60000) eval=84.3% (10000) ...
+make -s -C cifar model-otto
+REPORT train=78.5% (50000) eval=58.0% (10000) ...
+make -s -C cifar model-adam
+REPORT train=44.3% (50000) eval=44.3% (10000) ...
+make -s -C cifar model-hebbian
+REPORT train=30.6% (50000) eval=31.0% (10000) ...
+make -s -C fashion model-otto
+REPORT train=99.2% (60000) eval=87.5% (10000) ...
+make -s -C fashion model-adam
+REPORT train=82.1% (60000) eval=82.1% (10000) ...
+make -s -C fashion model-hebbian
+REPORT train=71.8% (60000) eval=71.0% (10000) ...
 ```
 
 ---

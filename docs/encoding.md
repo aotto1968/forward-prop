@@ -78,10 +78,10 @@ work on photographic images.
 
 | Dataset                | Encoding required? | Default encoding |
 | ---------------------- | ------------------ | ---------------- |
-| MNIST                  | No (raw works)     | `raw`            |
-| Fashion-MNIST          | No (raw works)     | `raw`            |
-| CIFAR-10               | **Yes**            | `exp`            |
-| CIFAR-100              | **Yes**            | `exp`            |
+| MNIST                  | No (raw works)     | `latest` → `exp` |
+| Fashion-MNIST          | No (raw works)     | `latest` → `exp` |
+| CIFAR-10               | **Yes**            | `latest` → 17 members (ey-b+ey-a+ey-h+ey-s-1+ey-s-2) |
+| CIFAR-100              | **Yes**            | `latest` → 17 members |
 | Custom continuous data | **Yes**            | `exp` or `sig`   |
 
 ---
@@ -123,6 +123,11 @@ After computing `level`, the final output is always: `((uint32_t)1 << level) - 1
 | `log`          | `log₂(pv+1) × max_lev / log₂(256)`                                                                                                                                            | width   | Power-law — high res for dark       |
 | `exp`          | `(pv/255)^e × max_lev`, with `e=0.30` (width 8/32) or `e=0.35` (width 16)                                                                                                     | width   | Bright-sparse — high res for bright |
 | `sig`          | `σ(12 × (pv/255 − 0.5)) × max_lev`, `σ(x)=1/(1+e⁻ˣ)`                                                                                                                          | width   | Opponent channels — S-shaped        |
+| `sqrt`         | `√(pv/255) × max_lev`                                                                                                                                                         | width   | Softer bright emphasis (e=0.5)      |
+| `cbrt`         | `∛(pv/255) × max_lev`                                                                                                                                                         | width   | Natural image curve (e=0.33)        |
+| `gamma`        | `(pv/255)^0.45 × max_lev`                                                                                                                                                     | width   | Between exp(0.30) and sqrt(0.50)    |
+| `tri`          | `min(pv, 255-pv) × 2/255 × max_lev`                                                                                                                                           | width   | Mid-tone emphasis (triangle peak)   |
+| `inv-exp`      | `(1−e^(−4·pv/255)) × max_lev`                                                                                                                                                 | width   | Dark emphasis                        |
 
 ### Examples (width=8, all produce thermometer values 0..255)
 
@@ -169,6 +174,14 @@ by **human opponent-color vision** (see [color-vision-opponent-channels.md](colo
 | `bp`         | G-(R+B)/2 opponent   | `(2G-R-B+510)>>2`        | Green vs Red+Blue                |
 | `h`          | Hue                  | `atan2(2R-G-B, G-B)`     | Color angle (HSV)                |
 | `c`          | Contrast             | Sobel 3×3 edge magnitude | Spatial edges on LUM             |
+| `edge`       | Sobel Edge           | Gradient magnitude on Y  | Edge strength (post-process)     |
+| `bin`        | Otsu Binary          | Otsu threshold on Y      | Filled black/white regions       |
+| `lbp`        | LBP (texture)        | 8-bit Local Binary Pattern on Y | Luminance texture descriptor |
+| `dog`        | DoG (band-pass)      | Box 3×3 − Box 5×5 + 128 | Band-pass edge filter            |
+| `var`        | Variance (roughness) | Mean absolute deviation 3×3 | Local texture roughness      |
+| `dir`        | Gradient direction   | 8-bin quantized from Sobel gx/gy | Edge orientation (0..248)  |
+| `range`      | Local range          | max − min in 3×3         | Texture sharpness (no division)  |
+| `lbp-rg`     | LBP on RG opponent   | 8-bit LBP on R-G color   | Chromatic texture                 |
 
 **How to combine:** `--channels h,c,lum,by,rg` selects Hue + Contrast +
 Luminance + Blue-Yellow + Red-Green. Each channel becomes a separate block
@@ -287,7 +300,8 @@ The encoding configuration is therefore recorded in:
 - The input cache hash (`load_input_cached`) for deterministic replay
 
 The `--encoding latest` shorthand selects the best-known configuration for the
-current dataset (expanded at runtime into the full encoding table).
+current dataset (expanded at runtime into the full encoding table). For CIFAR-10,
+`latest` now maps to 17 members: `ey-b,ey-a,ey-h,ey-s-1,ey-s-2` (reaching 63.7%).
 
 ---
 
@@ -304,38 +318,52 @@ is applied to different raw color channels:
 | `ey-c`  | `r=up, cl=down, cm=sig, cp=sig`      | R + opponent pairs    |
 | `ey-h`  | `h=down, c=exp, gb=sig`              | Hue + Contrast + Diff |
 | `top-rgb` | `r=down, g=down, b=down`          | Raw RGB with down     |
-| `latest` | `ey-b,ey-a,ey-h`                    | 11 members (optimal)  |
+| `latest`   | `ey-b,ey-a,ey-h`                          | 11 members (optimal)     |
+| `latest-2` | `g=down,bl=gamma,bm=sig,bp=sig,b=sqrt,al=down,am=sig,ap=sig,h=lin,c=cbrt,gb=sig` | 11 members (2026-07-14 sweep) |
+| `ey-s`     | `lbp=up,dog=sig,var=exp`                          | 3 spatial/texture members   |
+| `ey-s-1`   | `lbp=gamma,dog=sig,var=exp`                       | 3 spatial (gamma variant)   |
+| `ey-s-2`   | `dir=down,range=log,lbp-rg=mid`                   | 3 spatial: dir+range+lbp-rg |
+| `ey-c`     | `r=up,cl=down,cm=sig,cp=sig`                      | R + opponent pairs (same pattern as ey-a/ey-b) |
+| `top-rgb`  | `r=down,g=down,b=down`                            | Raw RGB with down           |
+| `latest`   | `ey-b,ey-a,ey-h,ey-s-1,ey-s-2`                   | **17 members** (best, 63.7%) |
+| `latest-2` | `g=down,bl=gamma,bm=sig,bp=sig,b=sqrt,al=down,am=sig,ap=sig,h=lin,c=cbrt,gb=sig` | 11 members (2026-07-14 sweep) |
 
-### 9.1 Key Findings (2026-07-14)
+### 9.1 Key Findings (2026-07-15)
 
-**ey-a, ey-b, ey-c are the same pattern permuted.** All three use
-`up+down+sig+sig` but on different raw color channels (G, B, R respectively).
-After two of them are in the system, the third adds no new encoding structure
-— only another random W0 projection. Experimentally:
+**Spatial channels break the 62% ceiling.** Adding `ey-s-1` (lbp+dog+var with gamma)
+and `ey-s-2` (dir+range+lbp-rg) to the color channels reaches **63.7%** at H=1024,
+EN=3, ep=16. Best config: `--encoding ey-b,ey-a,ey-h,ey-s-1,ey-s-2`.
 
-```
-H=64, EN=1, ep=10:
-  ey-b         (4 members) → 46.9%
-  ey-a         (4 members) → 46.7%
-  ey-c         (4 members) → 46.3%   ← same pattern, ~same result
-  ey-b+ey-a    (8 members) → 51.2%   ← diversity helps
-  ey-b+ey-a+ey-c (12 members) → 52.0% ← +0.8pp, just more members
-  latest (ey-b+ey-a+ey-h, 11 members) → 54.5%  ← real diversity (ey-h adds hue+contrast)
-  ey-b+ey-a+ey-c+ey-h (15 members) → 55.1% ← more members, same ceiling
-```
+**ey-a, ey-b, ey-c are the same pattern permuted** over R/G/B. After two in the
+system, the third adds nothing. `ey-c` is retained for compatibility but not used
+in `latest`.
 
-**At full scale (H=1024, EN=3, splitVN=2), more encodings hurt:**
-```
-  latest           (33 members) → 61.4%  ← BEST
-  ey-b+ey-a+ey-c+ey-h (45 members) → 61.2%  ← worse, extra channels add noise
-```
+**`latest` now has 17 members** (4+4+3+3+3 = ey-b + ey-a + ey-h + ey-s-1 + ey-s-2).
+The previous combination of color-only channels plateaued at 61.4%. Spatial channels
+(dir/range/lbp-rg) provide orthogonal information that pushes past the ceiling.
 
 ### 9.2 Practical Guidance
 
-- **`latest` (ey-b+ey-a+ey-h, 11 members) is the empirically optimal combination.**
-- Adding `ey-c` does not help — its pattern is already covered by ey-a and ey-b.
-- `ey-h` (hue + contrast + color difference) provides genuinely orthogonal signal.
-- Beyond ∼62% eval, no combination of encodings helps — the ceiling is architectural.
+- **Best config:** `--encoding ey-b,ey-a,ey-h,ey-s-1,ey-s-2` (17 members, 63.7%).
+- **splitVN=2 hurts spatial channels** — they need full bit resolution. Use no splitVN.
+- **Sweet spot:** H=512, EN=3, ep=16 → 63.5% at 251s (vs 63.7% at 538s for H=1024).
+- **`ey-c` is redundant** with ey-a and ey-b (same pattern, different channel).
+
+## 10. New Encodings Implemented (2026-07-14)
+
+Five new thermometer-compatible encodings were added to `ki-encoding.h`,
+extending the set from 9 to 14 total. All are orthogonal to the existing set:
+
+| Encoding | Level formula | Orthogonal to | Status |
+|----------|--------------|---------------|--------|
+| `sqrt` | `√(pv/255) × max_lev` | exp, up | ✅ implemented |
+| `cbrt` | `∛(pv/255) × max_lev` | exp, sqrt | ✅ implemented |
+| `gamma` | `(pv/255)^0.45 × max_lev` | exp, up, down | ✅ implemented |
+| `tri` | `min(pv, 255-pv) × 2 / 255 × max_lev` | sig, mid | ✅ implemented |
+| `inv-exp` | `(1−e^(−4·pv/255)) × max_lev` | exp, down | ✅ implemented |
+
+All five use the same thermometer output as the existing encodings:
+`((uint32_t)1 << level) - 1`. Only the `level` computation differs.
 
 ---
 

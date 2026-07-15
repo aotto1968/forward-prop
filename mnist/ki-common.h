@@ -135,6 +135,12 @@ static inline int ki_color_parse(const char *tok) {
 
         {"edge",  COLOR_EDGE},
         {"bin",   COLOR_BIN},
+        {"lbp",   COLOR_LBP},
+        {"dog",   COLOR_DOG},
+        {"var",   COLOR_VAR},
+        {"dir",   COLOR_DIR},
+        {"range", COLOR_RANGE},
+        {"lbp-rg", COLOR_LBP_RG},
 
         {"cl",    COLOR_CL},
         {"cm",    COLOR_CM},
@@ -237,7 +243,7 @@ typedef struct {
     char   predictions[256]; 			/* --predictions FILE: export per-sample predictions (for vis-errors) */
     char   export_merge_scores[256];   		/* --export-merge-scores DIR: save per-member scores to archive files */
     char   export_scores[256]; 			/* --export-scores FILE: save per-sample scores (10×int64+uint8) */
-    char   export_neurons[256]; 		/* --export-neurons FILE: save gb_buf+Target+Offset für Adam-on-neurons */
+    char   export_neurons[256]; 		/* --export-neurons FILE: save gb_buf+Target+Offset for Adam-on-neurons */
     float  lr;              			/* Step size (--lr, default: 0.05) */
     float  lr_min;          			/* Min LR fraction (--lr-min, default: 0.1) */
     int    lr_step;         			/* round(aa.lr * (1<<OT_PRECISION)) */
@@ -247,7 +253,7 @@ typedef struct {
     int    warmup_epochs;   			/* --warmup N: linear warmup epochs (default: 2) */
     int    step_mode;       			/* enum step_mode: Algorithmus (siehe oben) */
     int    stepN;           			/* --step-const N: const step value (0=use lr, default: 0) */
-    float  step_power;      			/* --step-power F: exponent für pow/cos (default: 0.7) */
+    float  step_power;      			/* --step-power F: exponent for pow/cos (default: 0.7) */
     float  gap_k;           			/* --gap-k K: exp(-K×gap) step damping when train/eval gap widens (default: 0.0=off) */
     int    err_rollback;    			/* --err-rollback: rollback targets when err increases (default: 0) */
     int    ensembleN;       			/* --ensembleN N: independent W0 copies (default: 1) */
@@ -326,8 +332,8 @@ static const struct _comp_entry _comp_table[] = {
     {"--seed-file",                     "file",  NULL},
     {"--seed-splitmix",                 "none",  NULL},
     {"--seed-member",                   "token", "once const incr"},
-    {"--channels",                      "token", "packed full flat auge diff rgb grey h s c edge bin mnist r g b"},
-    {"--encoding",                      "token", "raw lin7 lin8 down up mid log exp sig"},
+    {"--channels",                      "token", "packed full flat auge diff rgb grey h s c edge bin lbp dog var dir range lbp-rg mnist r g b"},
+    {"--encoding",                      "token", "raw lin7 lin8 down up mid log exp sig sqrt cbrt gamma tri inv-exp"},
     {"--export-merge-scores",           "dir",   NULL},
     {"--export-scores",                 "file",  NULL},
     {"--export-neurons",                "file",  NULL},
@@ -401,7 +407,7 @@ static inline void ki_parse_args(int argc, char *argv[]) {
             printf("  ---------------------------------------------------------------------------------------------\n");
             printf("  --channels [packed|full,][flat,]...                                             (default: %s)\n", color_str());
             printf("                    See --help-channels for details\n");
-            printf("  --encoding [raw|lin7|lin8|down|up|mid|log|exp|sig]                              (default: latest)\n");
+            printf("  --encoding [raw|lin7|lin8|down|up|mid|log|exp|sig|sqrt|cbrt|gamma|tri|inv-exp]  (default: latest)\n");
             printf("                    See --help-encoding for details\n");
             printf("  --export-merge-scores DIR  Save per-member scores to archive files for merge    (default: none)\n");
             printf("  --export-scores FILE  Save per-sample ensemble scores (10×int64+uint8)          (default: none)\n");
@@ -442,13 +448,19 @@ static inline void ki_parse_args(int argc, char *argv[]) {
             printf("  c             : contrast (Sobel-Kanten auf LUM)\n");
             printf("  edge          : edges via Sobel on Y luminance\n");
             printf("  bin           : Otsu-binarized Y luminance (filled black/white regions)\n");
+            printf("  lbp           : Local Binary Pattern (8-bit texture descriptor)\n");
+            printf("  dog           : Difference of Gaussians (band-pass edges)\n");
+            printf("  var           : Local variance (texture roughness)\n");
+            printf("  dir           : Gradient direction (8-bin quantized, 0..248)\n");
+            printf("  range         : Local range (max-min in 3×3, texture sharpness)\n");
+            printf("  lbp-rg        : LBP on RG opponent (chromatic texture)\n");
 #else
             printf("  mnist         : single grayscale block (only available channel)\n");
 #endif
             exit(1);   /* INTENTIONAL: non-zero so run-research.sh suppresses logging */
         } else if (strcmp(argv[i], "--help-encoding") == 0) {
-            printf("--encoding [raw|lin7|lin8|down|up|mid|log|exp|sig]                              (default: latest)\n");
-            printf("  OR <color>=<enc>[width] per-block: r=exp16,g=lin8   \n");
+            printf("--encoding [raw|lin7|lin8|down|up|mid|log|exp|sig|sqrt|cbrt|gamma|tri|inv-exp]  (default: latest)\n");
+            printf("  OR <color>=<enc>[width] per-block: r=exp16,g=lin8,b=sqrt8   \n");
             printf("  Pixel-Encoding pro Farb-Block.\n");
             printf("  Optionaler Width-Suffix: exp16=16-bit, lin32=32-bit\n");
             printf("  8-bit  : 4 px/cont, 8 Stufen (default, exp=0.3)\n");
@@ -462,15 +474,24 @@ static inline void ki_parse_args(int argc, char *argv[]) {
             printf("  log    logarithmic,\n");
             printf("  exp    exponential,\n");
             printf("  sig    sigmoid.\n");
+            printf("  sqrt   square root (soft exp, bright emphasis).\n");
+            printf("  cbrt   cube root (even softer, natural image curve).\n");
+            printf("  gamma  gamma 0.45 (tunable power-law, complementary).\n");
+            printf("  tri    triangle (peaks at midtones, zero at ends).\n");
+            printf("  inv-exp inverse exp (dark emphasis, 1−e^(−k·pv)).\n");
             printf("  raw    no encoding (raw 8-bit bytes).\n");
             printf("\n");
             printf("  Dataset group aliases (multi-block, per --encoding):\n");
 #if KI_DATASET_ID == 1  /* CIFAR-10 */
-            printf("    latest : 11 members: ey-b + ey-a + ey-h\n");
+            printf("    latest   : 17 members: ey-b + ey-a + ey-h + ey-s-1 + ey-s-2\n");
+            printf("    latest-2 : 11 members: optimized via sweep (gamma/sqrt/cbrt)\n");
             printf("    ey-a   : b=up,al=down,am=sig,ap=sig (4 blocks)\n");
             printf("    ey-b   : g=up,bl=down,bm=sig,bp=sig (4 blocks)\n");
             printf("    ey-c   : r=up,cl=down,cm=sig,cp=sig (4 blocks)\n");
             printf("    ey-h   : h=down,c=exp,gb=sig        (3 blocks)\n");
+            printf("    ey-s   : lbp=up,dog=sig,var=exp     (3 spatial/texture)\n");
+            printf("    ey-s-1 : lbp=gamma,dog=sig,var=exp  (3 spatial, gamma variant)\n");
+            printf("    ey-s-2 : dir=down,range=log,lbp-rg=mid (3 spatial: dir+range+lbp-rg)\n");
             printf("    top-rgb: r=down,g=down,b=down       (3 blocks)\n");
 #else  /* MNIST, Fashion-MNIST (grayscale) */
             printf("    latest : exp8 (single block)\n");
@@ -1094,9 +1115,9 @@ static const char *mode_str(void) {
     }
 }
 
-/* ── Color-String (für --help und SETUP Header) ────────────────── */
-/* Gibt "R,G,B", "packed:MNIST", "LUM,RG,BY" etc. aus der
- * aa.channel Maske + aa.packedB Flag.
+/* ── Color-String (for --help and SETUP Header) ────────────────── */
+/* Returns "R,G,B", "packed:MNIST", "LUM,RG,BY" etc. from the
+ * aa.channel mask + aa.packedB flag.
  * Uses static buffer for snprintf, similar to mode_str(). */
 __attribute__((unused))
 static const char *color_str(void) {
@@ -1122,8 +1143,8 @@ static const char *color_str(void) {
     return _color_buf;
 }
 
-/* ── Encoding-String (für --help und TRAINING Header) ──────────── */
-/* Gibt "R=exp8,G=lin8,B=sig8" etc. aus — immer aus enc_array[].
+/* ── Encoding-String (for --help and TRAINING Header) ──────────── */
+/* Returns "R=exp8,G=lin8,B=sig8" etc. — always from enc_array[].
  * For MNIST without color prefix: "exp8,sig8".
  * Nutzt static buffer, analog zu color_str(). */
 __attribute__((unused))

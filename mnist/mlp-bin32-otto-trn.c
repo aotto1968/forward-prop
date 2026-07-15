@@ -248,7 +248,7 @@
     } \
 } while (0)
 
-/* ── Forward declaration für ki_Member (Struct-Definition folgt
+/* ── Forward declaration for ki_Member (struct definition follows
  * below, ki_evaluate_member is declared before) ───────────── */
 typedef struct ki_Member ki_Member;
 
@@ -269,7 +269,7 @@ ki_Args aa = {
     .ensembleN          = 1,
     .splitVN            = 1,
     .splitHN            = 1,
-    .channel            = KI_DEFAULT_COLOR,/* CIFAR: r+g+b, MNIST: nur Block 0 */
+    .channel            = KI_DEFAULT_COLOR,/* CIFAR: r+g+b, MNIST: only block 0 */
     .packedB            = 1,
     .enc_default_type   = -1,    /* -1 = auto: falls bin→KI_ENC_LIN7, otherwise KI_ENC_RAW */
     .enc_default_width  = KI_ENC_WIDTH_DEFAULT,
@@ -357,6 +357,13 @@ static __attribute__((unused)) uint32_t *load_input(const uint8_t *X_raw,
         ki_compute_edge(px, 32, 32);
         /* Otsu-Binarisierung auf Y → filled black/white */
         ki_compute_binary(px, 32, 32);
+        /* Spatial channels: LBP, DoG, Variance, Direction, Range */
+        ki_compute_lbp(px, 32, 32);
+        ki_compute_dog(px, 32, 32);
+        ki_compute_var(px, 32, 32);
+        ki_compute_dir(px, 32, 32);
+        ki_compute_range(px, 32, 32);
+        ki_compute_lbp_rg(px, 32, 32);
         for (int i = 0; i < n_enc; i++) {
             int col = (int)aa.enc_array[i].color;
             int typ = (int)aa.enc_array[i].type;
@@ -378,7 +385,7 @@ static __attribute__((unused)) uint32_t *load_input(const uint8_t *X_raw,
     }
     return Xb;
 #else
-    /* ── MNIST: immer über enc_array ── */
+    /* ── MNIST: always via enc_array ── */
     int n_enc = aa.enc_count > 0 ? aa.enc_count : 1;
     int enc_w[KI_ENC_MAX], enc_pack[KI_ENC_MAX], enc_shift[KI_ENC_MAX];
     int enc_nc[KI_ENC_MAX], enc_type[KI_ENC_MAX];
@@ -422,7 +429,7 @@ static __attribute__((unused)) uint32_t *load_input(const uint8_t *X_raw,
 #endif
 
 /* Global channel parameters set after --channels in main) */
-static int eff_colors = 3;              /* number of aktiver Channels / members (popcount mask) */
+static int eff_colors = 3;              /* number of active channels / members (popcount mask) */
 static int active_chans[KI_ENC_MAX];    /* Mapping: seq_idx → Bit-Position (0..8) */
 #define BITS       32
 #define N_CLASSES KI_NCLASSES
@@ -463,7 +470,7 @@ static int active_chans[KI_ENC_MAX];    /* Mapping: seq_idx → Bit-Position (0.
 
 
 /* ═══════════════════════════════════════════════════════════════════
- * H0 FORWARD — MAJ3 über nc_local Container
+ * H0 FORWARD — MAJ3 over nc_local containers
  * ═══════════════════════════════════════════════════════════════════
  * in_offset: Start des Slices im Input-Array
  * nc_local:  number of Container for this member
@@ -816,13 +823,13 @@ static void scores_otto_from_gb(int s, int H_local,
  *
  * Members serial outer.*stays in L1 cache for
  * all N samples. Reduces D1mr from 55% to <1% (previously: samples
- * außen → each member switch evicted target from cache).
+ * outer → each member switch evicted target from cache).
  *
  * Uses ki_Member structs directly (no more flat arrays).
  * Each member has its own W0, target, offset, slc_off.
  *
  * Votes buffer.*for.*samples).
- * n_cont:   Container per sample (NC, für Stride)
+ * n_cont:   Containers per sample (NC, for stride)
  * Returns:  number of korrekt klassifizierte Samples
  */
 
@@ -1028,7 +1035,7 @@ typedef struct ki_Member {
     int H_local;            /* Neurons (H, no vertical split) */
     int NC_slice;           /* Container (KI_NC / splitHN) */
     int slc_off;            /* Input-Offset for this member */
-    int vi;                 /* Encoding-Index in enc_array (für stats/debug) */
+    int vi;                 /* Encoding-Index in enc_array (for stats/debug) */
 
     /* Pointer to external data (Member owns target+offset, shares W0) */
     const uint32_t *W0;     /* W0 row start (geteilt oder eigen) */
@@ -1179,7 +1186,7 @@ static void ki_member_destroy(ki_Member *m) {
 static inline uint32_t h0_to_gb(uint32_t h0);
 
 /* ── Member: Test-Eval gb vorberechnen (once) ───────────────── *
- * Writes directly to gb_buf_te, no h0_buf needed (nur gb wird
+ * Writes directly to gb_buf_te, no h0_buf needed (only gb is
  * needed for evaluate_member). */
 static void ki_member_compute_gb_te(ki_Member *m, const uint32_t *X,
                                      int N, int n_cont) {
@@ -1629,13 +1636,13 @@ static inline int ki_member_batch_correct(ki_Member *m, const uint8_t *y, int N,
  *
  * Members serial outer.*stays in L1 cache for
  * all N samples. Reduces D1mr from 55% to <1% (previously: samples
- * außen → each member switch evicted target from cache).
+ * outer → each member switch evicted target from cache).
  *
  * Uses ki_Member structs directly (no more flat arrays).
  * Each member has its own W0, target, offset, slc_off.
  *
  * Votes buffer.*for.*samples).
- * n_cont:   Container per sample (NC, für Stride)
+ * n_cont:   Containers per sample (NC, for stride)
  * Returns:  number of korrekt klassifizierte Samples
  */
 static int ki_evaluate_member(const uint32_t *X, const uint8_t *y, int N,
@@ -1769,7 +1776,7 @@ static void print_member_debug(ki_Member **members, int active_members,
         int max_h = (int)((pos_max % (size_t)_hv) / (size_t)V);
         int max_v = (int)(pos_max % (size_t)V);
 
-        /* ── Independent eval (nur dieser Member) ───────────── */
+        /* ── Independent eval (this member only) ───────────── */
         int member_ok = 0;
         if (N > 0) {
             int64_t *sc = (int64_t *)calloc((size_t)N * KI_NCLASSES, sizeof(int64_t));
@@ -2724,7 +2731,7 @@ int main(int argc, char *argv[]) {
         }
         printf("\n");
 
-        /* All corrections (immer — no more early stop) */
+        /* All corrections (always — no more early stop) */
         int member_err_sum = 0;
         for (int _b = 0; _b < active_members; _b++) {
             ki_Member *mem = members[_b];
@@ -2796,7 +2803,7 @@ int main(int argc, char *argv[]) {
     /* Final evaluation: with CURRENT targets (after last correction) */
     int trn_ok=0, evl_ok = 0;
     uint8_t *pred_eval = aa.predictions[0] ?  (uint8_t *)ki_xcalloc((size_t)total_eval, sizeof(uint8_t)) : NULL ;
-    /* pred_tr für debug_confusion — ki_evaluate_member nur 1× auf trainN */
+    /* pred_tr for debug_confusion — ki_evaluate_member only once on trainN */
     uint8_t *pred_tr = (aa.debug_confusion && !aa.dry_run)
         ? (uint8_t *)ki_xcalloc((size_t)total_train, sizeof(uint8_t)) : NULL ;
     if (!aa.dry_run) {
@@ -2814,7 +2821,7 @@ int main(int argc, char *argv[]) {
                             members, active_members, (int)n_cont, evl_ok);
     }
 
-    /* ── Export per-sample scores (für L2 training) ─────────── */
+    /* ── Export per-sample scores (for L2 training) ─────────── */
     if (aa.export_scores[0] && !aa.dry_run) {
         int total_all_ex = total_train + total_eval;
         int n_m = (active_members > 0) ? active_members : 1;
@@ -2856,7 +2863,7 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    /* ── Export per-sample gb_buf + Target + Offset (für Adam-on-neurons) ── */
+    /* ── Export per-sample gb_buf + Target + Offset (for Adam-on-neurons) ── */
     if (aa.export_neurons[0] && !aa.dry_run) {
         int total_all_ex = total_train + total_eval;
         int n_m = (active_members > 0) ? active_members : 1;

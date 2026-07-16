@@ -285,6 +285,7 @@ typedef struct {
     int    debug_confusion_all; 		/* --debug-confusion-matrix-all: every epoch */
     char   filter_str[128];    			/* --filter "0,1,airplan,cat": raw string */
     int    filter_mask;        			/* computed bitmask from filter_str (0 = no filter) */
+    int    xforms;             			/* bitmask of active transforms (--xform, default: 1<<KI_XFORM_ID) */
 } ki_Args;
 /* ── Global args (defined in each main .c file) ────────────── */
 extern ki_Args aa;
@@ -354,6 +355,7 @@ static const struct _comp_entry _comp_table[] = {
     {"--debug-class-voting-all",        "none",  NULL},
     {"--debug-confusion-matrix",        "none",  NULL},
     {"--debug-confusion-matrix-all",    "none",  NULL},
+    {"--xform",              "token", "all id hflip vflip dflip1 dflip2 rot90 rot180 rot270"},
     {"--filter",                        "token", NULL},
     {"--shuffle",                       "none",  NULL},
     {"--help",                          "none",  NULL},
@@ -361,6 +363,7 @@ static const struct _comp_entry _comp_table[] = {
     {"--help-encoding",                 "none",  NULL},
     {"--help-filter",                   "none",  NULL},
     {"--help-target-init",              "none",  NULL},
+    {"--help-xform",                    "none",  NULL},
     {NULL, NULL, NULL}
 };
 
@@ -429,6 +432,8 @@ static inline void ki_parse_args(int argc, char *argv[]) {
             printf("  --debug-h0        Per-neuron debug                                              (default: off)\n");
             printf("  --debug-class-voting?-all?  Member × Class accuracy table (end only)            (default: off)\n");
             printf("  --debug-confusion-matrix?-all?  Confusion matrix table (end only)               (default: off)\n");
+            printf("  --xform id,hflip,..,rot90,rot180,rot270  Image transform ensemble                (default: id)\n");
+            printf("                    See --help-xform for details\n");
             printf("  --filter #,#,... or name,name,...  Restrict to specific classes only            (default: none)\n");
             printf("                    See --help-filter for class names\n");
             printf("  --shuffle         Shuffle data before train/eval split                          (default: off)\n");
@@ -516,6 +521,21 @@ static inline void ki_parse_args(int argc, char *argv[]) {
             printf("  prior   : per-class constant = class_count[k] (no per-neuron variation).\n");
             printf("  laplace : count +1 per entry (additive smoothing, clamped to n_k).\n");
             printf("  dampen  : count >> 1 (shape preserved, peak/valley amplitude halved).\n");
+            exit(1);   /* INTENTIONAL: non-zero so run-research.sh suppresses logging */
+        } else if (strcmp(argv[i], "--help-xform") == 0) {
+            printf("--xform id,hflip,vflip,dflip1,dflip2,rot90,rot180,rot270  Image transforms  (default: id)\n");
+            printf("  id      : identity (original image)\n");
+            printf("  hflip   : horizontal flip (left-right mirror)\n");
+            printf("  vflip   : vertical flip (top-bottom mirror)\n");
+            printf("  dflip1  : main diagonal flip (transpose)\n");
+            printf("  dflip2  : anti-diagonal flip\n");
+            printf("  rot90   : rotate 90° clockwise\n");
+            printf("  rot180  : rotate 180° (= hflip+vflip combined)\n");
+            printf("  rot270  : rotate 270° clockwise (= rot90⁻¹)\n");
+            printf("  Multiple transforms create independent members with own W0+Target.\n");
+            printf("  Each transform is applied BEFORE channel computation.\n");
+            printf("  Example: --xform id,hflip  → 2× member multiplier\n");
+            printf("           --xform all       → 8× member multiplier\n");
             exit(1);   /* INTENTIONAL: non-zero so run-research.sh suppresses logging */
         } else if (strcmp(argv[i], "--completion") == 0) {
             if (i + 1 < argc && argv[i+1][0] == '-' && argv[i+1][1] == '-') {
@@ -686,6 +706,45 @@ static inline void ki_parse_args(int argc, char *argv[]) {
             }
             if (aa.filter_mask == 0) {
                 fprintf(stderr, "[ERROR] --filter: at least one class required\n");
+                exit(1);
+            }
+        } else if (strcmp(argv[i], "--xform") == 0 && i + 1 < argc) {
+            const char *val = argv[++i];
+            aa.xforms = 0;
+            char xbuf[128];
+            strncpy(xbuf, val, sizeof(xbuf) - 1);
+            xbuf[sizeof(xbuf) - 1] = '\0';
+            for (char *tok = strtok(xbuf, ","); tok; tok = strtok(NULL, ",")) {
+                while (*tok == ' ' || *tok == '\t') tok++;
+                if (ki_strcasecmp(tok, "all") == 0 || ki_strcasecmp(tok, "alle") == 0) {
+                    aa.xforms |= (1 << KI_XFORM_ID) | (1 << KI_XFORM_HFLIP)
+                               | (1 << KI_XFORM_VFLIP) | (1 << KI_XFORM_DFLIP1)
+                               | (1 << KI_XFORM_DFLIP2) | (1 << KI_XFORM_ROT90)
+                               | (1 << KI_XFORM_ROT180) | (1 << KI_XFORM_ROT270);
+                } else if (ki_strcasecmp(tok, "id") == 0) {
+                    aa.xforms |= (1 << KI_XFORM_ID);
+                } else if (ki_strcasecmp(tok, "hflip") == 0) {
+                    aa.xforms |= (1 << KI_XFORM_HFLIP);
+                } else if (ki_strcasecmp(tok, "vflip") == 0) {
+                    aa.xforms |= (1 << KI_XFORM_VFLIP);
+                } else if (ki_strcasecmp(tok, "dflip1") == 0) {
+                    aa.xforms |= (1 << KI_XFORM_DFLIP1);
+                } else if (ki_strcasecmp(tok, "dflip2") == 0) {
+                    aa.xforms |= (1 << KI_XFORM_DFLIP2);
+                } else if (ki_strcasecmp(tok, "rot90") == 0) {
+                    aa.xforms |= (1 << KI_XFORM_ROT90);
+                } else if (ki_strcasecmp(tok, "rot180") == 0) {
+                    aa.xforms |= (1 << KI_XFORM_ROT180);
+                } else if (ki_strcasecmp(tok, "rot270") == 0) {
+                    aa.xforms |= (1 << KI_XFORM_ROT270);
+                } else {
+                    fprintf(stderr, "[ERROR] --xform: unknown '%s'. "
+                            "Valid: all, id, hflip, vflip, dflip1, dflip2, rot90, rot180, rot270\n", tok);
+                    exit(1);
+                }
+            }
+            if (aa.xforms == 0) {
+                fprintf(stderr, "[ERROR] --xform: at least one transform required\n");
                 exit(1);
             }
         } else if (strcmp(argv[i], "--shuffle") == 0) {
@@ -1190,6 +1249,24 @@ static const char *target_init_str(void) {
         case KI_TARGET_DAMPEN:  return "dampen";
         default:                return "?";
     }
+}
+
+/* ── Xform-String (for SETUP Header) ────────────────────────── */
+/* Returns "id,hflip" etc. from aa.xforms bitmask.
+ * Uses static buffer, analog to color_str(). */
+__attribute__((unused))
+static const char *xform_str(void) {
+    static char _xform_buf[64];
+    int pos = 0;
+    for (int x = 0; x < KI_XFORM_COUNT; x++) {
+        if (!(aa.xforms & (1 << x))) continue;
+        if (pos > 0) _xform_buf[pos++] = ',';
+        const char *n = ki_xform_name(x);
+        while (*n && pos < (int)sizeof(_xform_buf) - 2) _xform_buf[pos++] = *n++;
+    }
+    if (pos == 0) { _xform_buf[pos++] = 'i'; _xform_buf[pos++] = 'd'; }
+    _xform_buf[pos] = '\0';
+    return _xform_buf;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════

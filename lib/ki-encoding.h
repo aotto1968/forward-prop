@@ -35,6 +35,107 @@ extern "C" {
 #endif
 
 /* ═══════════════════════════════════════════════════════════════════════
+ * IMAGE TRANSFORMS — Spiegelung an Achsen + Diagonalen
+ * ═══════════════════════════════════════════════════════════════════════
+ * Applied to raw uint8 pixel buffer BEFORE channel computation + encoding.
+ * All transforms operate on square images (w == h).
+ * CIFAR: 3 planes × 32×32, MNIST/Fashion: 1 plane × 28×28.
+ * buffer: [plane0(w×h)][plane1(w×h)][...], each plane row-major.
+ */
+enum ki_xform {
+    KI_XFORM_ID      = 0,   /* Identity */
+    KI_XFORM_HFLIP   = 1,   /* Horizontal flip (left↔right) */
+    KI_XFORM_VFLIP   = 2,   /* Vertical flip (top↔bottom) */
+    KI_XFORM_DFLIP1  = 3,   /* Main diagonal flip (transpose) */
+    KI_XFORM_DFLIP2  = 4,   /* Anti-diagonal flip */
+    KI_XFORM_ROT90   = 5,   /* Rotate 90° clockwise */
+    KI_XFORM_ROT180  = 6,   /* Rotate 180° (hflip+vflip) */
+    KI_XFORM_ROT270  = 7,   /* Rotate 270° clockwise (≡ rot90⁻¹) */
+    KI_XFORM_COUNT   = 8
+};
+
+/* ── Xform short name for display ──────────────────────────────── */
+static inline const char *ki_xform_name(int xf) {
+    static const char *names[] = {
+        [KI_XFORM_ID]     = "id",
+        [KI_XFORM_HFLIP]  = "hflip",
+        [KI_XFORM_VFLIP]  = "vflip",
+        [KI_XFORM_DFLIP1] = "dflip1",
+        [KI_XFORM_DFLIP2] = "dflip2",
+        [KI_XFORM_ROT90]  = "rot90",
+        [KI_XFORM_ROT180] = "rot180",
+        [KI_XFORM_ROT270] = "rot270",
+    };
+    if (xf >= 0 && xf < KI_XFORM_COUNT) return names[xf];
+    return "?";
+}
+
+/* ── Apply image transform to raw uint8 pixel buffer ──────────────
+ * out:   output buffer (may alias in if xform=ID)
+ * in:    input buffer
+ * w, h: image width and height (must be square for diagonal flips)
+ * ch:    number of color planes (3 for CIFAR, 1 for MNIST/Fashion)
+ * xf:    ki_xform enum value
+ * The buffer layout is: [plane0[w*h]][plane1[w*h]]...[planeN[w*h]]
+ * Each plane is row-major. */
+static inline void ki_xform_raw(uint8_t *restrict out,
+                                 const uint8_t *restrict in,
+                                 int w, int h, int ch, int xf) {
+    if (xf == KI_XFORM_ID) {
+        if (out != in) memcpy(out, in, (size_t)(w * h * ch));
+        return;
+    }
+    int stride = w * h;  /* pixels per plane */
+    for (int pl = 0; pl < ch; pl++) {
+        const uint8_t *src = in + (size_t)pl * (size_t)stride;
+        uint8_t *dst = out + (size_t)pl * (size_t)stride;
+        switch (xf) {
+        case KI_XFORM_HFLIP:
+            for (int y = 0; y < h; y++) {
+                for (int x = 0; x < w; x++)
+                    dst[y * w + x] = src[y * w + (w - 1 - x)];
+            }
+            break;
+        case KI_XFORM_VFLIP:
+            for (int y = 0; y < h; y++) {
+                memcpy(dst + y * w, src + (h - 1 - y) * w, (size_t)w);
+            }
+            break;
+        case KI_XFORM_DFLIP1:
+            /* Transpose: out[y][x] = in[x][y] (main diagonal) */
+            for (int y = 0; y < h; y++)
+                for (int x = 0; x < w; x++)
+                    dst[y * w + x] = src[x * w + y];
+            break;
+        case KI_XFORM_DFLIP2:
+            /* Anti-diagonal: out[y][x] = in[w-1-x][h-1-y] */
+            for (int y = 0; y < h; y++)
+                for (int x = 0; x < w; x++)
+                    dst[y * w + x] = src[(w - 1 - x) * w + (h - 1 - y)];
+            break;
+        case KI_XFORM_ROT90:
+            /* Rotate 90° clockwise: out[y][x] = in[x][h-1-y] */
+            for (int y = 0; y < h; y++)
+                for (int x = 0; x < w; x++)
+                    dst[y * w + x] = src[x * w + (h - 1 - y)];
+            break;
+        case KI_XFORM_ROT180:
+            /* Rotate 180°: out[y][x] = in[h-1-y][w-1-x] (= hflip(vflip)) */
+            for (int y = 0; y < h; y++)
+                for (int x = 0; x < w; x++)
+                    dst[y * w + x] = src[(h - 1 - y) * w + (w - 1 - x)];
+            break;
+        case KI_XFORM_ROT270:
+            /* Rotate 270° clockwise (= rot90⁻¹): out[y][x] = in[w-1-x][y] */
+            for (int y = 0; y < h; y++)
+                for (int x = 0; x < w; x++)
+                    dst[y * w + x] = src[(w - 1 - x) * w + y];
+            break;
+        }
+    }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
  * ENCODING TYPES
  * ═══════════════════════════════════════════════════════════════════════ */
 

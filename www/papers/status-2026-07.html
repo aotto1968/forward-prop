@@ -44,6 +44,8 @@
         <nav>
             <ul>
                 <li><a href="../index.html">Home</a></li>
+                <li><a href="mnist-number.html">MNIST</a></li>
+                <li><a href="cifar-10.html">CIFAR-10</a></li>
                 <li><a href="status-2026-07.html">Status Report</a></li>
                 <li><a href="https://github.com/aotto1968/forward-prop">Source</a></li>
             </ul>
@@ -58,12 +60,14 @@
 <p style="font-size:1.1rem; color:var(--mid-gray); margin-bottom:2rem;"><em>DRAM-native Classification via Bit-Logic Operations</em></p>
 
 <div style="background:linear-gradient(135deg, rgba(46,125,50,0.12), rgba(46,125,50,0.04)); border:2px solid #2e7d32; border-radius:8px; padding:1rem 1.5rem; margin-bottom:2rem;">
-    <strong style="font-size:1rem;">📈 Update July 15, 2026 — <a href="cifar-10.html" style="color:#2e7d32;">63.7% CIFAR-10 via Spatial Channels</a></strong>
+    <strong style="font-size:1rem;">📈 Update July 17, 2026 — <a href="mnist-number.html" style="color:#2e7d32;">MNIST Research Paper Published</a> + <a href="cifar-10.html" style="color:#2e7d32;">CIFAR-10 at 64.4%</a></strong>
     <ul style="margin:0.5rem 0 0 1.2rem; font-size:0.9rem;">
-        <li><strong>63.7% CIFAR-10</strong> — Spatial channels (LBP, DoG, Variance, Direction, Range, Color-LBP) break the 62% ceiling. 17-member ensemble: ey-b+ey-a+ey-h+ey-s-1+ey-s-2</li>
-        <li><strong>H=512, ep=16 reaches 63.5%</strong> — New cost/benefit sweet spot at 272s. Spatial channels need more epochs but don't need splitVN</li>
-        <li><strong>5 new encodings</strong> — sqrt, cbrt, gamma, tri, inv-exp added to ki-encoding.h (14 total). See <code>--help-encoding</code></li>
-        <li><strong>splitVN=2 hurts spatial channels</strong> — AND2 filter discards too much direction/range signal. Use no splitVN with spatial members</li>
+        <li><strong><a href="mnist-number.html">MNIST paper</a></strong> — Comprehensive documentation of all MNIST results (99.0% data-limited, 97.9% full split). Core finding: <strong>xforms replace ensembleN</strong> — 7× faster at identical accuracy</li>
+        <li><strong>64.4% CIFAR-10</strong> — Geometric transform ensemble (<code>--xform all</code>: hflip, vflip, dflip1, dflip2) adds +0.5-1.3pp over previous best. Each xform = independent members with own W0+target</li>
+        <li><strong>New member dimension:</strong> <code>ENSEMBLE × XFORM × COLOR × HN</code>. Structured variation beats stochastic ensembleN by +0.4pp at equal member count</li>
+        <li><strong>63.7% CIFAR-10 via spatial channels</strong> (July 14 record) — LBP, DoG, Variance, Direction, Range, Color-LBP break the 62% ceiling</li>
+        <li><strong>H=512, ep=10 reaches 64.3% at 304s</strong> — New cost/benefit sweet spot with xforms</li>
+        <li><strong>All 5 transforms pixel-identical</strong> — single-xform runs produce identical accuracy</li>
         <li><strong>Full report:</strong> <a href="cifar-10.html">CIFAR-10 Paper →</a></li>
     </ul>
 </div>
@@ -303,6 +307,7 @@ parameters (H, epochs, VN, etc.) match — the tool validates this and rejects m
 <tr><td>Multi-member Hebbian works (like Otto)</td><td>✅ 11 members, <code>--encoding latest</code></td></tr>
 <tr><td>Decoupled ensemble workflow</td><td>✅ <code>--export-merge-scores</code> + <code>merge-ensemble</code> — train/merge fully independent</td></tr>
 <tr><td>Repository consolidated under <code>otto-score-ifc/</code></td><td>✅ Complete</td></tr>
+<tr><td><a href="mnist-number.html">MNIST research paper</a> — xforms replace ensembleN (7× faster)</td><td>✅ Published 2026-07-17</td></tr>
 </table>
 
 <p style="margin-top:2rem;"><em>Andreas Otto — July 2026</em><br>

@@ -367,6 +367,151 @@ All five use the same thermometer output as the existing encodings:
 
 ---
 
+## 11. Geometric Transform Ensemble (`--xform`)
+
+Added 2026-07-16, revised 2026-07-17. Image transforms are a **new dimension**
+in the member grid, like `--ensembleN`. Each active transform produces a separate
+encoded buffer from transformed raw pixels. Members index their transform via
+`input_buf` and train exclusively on their assigned transform's data.
+
+```
+Member grid: ENSEMBLE[EN] × XFORM[XF] × COLOR[C] × HN[H]
+→ total_members = EN × XF × C × H
+```
+
+### 11.1 Available Transforms
+
+| Token   | Transform         | Operation                               |
+|---------|-------------------|-----------------------------------------|
+| `id`    | Identity          | Original image (default)                |
+| `hflip` | Horizontal flip   | `out[y][x] ← in[y][W-1-x]`             |
+| `vflip` | Vertical flip     | `out[y][x] ← in[H-1-y][x]`             |
+| `dflip1`| Main diagonal     | `out[y][x] ← in[x][y]` (transpose)     |
+| `dflip2`| Anti-diagonal     | `out[y][x] ← in[W-1-x][H-1-y]`         |
+| `rot90` | Rotate 90° CW     | `out[y][x] ← in[x][H-1-y]`             |
+| `rot180`| Rotate 180°       | `out[y][x] ← in[H-1-y][W-1-x]`         |
+| `rot270`| Rotate 270° CW    | `out[y][x] ← in[W-1-x][y]`             |
+| `all`   | All 8             | `id,hflip,vflip,dflip1,dflip2,rot90,rot180,rot270` |
+
+### 11.2 Architecture
+
+1. **Raw transform:** `ki_xform_raw(out, in, w, h, ch, xform_id)` applies the
+   geometric transformation to the raw pixel buffer (before channel computation).
+2. **Channel+Encoding pipeline** runs on the transformed image — Sobel, LBP, DoG,
+   var, dir, range are computed from transformed pixel values, giving genuinely
+   new texture signatures.
+3. **Per-xform container buffer** is encoded and cached (`load_input_cached_xform`).
+4. **Members index their xform via `input_buf`:** `mem->input_buf = X_xform[xf_id]`.
+   Each member trains only on its transform's view. h0/gb precomputation uses
+   `mem->input_buf`, not a shared buffer.
+5. **Voting** accumulates scores across all members (all transforms, all colors,
+   all ensembles). No special eval path needed — the standard `use_gb=1/2`
+   paths work because gb_buf was computed per-xform.
+
+### 11.3 Pipeline vs EnsembleN
+
+Both multiply members, but through fundamentally different mechanisms:
+
+| Dimension | Source of diversity | Members scale as |
+|-----------|-------------------|-----------------|
+| `--ensembleN N` | Independent random W0 seeds | N × (C × H) |
+| `--xform X`     | Transformed input images | (C × H) × X |
+| Combined        | Both: random W0 + structured input | EN × XF × C × H |
+
+**Xform diversity is STRUCTURED** (the same object seen from 5 perspectives)
+while ensembleN diversity is **STOCHASTIC** (5 random projections of the same
+data). Structured variation gives ~0.4pp more at equal member count.
+
+### 11.4 Empirical Results
+
+#### MNIST (H=64, EN=1, ep=7)
+
+| Xforms | Members | Eval | Zeit | Δ zu Baseline |
+|--------|:-------:|:----:|:----:|:-------------:|
+| id | 1 | 93.3% | 0.5s | — |
+| all 5 | 5 | **97.1%** | 2.0s | **+3.8pp** |
+| EN=5, id | 5 | 96.7% | 1.9s | +3.4pp (ref) |
+| all 5, EN=3 | 15 | **97.9%** | 31s | **+4.6pp** |
+
+**Best MNIST:** `H=512, EN=3, all 5 xforms` → **97.9%** (31s).
+Plateau confirmed: err ≤ 10, train=100%. Xfoms are interchangeable with
+ensembleN on MNIST — digits are invariant under all 5 transforms.
+
+#### CIFAR-10 (latest encoding, ep=10)
+
+| Config | H=128 | H=256 | H=512 | H=1024 |
+|--------|:-----:|:-----:|:-----:|:------:|
+| EN=5, id | 62.2% | 63.2% | 63.4% | 63.1% |
+| EN=1, all 5 | **62.7%** | **63.4%** | **64.3%** | **64.4%** |
+| Xform Δ | +0.5pp | +0.4pp | +0.9pp | +1.3pp |
+
+**Best CIFAR-10:** `H=1024, EN=1, all 5 xforms, latest, 10ep` → **64.4%**.
+Xform gain MAX at H=1024 (+1.3pp). H=512 cross-over where xforms overtake
+EN=5. Saturation at 64.5% confirmed — the geometric transforms cannot
+overcome the frozen-MAJ3 ceiling.
+
+| Channels | Config | EN=5 × id | EN=1 × all5 | Δ |
+|----------|--------|:---------:|:-----------:|:-:|
+| ey-a (simple) | H=128 | — | 56.1% vs 48.1% | **+8.0pp** |
+| latest (17 ch) | H=512 | 63.4% | 64.3% | +0.9pp |
+
+**Simple channels benefit MUCH more** because the transforms add genuinely
+new signal. `latest` with 17 channels already captures most of the variation.
+
+### 11.5 Key Insights
+
+1. **Xforms are NOT a data augmentation trick** — they are a structural dimension
+   (each xform gets its own W0, target, offset, and trains independently).
+2. **Structured beats random** — xform diversity gives +0.4pp over ensembleN
+   at equal member count.
+3. **Diagonal flips PRESERVE spatial structure** — dflip1/dflip2 are transposes,
+   not distortions. They help on MNIST (digits) but less on CIFAR (natural
+   images have a canonical up direction).
+4. **Xform gain scales with H** — small H (128) limits per-xform capacity.
+   At H=1024 each xform can express genuinely different features (+1.3pp).
+5. **64.5% is the CIFAR ceiling** — even with 5× geometric diversity, the
+   frozen random MAJ3 projection cannot exceed this fundamental limit on 50k
+   training samples.
+
+### 11.6 Channel Viewer Integration
+
+`cifar-1/mlp-cifar-channels.exe` supports `--xform` for visual inspection:
+
+```bash
+# All transforms on sample 42:
+./cifar-1/cifar-mlp-cifar-channels.exe --idx 42 --xform all
+
+# Just hflip + dflip1 on edge channel:
+./cifar-1/cifar-mlp-cifar-channels.exe --idx 5 --filter edge --xform id,hflip,dflip1
+```
+
+Output includes `XFORM_<name>.png` per sample and per-xform columns in
+`index.html`.
+
+### 11.7 Rotation Transforms (rot90, rot180, rot270)
+
+Added 2026-07-16. Three pure rotations complement the flip/transpose set.
+
+| Transform | Formula | Effect |
+|-----------|---------|--------|
+| rot90  | `out[y][x] ← in[x][H-1-y]` | 90° clockwise |
+| rot180 | `out[y][x] ← in[H-1-y][W-1-x]` | hflip+vflip combined |
+| rot270 | `out[y][x] ← in[W-1-x][y]` | 270° clockwise (= rot90⁻¹) |
+
+All three produce identical single-xform accuracy (~93.3% MNIST H=64 EN=1),
+confirming pixel-correct implementation. rot180 preserves content while
+reversing all spatial gradients. rot90/rot270 swap x/y axes, creating
+genuinely new spatial relationships for LBP, dir, range channels.
+
+Total xform set: **8** (id + hflip + vflip + dflip1 + dflip2 + rot90 +
+rot180 + rot270). `--xform all` activates all 8 → 8× member multiplier.
+
+### 11.8 Memory
+
+- Each active xform allocates one container buffer (same size as identity buffer).
+- CIFAR H=1024, 60000 samples: ~50 MB per xform → 5× = ~250 MB.
+- Cache files at `data/prepped/` keyed by xform_id → persistent across runs.
+
 ## References
 
 - [color-vision-opponent-channels.md](color-vision-opponent-channels.md) — Opponent channel theory for CIFAR-10

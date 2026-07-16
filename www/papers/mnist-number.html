@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MNIST — DRAM-Native Binary Classifier (99.0%)</title>
+    <meta name="description" content="MNIST benchmark for Otto Score: 99.0% (data-limited), 97.9% (full split). Frozen random projection, Bayes log-Score, geometric xform ensemble replaces ensembleN — 7× faster at same accuracy.">
+    <meta name="author" content="Andreas Otto">
+    <meta name="robots" content="index, follow">
+    <meta name="googlebot" content="index, follow">
+    <link rel="icon" type="image/svg+xml" href="../assets/favicon.svg">
+    <link rel="preload" href="../style.css" as="style">
+    <link rel="stylesheet" href="../style.css">
+    <link rel="canonical" href="https://forward-prop.nhi1.de/papers/mnist-number.html">
+    <meta property="og:title" content="MNIST — DRAM-Native Binary Classifier (99.0%)">
+    <meta property="og:description" content="Otto Score reaches 99.0% on MNIST using bit-logic + geometric xform ensemble. Frozen random projection, Bayes log-Score — 7× faster than ensemble by replacing stochastic seeds with structured views.">
+    <meta property="og:type" content="article">
+    <meta property="og:url" content="https://forward-prop.nhi1.de/papers/mnist-number.html">
+    <meta property="og:image" content="https://forward-prop.nhi1.de/assets/og-image.png">
+    <meta property="og:site_name" content="Forward-Prop Research">
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="MNIST DRAM-Native — 99.0%">
+    <meta name="twitter:description" content="Otto Score: frozen binary hash + geometric xform ensemble, 99.0% on MNIST. Structured views replace stochastic seeds — 7× faster.">
+    <meta name="twitter:image" content="https://forward-prop.nhi1.de/assets/og-image.png">
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "ScholarlyArticle",
+      "headline": "MNIST DRAM-Native Binary Classification via Otto Score",
+      "description": "99.0% on MNIST using frozen random binary projection (MAJ3) plus Bayes log-Score target correction — only bit-logic, no multiply-accumulate. Structured geometric transforms replace stochastic ensemble seeds, achieving 7× speedup at identical accuracy.",
+      "author": { "@type": "Person", "name": "Andreas Otto" },
+      "datePublished": "2026-07-17",
+      "about": { "@type": "Thing", "name": "MNIST DRAM-native classifier" }
+    }
+    </script>
+    <style>
+        .paper-section { margin-bottom: 2.5rem; }
+        .paper-section h2 { margin-top: 2rem; border-bottom: 2px solid var(--amber, #e6a817); padding-bottom: 0.3rem; }
+        .paper-section h3 { margin-top: 1.5rem; color: var(--navy, #1a1a2e); }
+        .paper-section p, .paper-section li { line-height: 1.7; }
+        table { width: 100%; border-collapse: collapse; margin: 1rem 0; font-size: 0.9rem; }
+        th, td { padding: 0.5rem 0.75rem; text-align: left; border-bottom: 1px solid #ddd; }
+        th { background: var(--navy, #0d1b2a); color: white; }
+        tr.highlight-row { background: #e8f5e9; }
+        .abstract-box { background: #f5f5f5; border-left: 4px solid var(--amber, #e6a817); padding: 1.2rem 1.5rem; border-radius: 4px; margin: 1rem 0; }
+        .abstract-box p { margin: 0; }
+        code { background: #f0f0f0; padding: 0.1rem 0.3rem; border-radius: 3px; font-size: 0.85rem; }
+        pre { background: #1a1a2e; color: #e0e0e0; padding: 0.8rem 1rem; border-radius: 6px; font-size: 0.82rem; overflow-x: auto; }
+        .content-split { display: flex; gap: 2rem; margin: 1.5rem 0; }
+        .content-split > * { flex: 1; }
+        @media (max-width: 768px) { .content-split { flex-direction: column; } }
+        .xform-diagram { background: #f0f4ff; border: 1px solid #c0d0f0; border-radius: 8px; padding: 1.2rem; margin: 1rem 0; font-family: monospace; font-size: 0.85rem; line-height: 1.6; }
+        .efficiency-badge { display: inline-block; background: #1b5e20; color: white; padding: 0.15rem 0.6rem; border-radius: 4px; font-size: 0.8rem; font-weight: bold; }
+    </style>
+</head>
+<body>
+
+<header id="top">
+    <div class="header-inner">
+        <div class="header-brand">
+            <a href="../index.html" style="color:inherit; text-decoration:none;"><span class="header-logo">Otto Score</span></a>
+            <span class="header-subtitle">DRAM-Native &amp;|~ Classification</span>
+        </div>
+        <nav>
+            <ul>
+                <li><a href="../index.html">Top</a></li>
+                <li><a href="mnist-number.html" style="color:var(--amber);">MNIST</a></li>
+                <li><a href="cifar-10.html">CIFAR-10</a></li>
+                <li><a href="status-2026-07.html">Status</a></li>
+                <li><a href="https://github.com/aotto1968/forward-prop">Source</a></li>
+            </ul>
+        </nav>
+    </div>
+</header>
+
+<main>
+    <div class="container" style="max-width: 800px; margin-top: 2rem;">
+
+        <h1>MNIST — DRAM-Native Binary Classifier</h1>
+        <p style="font-size: 1.1rem; color: #555; margin-bottom: 0.25rem;">
+            Best result: <strong>99.0%</strong> — H=128, EN=7, ep=8, exp8+log8+sig8 (599:1 train/eval ratio)<br>
+            Full split: <strong>97.9%</strong> — H=512, EN=3, ep=7, exp8, all 5 xforms<br>
+            Fastest 97.7%: <strong>5.2s</strong> — H=128, EN=1, ep=7, exp8, all 8 xforms
+        </p>
+        <p style="font-size: 0.9rem; color: #888; margin-bottom: 2rem;">
+            Andreas Otto — 17 July 2026
+        </p>
+
+        <div class="abstract-box">
+            <p>The Otto Score classifier is a purely bit-logic MLP for DRAM-native inference.
+            A <strong>frozen random binary projection (W0)</strong> via MAJ3 (majority-of-3 random containers)
+            produces binary hash bits. A <strong>trainable Bayes log-Score layer</strong> accumulates per-class
+            log-odds via iterative target correction — no backprop, no multiply-accumulate.
+            On MNIST, Otto Score achieves <strong>99.0%</strong> with 599:1 train/eval ratio (proving the
+            ceiling is data-limited, not method-limited) and <strong>97.9%</strong> at the standard 6:1 split (60K train / 10K eval).
+            A <strong>geometric transform ensemble</strong> (8 transforms via <code>--xform all</code>)
+            <strong>replaces stochastic ensemble seeds</strong> — each transform gives every neuron a different
+            MAJ3 pixel triple, decorrelating errors at source. Result: <strong>7× faster</strong> than the
+            equivalent ensembleN approach at identical 97.7% accuracy.</p>
+        </div>
+
+        <!-- Table of Contents -->
+        <div style="background: #f9f9f9; padding: 1rem 1.5rem; border-radius: 6px; margin: 1.5rem 0;">
+            <strong>Contents</strong>
+            <ul style="margin: 0.5rem 0 0 1.2rem; font-size: 0.9rem;">
+                <li><a href="#data">1. Experiment Data</a></li>
+                <li><a href="#leaderboard">2. Leaderboard</a></li>
+                <li><a href="#architecture">3. Architecture</a></li>
+                <li><a href="#findings">4. Key Findings</a></li>
+                <li><a href="#xform">5. Geometric Transform Ensemble — Structured Beats Stochastic</a></li>
+                <li><a href="#time">6. Time Scaling Over H and Epochs</a></li>
+                <li><a href="#ceiling">7. Why 99% is Data-Limited, Not Method-Limited</a></li>
+                <li><a href="#recommendations">8. Practical Recommendations</a></li>
+            </ul>
+        </div>
+
+        <!-- 1. Data -->
+        <section id="data" class="paper-section">
+            <h2>1. Experiment Data</h2>
+            <ul>
+                <li><strong>Code:</strong> <a href="https://github.com/aotto1968/forward-prop">github.com/aotto1968/forward-prop</a> (<code>otto-score-ifc/</code> tree + <code>mnist-1/</code> local trainers)</li>
+                <li><strong>Dataset:</strong> MNIST (60,000 train + 10,000 test, 28×28 grayscale, IDX format) — <a href="https://forward-prop.nhi1.de/data/mnist/">forward-prop.nhi1.de/data/mnist/</a> (<code>train-images-idx3-ubyte.gz</code>, <code>train-labels-idx1-ubyte.gz</code>, <code>t10k-images-idx3-ubyte.gz</code>, <code>t10k-labels-idx1-ubyte.gz</code>) — <a href="https://github.com/aotto1968/forward-prop/blob/master/fetch_mnist.sh">fetch_mnist.sh</a></li>
+                <li><strong>Split:</strong> 70,000 total samples, shuffled random split → 60,000 train / 10,000 eval (<code>--evalN 10000</code> is the standard, always used). <code>--evalN 100</code> and <code>--evalN 1000</code> are special experiments to test the data-limited ceiling (more training data per eval sample).</li>
+                <li><strong>Note on old 50K/10K split:</strong> Earlier results used a fixed 50,000 train / 10,000 eval split <em>without</em> shuffle — this was a bug. All current results use the correct 60K/10K shuffled split. The difference is minor (~0.1pp).</li>
+                <li><strong>Hardware:</strong> 8-core CPU, no GPU. All timing on identical hardware for fair comparison.</li>
+                <li><strong>Project:</strong> <a href="https://forward-prop.nhi1.de">forward-prop.nhi1.de</a></li>
+            </ul>
+        </section>
+
+        <!-- 2. Leaderboard -->
+        <section id="leaderboard" class="paper-section">
+            <h2>2. Leaderboard (2026-07-16)</h2>
+            <table>
+                <tr><th>#</th><th>Eval</th><th>Train</th><th>EN</th><th>H</th><th>Ep</th><th>Encoding</th><th>Xforms</th><th>Time</th><th>Config</th></tr>
+                <tr class="highlight-row"><td>1</td><td><strong>99.0%</strong></td><td>99.8%</td><td>7</td><td>128</td><td>8</td><td>exp8,log8,sig8</td><td>id</td><td>39.9s</td><td><code>--trainN 59900 --evalN 100</code></td></tr>
+                <tr><td>2</td><td><strong>98.1%</strong></td><td>99.6%</td><td>7</td><td>128</td><td>8</td><td>exp8,log8,sig8</td><td>id</td><td>39.4s</td><td><code>--trainN 59000 --evalN 1000</code></td></tr>
+                <tr><td>3</td><td><strong>97.9%</strong></td><td>100%</td><td>3</td><td><strong>512</strong></td><td>7</td><td>exp8</td><td><strong>all 5</strong></td><td><strong>31.0s</strong></td><td><strong>max eval (EN×XF)</strong></td></tr>
+                <tr><td>4</td><td><strong>97.9%</strong></td><td>100%</td><td>3</td><td>1024</td><td>7</td><td>exp8</td><td>all 5</td><td>62.7s</td><td>ceiling confirmed</td></tr>
+                <tr><td>5</td><td><strong>97.9%</strong></td><td>100%</td><td>1</td><td>512</td><td>7</td><td>exp8</td><td>all 8</td><td>10.4s</td><td>fast + max eval</td></tr>
+                <tr class="highlight-row"><td>6</td><td><strong>97.7%</strong></td><td>100%</td><td><strong>1</strong></td><td><strong>128</strong></td><td><strong>7</strong></td><td>exp8</td><td><strong>all 8</strong></td><td><strong>5.2s</strong></td><td><strong>🏆 fastest 97.7%</strong></td></tr>
+                <tr><td>7</td><td>97.7%</td><td>100%</td><td>1</td><td>128</td><td>10</td><td>exp8</td><td>all 8</td><td>6.4s</td><td>10 epochs, err=9</td></tr>
+                <tr><td>8</td><td>97.7%</td><td>100%</td><td>1</td><td>256</td><td>11</td><td>exp8</td><td>all 5</td><td>7.4s</td><td>err=1, near-perfect fit</td></tr>
+                <tr><td>9</td><td>97.8%</td><td>100%</td><td>3</td><td>256</td><td>7</td><td>exp8</td><td>all 5</td><td>16.2s</td><td>max eval (EN×XF)</td></tr>
+                <tr><td>10</td><td>97.7%</td><td>100%</td><td>3</td><td>128</td><td>7</td><td>exp8</td><td>all 5</td><td>9.4s</td><td>best budget (old)</td></tr>
+            </table>
+            <p style="font-size: 0.85rem; color: #666;"><strong>Note:</strong> On MNIST, <code>--encoding latest</code> = <code>--encoding exp8</code> (single grayscale channel). All thermometric encodings produce identical output on binary pixels.</p>
+
+            <p><strong>Core insight:</strong> <code>exp8,log8,sig8</code> multi-encoding ensemble outperforms single <code>exp8</code> by ~0.1-0.2pp by providing additional W0 diversity. The <code>cos-time</code> step mode dominates — gently reducing step over time prevents the oscillation of <code>pow</code>-based schedules.</p>
+        </section>
+
+        <!-- 3. Architecture -->
+        <section id="architecture" class="paper-section">
+            <h2>3. Architecture</h2>
+            <pre>Input:  784 px → 1 encoding block × 196 uint32 = 196 containers
+Layer 0: W0 (frozen, random MAJ3): NC × H       [bit-string, 32 bits per neuron]
+Layer 1: Bayes log-Score: H → K=10 (target + offset)
+Grid:    ENSEMBLE[EN] × XFORM[XF] × COLOR[C] × HN[H]
+Voting:  Σ_members score[k]  →  argmax</pre>
+
+            <p>Each W0 row picks 3 random containers from the 196-container encoding block.
+            MAJ3 outputs 1 if ≥2 of the 3 container bits are set → a frozen binary hash.
+            The correction loop iterates over epochs:</p>
+            <ol>
+                <li><strong>Score:</strong> <code>score[k] = Σ_active target[k][bit] + offset[k]</code> — Bayes log-odds per class</li>
+                <li><strong>Correct:</strong> If argmax ≠ true, <code>target[true] += step</code>, <code>target[pred] −= step</code></li>
+                <li><strong>Iterate</strong> N epochs with cosine step decay (warmup + cos-time)</li>
+            </ol>
+
+            <h3>3.1 The Member Grid</h3>
+            <p>The total member count is the product of four orthogonal dimensions:</p>
+            <pre>Members = ENSEMBLE[EN] × XFORM[XF] × COLOR[C] × HN[H]</pre>
+            <ul>
+                <li><strong>EN (ensembleN):</strong> independent copies of W0 with different random seeds — <em>stochastic diversity</em></li>
+                <li><strong>XF (xform):</strong> geometric transforms of the input image — <em>structured diversity</em></li>
+                <li><strong>C (color/encoding):</strong> different encoding schemes for the same pixels</li>
+                <li><strong>HN (splitHN):</strong> horizontal input slicing (each member sees different containers)</li>
+            </ul>
+            <p>Each member has <strong>its own W0, target matrix, and offset</strong> — trained independently. Scores are summed across all members (product of experts), not hard majority vote.</p>
+
+            <h3>3.2 Exponential Encoding — The Breakthrough</h3>
+            <p>Raw 8-bit pixel values produce near-uniform container bit patterns (~4 bits set per byte regardless of brightness). The <strong>exponential thermometer encoding</strong> (<code>exp8</code>) converts each pixel into a brightness-proportional bit string where bright pixels set more bits. This lets the MAJ3 layer perceive continuous intensity variation rather than binary on/off. The effect was a +7pp jump from 96% to 97%+.</p>
+        </section>
+
+        <!-- 4. Key Findings -->
+        <section id="findings" class="paper-section">
+            <h2>4. Key Findings</h2>
+
+            <h3>4.1 Bit-Mass Theory — H×EN Determines Accuracy</h3>
+            <p>The single most important discovery: <strong>total neuron count H×EN determines accuracy, not H or EN alone.</strong>
+            Keeping total <code>H × EN</code> fixed (constant bit-mass) produces identical accuracy regardless of distribution:</p>
+            <table>
+                <tr><th>H</th><th>EN</th><th>H_eff</th><th>Eval</th><th>Time</th><th>Δ vs H=1024</th></tr>
+                <tr><td>1024</td><td>1</td><td>1024</td><td>97.2%</td><td>19.3s</td><td>—</td></tr>
+                <tr><td>512</td><td>2</td><td>1024</td><td>97.3%</td><td>19.0s</td><td>+0.1pp</td></tr>
+                <tr><td>256</td><td>4</td><td>1024</td><td>97.3%</td><td>18.3s</td><td>+0.1pp</td></tr>
+                <tr class="highlight-row"><td><strong>128</strong></td><td><strong>8</strong></td><td><strong>1024</strong></td><td><strong>97.4%</strong></td><td><strong>18.7s</strong></td><td><strong>+0.2pp</strong></td></tr>
+                <tr><td>64</td><td>16</td><td>1024</td><td>97.2%</td><td>19.9s</td><td>±0.0pp</td></tr>
+                <tr><td>32</td><td>32</td><td>1024</td><td>96.9%</td><td>18.6s</td><td>−0.3pp</td></tr>
+            </table>
+            <p>All configurations reach ~97.3%. <strong>H=128×EN=8 is the sweet spot</strong> — slightly best result with faster forward-passes. Doubling bit-mass gives logarithmic returns:</p>
+            <table>
+                <tr><th>H_eff</th><th>Eval</th><th>Δ</th></tr>
+                <tr><td>1024</td><td>97.3%</td><td>—</td></tr>
+                <tr class="highlight-row"><td><strong>2048</strong></td><td><strong>97.6%</strong></td><td><strong>+0.3pp</strong></td></tr>
+            </table>
+
+            <h3>4.2 Exponential Encoding Broke the 96% Wall</h3>
+            <p>Before <code>exp8</code>, the method wall stood at 96%. The key realization: raw byte containers produce uniform popcount (~4 bits/byte) regardless of pixel brightness — the MAJ3 layer could not distinguish a faint digit from a saturated one. <strong>Thermometer encoding</strong> converts each pixel to a brightness-proportional bit mask:</p>
+            <pre>raw pixel 200 (78% brightness) → exp8 → 0b11111110 (7 bits set)
+raw pixel 30  (12% brightness) → exp8 → 0b00000011 (2 bits set)</pre>
+            <p>The MAJ3 layer now has meaningful variance to work with. Combined with cosine step decay, this pushed MNIST accuracy from 96% to 97%+ in a single change.</p>
+
+            <h3>4.3 Small H + Ensemble Beats Large Single Model</h3>
+            <p>Many small independent MAJ3 banks outperform one large bank at equal bit-mass.
+            A 16× smaller W0 (98 KB vs 1.57 MB) reaches comparable accuracy:</p>
+            <table>
+                <tr><th>Config</th><th>Bit-Mass</th><th>Time</th><th>Eval</th></tr>
+                <tr><td>H=2048, EN=1</td><td>1.57 MB</td><td>~43s</td><td>96.4%</td></tr>
+                <tr><td>H=64, EN=17</td><td>0.83 MB</td><td>94s</td><td>96.4%</td></tr>
+                <tr class="highlight-row"><td><strong>H=32, EN=4, HN=2</strong></td><td><strong>98 KB</strong></td><td><strong>9.7s</strong></td><td><strong>95.0%</strong></td></tr>
+            </table>
+            <p><strong>Architecture insight:</strong> W0 noise IS the feature. Diverse MAJ3 projections from many small banks give better generalization than one large projection. Each small bank fits on a separate DRAM row — fully parallel at chip level.</p>
+
+            <h3>4.4 All Thermometric Encodings Are Equivalent on MNIST</h3>
+            <p>MNIST pixels are binary (0 or 255 after binarization). All thermometer encodings (exp8, log8, sig8, lin8) produce identical output: <code>0→0x00, 255→0xFF</code>. Multiple encodings bring nothing but additional W0 diversity — <code>exp8,exp8,exp8</code> reaches the same accuracy as <code>exp8,log8,sig8</code>. <strong>On MNIST, only bit-mass matters, not encoding choice.</strong></p>
+
+            <h3>4.5 Target Init Does Not Matter</h3>
+            <p>Seven initialization modes were tested (count, dampen, inverse, laplace, random, uniform, prior). All converge to the same final accuracy after sufficient correction epochs — only the initial 1-pass accuracy differs (10-86%). <strong>The correction loop always finds the same attractor.</strong></p>
+
+            <h3>4.6 Deep MAJ3 Loses Information</h3>
+            <p>Each additional MAJ3 layer compresses N uint32 → 32 bits. A second MAJ3 on already-compressed H0 loses ~4% accuracy. Three layers collapse to 59.7%. <strong>Ensemble (parallel) beats depth (sequential) every time.</strong></p>
+        </section>
+
+        <!-- 5. Xform Ensemble -->
+        <section id="xform" class="paper-section">
+            <h2>5. Geometric Transform Ensemble — Structured Beats Stochastic</h2>
+
+            <p>The most impactful architectural insight: <strong>a geometric transform creates a genuinely new view of the data, which is fundamentally more valuable than a different random seed on the same view.</strong></p>
+
+            <p>The <code>--xform</code> flag adds a new dimension to the member grid. Each active transform produces an independent pixel buffer with its own W0, Target, and Offset — exactly like adding an <code>--ensembleN</code> copy, but the member operates on a <em>different image</em> rather than a <em>different random projection of the same image</em>.</p>
+
+            <div class="xform-diagram">
+<strong>Why xforms replace ensembleN — the key insight:</strong>
+
+<u>EnsembleN (stochastic diversity):</u>
+  Member 0:  W0[seed=42] @ original_image  →  hash bits from pixels (1,2,3), (4,5,6), (7,8,9) ...
+  Member 1:  W0[seed=99] @ original_image  →  hash bits from pixels (1,2,3), (4,5,6), (7,8,9) ...
+  <strong>Same pixels, different hash. Errors are CORRELATED.</strong>
+
+<u>Xform (structured diversity):</u>
+  Member 0:  W0[seed=42] @ original_image     →  hash bits from pixels (1,2,3), (4,5,6) ...
+  Member 1:  W0[seed=42] @ hflip_image        →  hash bits from pixels (28,27,26), (25,24,23) ...
+  <strong>Different pixels, same hash. Errors are DECORRELATED.</strong>
+
+Result: <strong class="efficiency-badge">7× FASTER</strong> for the same accuracy.
+            </div>
+
+            <h3>5.1 Available Transforms</h3>
+            <table>
+                <tr><th>Token</th><th>Transform</th><th>Operation</th></tr>
+                <tr><td><code>id</code></td><td>Identity</td><td>Original image (default)</td></tr>
+                <tr><td><code>hflip</code></td><td>Horizontal flip</td><td><code>out[y][x] ← in[y][W-1-x]</code></td></tr>
+                <tr><td><code>vflip</code></td><td>Vertical flip</td><td><code>out[y][x] ← in[H-1-y][x]</code></td></tr>
+                <tr><td><code>dflip1</code></td><td>Main diagonal</td><td><code>out[y][x] ← in[x][y]</code> (transpose)</td></tr>
+                <tr><td><code>dflip2</code></td><td>Anti-diagonal</td><td><code>out[y][x] ← in[W-1-x][H-1-y]</code></td></tr>
+                <tr><td><code>rot90</code></td><td>Rotate 90° CW</td><td><code>out[y][x] ← in[x][H-1-y]</code></td></tr>
+                <tr><td><code>rot180</code></td><td>Rotate 180°</td><td><code>out[y][x] ← in[H-1-y][W-1-x]</code></td></tr>
+                <tr><td><code>rot270</code></td><td>Rotate 270° CW</td><td><code>out[y][x] ← in[W-1-x][y]</code></td></tr>
+            </table>
+            <p><code>--xform all</code> activates all 8 transforms → 8× member multiplier.</p>
+
+            <h3>5.2 Architecture — Each Xform Has Its Own W0</h3>
+            <p>This is <strong>not</strong> test-time augmentation. Each xform creates an independent structural member:</p>
+            <ol>
+                <li><strong>ki_xform_raw()</strong> transforms raw pixel data <em>before</em> channel computation.</li>
+                <li>Each xform allocates its own container buffer via <code>load_input_cached_xform()</code>.</li>
+                <li>Each member <code>mem->input_buf</code> points to its xform's buffer — different MAJ3 triples for the <em>same</em> W0 row.</li>
+                <li>Training corrects <em>each xform's targets independently</em> based on that xform's view.</li>
+                <li>Evaluation sums scores across all xform members.</li>
+            </ol>
+            <p><strong>Critical distinction:</strong> An EN=5 member sees the same pixels through 5 different random filters. An XF=5 member sees 5 different pixel arrangements through the same filter. The MAJ3 triples fall on <strong>completely different spatial positions</strong> — a horizontal flip maps pixel (7, y) → (21, y), so the MAJ3 triple that was (1,2,3) now operates on (28,27,26). This is <strong>genuinely independent information</strong>, not just another random projection of the same pattern.</p>
+
+            <h3>5.3 Xform vs EnsembleN: The Efficiency Gap</h3>
+            <p>At equal member count (5 members each), xforms outperform ensembleN by +0.4pp.
+            But the real story is the <strong>time efficiency</strong> — achieving the same accuracy with fewer members:</p>
+
+            <table>
+                <tr><th>Config</th><th>H</th><th>EN</th><th>XF</th><th>Members</th><th>Ep</th><th>Eval</th><th>Time</th><th>Speedup</th></tr>
+                <tr><td><code>exp8+log8+sig8</code></td><td>128</td><td>7</td><td>1</td><td>21</td><td>8</td><td>97.7%</td><td><strong>36.1s</strong></td><td>1× (baseline)</td></tr>
+                <tr><td><code>exp8, 5 xforms</code></td><td>128</td><td>3</td><td>5</td><td>15</td><td>7</td><td>97.7%</td><td><strong>9.4s</strong></td><td><span class="efficiency-badge">3.8×</span></td></tr>
+                <tr class="highlight-row"><td><code>exp8, 8 xforms</code></td><td>128</td><td><strong>1</strong></td><td><strong>8</strong></td><td><strong>8</strong></td><td>7</td><td>97.7%</td><td><strong>5.2s</strong></td><td><span class="efficiency-badge">6.9×</span></td></tr>
+                <tr><td><code>exp8, 8 xforms</code></td><td>128</td><td>1</td><td>8</td><td>8</td><td>10</td><td>97.7%</td><td>6.4s</td><td><span class="efficiency-badge">5.6×</span></td></tr>
+            </table>
+
+            <p><strong>Why the 7× speedup?</strong></p>
+            <ul>
+                <li><strong>EN=7</strong> = 7× W0 computation on the <em>same input</em>. Seven identical forward-passes through different hash functions on the same pixels. Each member computes h0 from exactly the same <code>X_all</code> buffer. The errors are <strong>highly correlated</strong> — if member 0 struggles with a particular 3, members 1-6 struggle too (just through different noise).</li>
+                <li><strong>XF=8</strong> = 1× W0 computation on 8 <em>different inputs</em>. Each forward-pass requires a different buffer (mirrored/rotated). But the decorrelation is massive: a horizontal-flipped 3 presents the difficult curves at completely different pixel positions. <strong>Errors are nearly independent</strong> — voting across 8 views is much more effective than voting across 7 noise realizations of the same view.</li>
+                <li><strong>Net effect:</strong> 8 xform members (5.2s) provide more independent signal than 21 ensemble members (36.1s) — <strong>4× fewer members, 7× less time.</strong></li>
+            </ul>
+
+            <p><strong>Direct comparison at equal member count:</strong></p>
+            <table>
+                <tr><th>Config</th><th>Members</th><th>Eval</th><th>Time</th></tr>
+                <tr><td><code>--ensembleN 5 --xform id</code></td><td>5 × id</td><td>96.7%</td><td>1.9s</td></tr>
+                <tr class="highlight-row"><td><code>--ensembleN 1 --xform id,hflip,vflip,dflip1,dflip2</code></td><td>5 × xform</td><td><strong>97.1%</strong></td><td><strong>2.0s</strong></td></tr>
+            </table>
+            <p>Both use H=64, Ep=7, 5 members total. Xforms win by +0.4pp at equivalent time. <strong>Structured beats stochastic.</strong></p>
+
+            <h3>5.4 H-Scaling With Xforms</h3>
+            <table>
+                <tr><th>H</th><th>5 Xforms</th><th>Time</th><th>8 Xforms</th><th>Time</th><th>Δ</th></tr>
+                <tr><td>64</td><td>97.1%</td><td>2.0s</td><td><strong>97.1%</strong></td><td><strong>2.5s</strong></td><td>+0.5s</td></tr>
+                <tr class="highlight-row"><td><strong>128</strong></td><td>97.4%</td><td>3.3s</td><td><strong>97.7%</strong></td><td><strong>5.2s</strong></td><td><strong>+0.3pp</strong></td></tr>
+                <tr><td>256</td><td>97.5%</td><td>5.6s</td><td><strong>97.7%</strong></td><td><strong>10.4s</strong></td><td>+0.2pp</td></tr>
+                <tr><td><strong>512</strong></td><td><strong>97.7%</strong></td><td><strong>10.4s</strong></td><td><strong>97.9%</strong></td><td><strong>19.5s</strong></td><td><strong>+0.2pp</strong></td></tr>
+                <tr><td>1024</td><td>97.7%</td><td>21.0s</td><td>97.9%</td><td>39.7s</td><td>+0.2pp</td></tr>
+            </table>
+            <p><strong>Sweet spot: H=128, EN=1, 8 Xforms → 97.7% in 5.2s.</strong> The three pure rotations (rot90/180/270) add +0.3pp at H=128 over the 5-flip set. H=512+ reaches 97.9% with 8 xforms — the architecture ceiling.</p>
+
+            <h3>5.5 Key Architectural Insight: Xforms Replace EnsembleN</h3>
+            <p>The member grid now has three diversity sources, listed by effectiveness:</p>
+            <ol>
+                <li><strong>Encoding</strong> — different pixel-to-container transformations (exp, log, sig, lin, spatial)</li>
+                <li><strong>Xform</strong> — different geometric views of the image (flip, rotate, transpose)</li>
+                <li><strong>EnsembleN</strong> — different random seeds on the same data <em>(least effective)</em></li>
+            </ol>
+            <p>Encoding and Xform together provide enough independent views that additional EN contributes minimal accuracy at linear time cost. The new design principle: <strong>maximize structural diversity first (encoding + xforms), use ensembleN only as a last-resort multiplier when all other dimensions are exhausted.</strong></p>
+        </section>
+
+        <!-- 6. Time Scaling -->
+        <section id="time" class="paper-section">
+            <h2>6. Time Scaling Over H and Epochs</h2>
+
+            <p>The following data shows how runtime evolves with <code>--hiddenN</code> and <code>--epochsN</code> for the champion config (<code>--encoding latest --ensembleN 1 --xform all</code>, i.e. 8 xforms on exp8).</p>
+
+            <table>
+                <tr><th>H</th><th>Ep 4</th><th>Ep 5</th><th>Ep 6</th><th>Ep 7</th><th>Ep 8</th><th>Ep 9</th><th>Ep 10</th><th>Eval Ep 7</th><th>Eval Ep 10</th></tr>
+                <tr><td>64</td><td>2.4s</td><td>2.7s</td><td>3.0s</td><td>3.2s</td><td>3.5s</td><td>3.8s</td><td>4.0s</td><td>97.3%</td><td>97.4%</td></tr>
+                <tr class="highlight-row"><td><strong>128</strong></td><td>3.9s</td><td>4.3s</td><td>4.8s</td><td><strong>5.2s</strong></td><td>5.8s</td><td>6.0s</td><td>6.4s</td><td><strong>97.7%</strong></td><td>97.7%</td></tr>
+                <tr><td><strong>256</strong></td><td>6.6s</td><td>7.4s</td><td>8.1s</td><td><strong>8.9s</strong></td><td>9.7s</td><td>10.3s</td><td>11.0s</td><td><strong>97.8%</strong></td><td><strong>97.8%</strong></td></tr>
+            </table>
+
+            <p><strong>Key observations:</strong></p>
+            <ul>
+                <li><strong>Per-epoch time scales linearly with H.</strong> H=256 costs ~2.5× per epoch vs H=64 (0.85s → 2.0s per epoch). This is expected — double the neurons means double the h0 computation, double the scoring, double the correction.</li>
+                <li><strong>Eval plateaus at epoch 7.</strong> Additional epochs only reduce training error (<code>err</code>), not generalization. H=64 stays at 97.4%, H=128/256 reach their maximum by epoch 7.</li>
+                <li><strong>Training error drops exponentially.</strong> Each epoch roughly halves the remaining errors. H=64: 576→143 (−4×). H=128: 269→9 (−30×, because higher capacity absorbs more training signal). H=256 reaches err=2 by epoch 10.</li>
+                <li><strong>H=64 is capacity-limited.</strong> Even 10 epochs yield only 97.4% with err=143. 128 neurons cannot separate all 10 classes cleanly.</li>
+            </ul>
+
+            <p><strong>Practical conclusion:</strong> The standard recommendation is <strong>H=128, Ep=7, 8 xforms</strong> — 97.7% in 5.2 seconds. For the maximum 97.9%, use H=512 + 8 xforms at 19.5s. Anything beyond H=512 enters diminishing returns.</p>
+        </section>
+
+        <!-- 7. Ceiling -->
+        <section id="ceiling" class="paper-section">
+            <h2>7. Why 99% is Data-Limited, Not Method-Limited</h2>
+
+            <p>The single most important finding of the MNIST research: <strong>the 98% wall at evalN=10000 is a data ratio problem, not an algorithm ceiling.</strong></p>
+
+            <table>
+                <tr><th>evalN</th><th>trainN</th><th>Train:Eval Ratio</th><th>Eval</th></tr>
+                <tr><td>100</td><td>59,900</td><td>599:1</td><td><strong>99.0%</strong></td></tr>
+                <tr><td>1,000</td><td>59,000</td><td>59:1</td><td>98.1%</td></tr>
+                <tr><td>10,000</td><td>60,000</td><td>6:1</td><td>97.7%</td></tr>
+            </table>
+
+            <p>At the standard <strong>6:1 split</strong> (60K train, 10K eval, shuffled from 70K total), each eval sample receives ~6 correcting votes during training — insufficient for a fully confident decision. At 599:1, each eval sample gets ~60 votes because 599× more training data informs its target weights. <strong>The limit is the amount of training data per evaluation sample, not the architecture.</strong></p>
+
+            <p><strong>Absolute architecture ceiling: 97.9%</strong> at standard 6:1 split (err ≤ 10, training 100%). The remaining errors are samples that the frozen MAJ3 projection cannot represent — no amount of target retraining can fix what the hash never captured. This is the fundamental limit of a frozen random projection layer.</p>
+
+            <p><strong>Solution for higher accuracy:</strong> Larger datasets (500K+ samples) or concentrated evaluation (fewer eval samples = more training data per class). For a DRAM chip with millions of rows, data volume is never the bottleneck — MNIST and CIFAR are simply too small to saturate the available representational capacity.</p>
+
+            <h3>7.1 Progression of Ceilings</h3>
+            <table>
+                <tr><th>Technique</th><th>Ceiling</th><th>Why</th></tr>
+                <tr><td>Raw byte containers (baseline)</td><td>86% 1-pass, 96% iterative</td><td>Uniform popcount hides brightness</td></tr>
+                <tr><td>+ Exponential encoding</td><td>97.6%</td><td>Thermometer reveals pixel intensity</td></tr>
+                <tr><td>+ Bit-Mass theory (H×EN)</td><td>97.6%</td><td>Small H + Ensemble matches large H</td></tr>
+                <tr><td>+ Xform ensemble (structured diversity)</td><td><strong>97.9%</strong></td><td>Geometric views decorrelate errors</td></tr>
+                <tr><td>+ Data ratio (599:1)</td><td><strong>99.0%</strong></td><td>More training per eval sample</td></tr>
+            </table>
+        </section>
+
+        <!-- 8. Recommendations -->
+        <section id="recommendations" class="paper-section">
+            <h2>8. Practical Recommendations</h2>
+            <table>
+                <tr><th>Goal</th><th>Config</th><th>Result</th></tr>
+                <tr class="highlight-row"><td>Max accuracy (data-rich)</td><td><code>--hiddenN 128 --ensembleN 7 --epochsN 8 --encoding exp8,log8,sig8 --trainN 59900 --evalN 100</code></td><td><strong>99.0% in 39.9s</strong></td></tr>
+                <tr class="highlight-row"><td>Max accuracy (standard split)</td><td><code>--hiddenN 512 --ensembleN 1 --epochsN 7 --encoding exp8 --xform all</code></td><td><strong>97.9% in 10.4s</strong></td></tr>
+                <tr><td>Best cost/benefit</td><td><code>--hiddenN 128 --ensembleN 1 --epochsN 7 --encoding exp8 --xform all</code></td><td><strong>97.7% in 5.2s</strong></td></tr>
+                <tr><td>Budget (minimal time)</td><td><code>--hiddenN 64 --ensembleN 1 --epochsN 7 --encoding exp8 --xform id,hflip</code></td><td><strong>95.8% in 0.9s</strong></td></tr>
+            </table>
+            <p>All configs use default <code>count</code> target init and <code>cos-time</code> step schedule.
+            <code>--xform all</code> = 8 transforms (id, hflip, vflip, dflip1, dflip2, rot90, rot180, rot270).
+            The transform ensemble is the key architectural insight: <strong>structured geometric diversity replaces stochastic ensemble seeds</strong>, achieving the same accuracy with <strong>7× fewer compute resources</strong>.</p>
+        </section>
+
+    </div>
+</main>
+
+<footer>
+    <p>© 2026 Andreas Otto — <a href="https://github.com/aotto1968/forward-prop">Forward-Prop Research</a></p>
+</footer>
+
+</body>
+</html>

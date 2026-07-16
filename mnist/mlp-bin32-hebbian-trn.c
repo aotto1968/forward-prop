@@ -544,6 +544,15 @@ int main(int argc, char *argv[]) {
     }
     printf("\n══╡ TRAINING ╞══  pct=50→30  members=%d  EN=%d  step=cos-time\n",
            total_members, aa.ensembleN);
+    if (aa.dry_run) {
+        printf("\n  (dry-run, exiting)\n");
+        for (int m = 0; m < total_members && m < HEB_MAX_MEM; m++) {
+            free(W0s[m]); free(W1s[m]);
+        }
+        free(X_all);
+        ki_dataset_free(&data);
+        return 1;  /* INTENTIONAL: non-zero so run-research.sh suppresses logging */
+    }
     struct timeval tv0; gettimeofday(&tv0, NULL);
     int ms = 0;
     float acc = 0.0f;

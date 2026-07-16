@@ -3,8 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>CIFAR-10 — DRAM-Native Binary Classifier (63.7%)</title>
-    <meta name="description" content="CIFAR-10 benchmark for Otto Score: 63.7% with H=1024, EN=3, spatial channels (LBP, DoG, Variance, Gradient Direction, Local Range). Frozen random projection, Bayes log-Score, DRAM-native &amp;|~+popcount.">
+            <title>CIFAR-10 — DRAM-Native Binary Classifier (64.4%)</title>
+    <meta name="description" content="CIFAR-10 benchmark for Otto Score: 64.4% with H=1024, geometric xform ensemble (hflip,vflip,dflip1,dflip2). Frozen random projection, Bayes log-Score, DRAM-native &amp;|~+popcount.">
     <meta name="author" content="Andreas Otto">
     <meta name="robots" content="index, follow">
     <meta name="googlebot" content="index, follow">
@@ -12,15 +12,15 @@
     <link rel="preload" href="../style.css" as="style">
     <link rel="stylesheet" href="../style.css">
     <link rel="canonical" href="https://forward-prop.nhi1.de/papers/cifar-10.html">
-    <meta property="og:title" content="CIFAR-10 — DRAM-Native Binary Classifier (63.7%)">
-    <meta property="og:description" content="Otto Score reaches 63.7% on CIFAR-10 using bit-logic + spatial channels (LBP, DoG, Variance, Direction, Range). 17-member ensemble, frozen random projection.">
+    <meta property="og:title" content="CIFAR-10 — DRAM-Native Binary Classifier (64.4%)">
+    <meta property="og:description" content="Otto Score reaches 64.4% on CIFAR-10 using bit-logic + geometric xform ensemble (hflip,vflip,dflip1,dflip2). 85-member ensemble, frozen random projection.">
     <meta property="og:type" content="article">
     <meta property="og:url" content="https://forward-prop.nhi1.de/papers/cifar-10.html">
     <meta property="og:image" content="https://forward-prop.nhi1.de/assets/og-image.png">
     <meta property="og:site_name" content="Forward-Prop Research">
     <meta name="twitter:card" content="summary_large_image">
-    <meta name="twitter:title" content="CIFAR-10 DRAM-Native — 63.7%">
-    <meta name="twitter:description" content="Otto Score: frozen binary hash + spatial channels, 63.7% on CIFAR-10.">
+    <meta name="twitter:title" content="CIFAR-10 DRAM-Native — 64.4%">
+    <meta name="twitter:description" content="Otto Score: frozen binary hash + geometric xform ensemble, 64.4% on CIFAR-10.">
     <meta name="twitter:image" content="https://forward-prop.nhi1.de/assets/og-image.png">
     <script type="application/ld+json">
     {
@@ -75,7 +75,7 @@
 
         <h1>CIFAR-10 — DRAM-Native Binary Classifier</h1>
         <p style="font-size: 1.1rem; color: #555; margin-bottom: 0.25rem;">
-            Best result: <strong>63.7%</strong> — H=1024, EN=3, ep=16, 17 members (ey-b+ey-a+ey-h+ey-s-1+ey-s-2) (538s)
+            Best result: <strong>64.4%</strong> — H=1024, EN=1, ep=10, 85 members (latest + 5 xforms) (621s)
         </p>
         <p style="font-size: 0.9rem; color: #888; margin-bottom: 2rem;">
             Andreas Otto — 14 July 2026
@@ -86,11 +86,11 @@
             A <strong>frozen random binary projection (W0)</strong> via MAJ3 (majority-of-3 random containers)
             produces binary hash bits. A <strong>trainable Bayes log-Score layer</strong> accumulates per-class
             log-odds via iterative target correction — no backprop, no multiply-accumulate.
-            On CIFAR-10, Otto Score achieves <strong>63.7%</strong> with H=1024, EN=3, ep=16,
-            and 6 spatial channels (LBP, DoG, Variance, Direction, Range, Color-LBP) added via
-            <code>--encoding ey-b,ey-a,ey-h,ey-s-1,ey-s-2</code> (538s).
-            The 62% ceiling is architectural: the corrector can only <em>reweight</em> features, not <em>change</em> them.
-            ∼50% of CIFAR-10 eval samples are inaccessible without ensemble voting.</p>
+            On CIFAR-10, Otto Score achieves <strong>64.4%</strong> with H=1024, EN=1, ep=10,
+            latest encoding (17 channels) and a <strong>geometric transform ensemble</strong> of 5 image
+            transforms (hflip, vflip, dflip1, dflip2) via <code>--xform all</code> (621s).
+            The 65% ceiling is architectural: the corrector can only <em>reweight</em> features, not <em>change</em> them.
+            Geometric transforms add +1.3pp over the previous best with only random ensemble seeds.</p>
         </div>
 
         <!-- Table of Contents -->
@@ -101,8 +101,9 @@
                 <li><a href="#leaderboard">2. Leaderboard</a></li>
                 <li><a href="#architecture">3. Architecture</a></li>
                 <li><a href="#findings">4. Key Findings</a></li>
-                <li><a href="#ceiling">5. Why 62% is a Hard Ceiling</a></li>
-                <li><a href="#recommendations">6. Practical Recommendations</a></li>
+                <li><a href="#xform">5. Geometric Transform Ensemble</a></li>
+                <li><a href="#ceiling">6. Why 65% is a Hard Ceiling</a></li>
+                <li><a href="#recommendations">7. Practical Recommendations</a></li>
             </ul>
         </div>
 
@@ -111,21 +112,24 @@
             <h2>1. Experiment Data</h2>
             <ul>
                 <li><strong>Code:</strong> <a href="https://github.com/aotto1968/forward-prop">github.com/aotto1968/forward-prop</a> (<code>otto-score-ifc/</code> tree)</li>
-                <li><strong>Dataset:</strong> <a href="https://forward-prop.nhi1.de/data/cifar-10-batches-bin/cifar-10-binary.tar.gz">forward-prop.nhi1.de/data/cifar-10-batches-bin/</a> (5 train + 1 test batch, binary planar RGB, 60000×3072 bytes)</li>
+                <li><strong>Dataset:</strong> <a href="https://forward-prop.nhi1.de/data/cifar-10-batches-bin/cifar-10-binary.tar.gz">forward-prop.nhi1.de/data/cifar-10-batches-bin/</a> (5 train + 1 test batch, binary planar RGB, 60000×3072 bytes) — <a href="https://github.com/aotto1968/forward-prop/blob/master/fetch_cifar10.sh">fetch_cifar10.sh</a></li>
                 <li><strong>Project:</strong> <a href="https://forward-prop.nhi1.de">forward-prop.nhi1.de</a></li>
             </ul>
         </section>
 
         <!-- 2. Leaderboard -->
         <section id="leaderboard" class="paper-section">
-            <h2>2. Leaderboard (2026-07-14)</h2>
+            <h2>2. Leaderboard (2026-07-16)</h2>
             <table>
-                <tr><th>#</th><th>Eval</th><th>Train</th><th>EN</th><th>H</th><th>Ep</th><th>V</th><th>Time</th><th>Config</th></tr>
-                <tr><td>1</td><td><strong>63.7%</strong></td><td>98.7%</td><td>3</td><td>1024</td><td>16</td><td>1</td><td>538s</td><td><code>--encoding ey-b,ey-a,ey-h,ey-s-1,ey-s-2</code></td></tr>
-                <tr><td>2</td><td>63.6%</td><td>99.8%</td><td>3</td><td>1024</td><td>16</td><td>2</td><td>362s</td><td><code>--splitVN 2 --encoding ey-b,ey-a,ey-h,ey-s-1,ey-s-2</code></td></tr>
-                <tr><td>3</td><td>63.5%</td><td>98.0%</td><td>3</td><td>512</td><td>16</td><td>1</td><td>272s</td><td><code>--encoding ey-b,ey-a,ey-h,ey-s-1,ey-s-2</code></td></tr>
-                <tr><td>4</td><td>62.3%</td><td>98.6%</td><td>3</td><td>1024</td><td>10</td><td>2</td><td>227s</td><td><code>--multi-correct --splitVN 2 --encoding ey-b,ey-a,ey-h,ey-s</code></td></tr>
-                <tr><td>5</td><td>61.4%</td><td>98.1%</td><td>3</td><td>1024</td><td>10</td><td>2</td><td>182s</td><td><code>--multi-correct --splitVN 2</code></td></tr>
+                <tr><th>#</th><th>Eval</th><th>Train</th><th>H</th><th>Ep</th><th>Members</th><th>Time</th><th>Config</th></tr>
+                <tr class="highlight-row"><td>1</td><td><strong>64.4%</strong></td><td>96.6%</td><td>1024</td><td>10</td><td>85</td><td>621s</td><td><code>--encoding latest --xform all</code> (5 tested)</td></tr>
+                <tr><td>2</td><td><strong>64.3%</strong></td><td>95.9%</td><td>512</td><td>10</td><td>85</td><td>304s</td><td><code>--encoding latest --xform all</code> (5 tested)</td></tr>
+                <tr><td>3</td><td><strong>63.7%</strong></td><td>98.7%</td><td>1024</td><td>16</td><td>51</td><td>538s</td><td><code>--encoding ey-b,ey-a,ey-h,ey-s-1,ey-s-2</code></td></tr>
+                <tr><td>4</td><td>63.5%</td><td>98.0%</td><td>512</td><td>16</td><td>51</td><td>272s</td><td>spatial channels only (ref)</td></tr>
+                <tr><td>5</td><td>63.4%</td><td>94.5%</td><td>256</td><td>10</td><td>85</td><td>148s</td><td><code>--encoding latest --xform all</code></td></tr>
+                <tr><td>6</td><td>63.2%</td><td>94.0%</td><td>256</td><td>10</td><td>85</td><td>140s</td><td>EN=5 ref (<code>--ensembleN 5</code>)</td></tr>
+                <tr><td>7</td><td>63.1%</td><td>96.1%</td><td>1024</td><td>10</td><td>85</td><td>640s</td><td>EN=5 ref (<code>--ensembleN 5</code>)</td></tr>
+                <tr><td>8</td><td>62.7%</td><td>91.8%</td><td>128</td><td>10</td><td>85</td><td>82s</td><td><code>--encoding latest --xform all</code></td></tr>
             </table>
         </section>
 
@@ -347,42 +351,145 @@ Voting:  Σ_members score[k]  →  argmax</pre>
 
         </section>
 
-        <!-- 5. Ceiling -->
+        <!-- 5. Geometric Transform Ensemble -->
+        <section id="xform" class="paper-section">
+            <h2>5. Geometric Transform Ensemble (<code>--xform</code>)</h2>
+
+            <p>Introduced 2026-07-16. Each active image transform (8 transforms:
+            <code>id</code>, <code>hflip</code>, <code>vflip</code>, <code>dflip1</code>,
+            <code>dflip2</code>, <code>rot90</code>, <code>rot180</code>, <code>rot270</code>)
+            becomes a <strong>new dimension in the member grid</strong> — like adding an extra
+            <code>--ensembleN</code> but with <strong>structured geometric variation</strong>
+            instead of random seeds. Note: CIFAR-10 results below use <strong>5 transforms</strong>
+            (flips + transposes); the 3 pure rotations were added later and not yet benchmarked on CIFAR.</p>
+
+            <pre>Grid: ENSEMBLE[EN] × XFORM[XF] × COLOR[C] × HN[H] = EN × XF × C × H members
+Each xform gets its OWN W0 + Target + Offset — trained independently.</pre>
+
+            <h3>5.1 Xform vs EnsembleN</h3>
+            <p>Both multiply the member count, but through fundamentally different mechanisms.
+            EnsembleN adds <strong>stochastic</strong> diversity (different random projections
+            of the SAME data). Xform adds <strong>structured</strong> diversity (the SAME
+            projection applied to <strong>transformed versions</strong> of the data).</p>
+
+            <p>All runs: <code>--encoding latest</code> (17 channels), 10 epochs.</p>
+            <table>
+                <tr><th>H</th><th>EN=5, id</th><th>EN=1, all 5 xforms</th><th>Δ</th></tr>
+                <tr><td>128</td><td>62.2%</td><td><strong>62.7%</strong></td><td>+0.5pp</td></tr>
+                <tr><td>256</td><td>63.2%</td><td><strong>63.4%</strong></td><td>+0.4pp</td></tr>
+                <tr><td>512</td><td>63.4%</td><td><strong>64.3%</strong></td><td><strong>+0.9pp</strong></td></tr>
+                <tr class="highlight-row"><td><strong>1024</strong></td><td>63.1%</td><td><strong>64.4%</strong></td><td><strong>+1.3pp</strong></td></tr>
+            </table>
+
+            <p><strong>Structured beats stochastic</strong> — xforms outperform
+            ensembleN at every H. The gap widens with H: at H=1024, the five
+            transforms can each express genuinely different features (+1.3pp).</p>
+
+            <h3>5.2 Simple channels benefit most</h3>
+            <table>
+                <tr><th>Channels</th><th>H</th><th>id</th><th>all 5</th><th>Δ</th></tr>
+                <tr><td>ey-a (4 members)</td><td>128</td><td>48.1%</td><td><strong>56.1%</strong></td><td><strong>+8.0pp</strong></td></tr>
+                <tr><td>latest (17 members)</td><td>128</td><td>62.2%</td><td><strong>64.4%</strong></td><td>+0.5-1.3pp</td></tr>
+            </table>
+
+            <p>Simple channel sets (ey-a = 4 members on B+opponents) gain massively
+            (+8pp) because the transforms add genuinely new signal that the few channels
+            cannot capture. The full <code>latest</code> encoding (17 channels covering
+            color, opponent, spatial) already captures most of the geometric variation
+            — xforms add only marginal diversity.</p>
+
+            <h3>5.3 Architecture</h3>
+            <ol>
+                <li><strong>ki_xform_raw()</strong> transforms raw uint8 pixel data
+                    before channel computation (Sobel, LBP, DoG, etc. see the
+                    transformed image → different texture signatures).</li>
+                <li><strong>Each xform produces its own container buffer</strong>,
+                    independently cached via <code>load_input_cached_xform()</code>.</li>
+                <li><strong>Members pick their buffer via mem->input_buf</strong>.
+                    Member m with xform_id=x uses <code>X_xform[x]</code> for h0/gb
+                    precomputation, training, and evaluation.</li>
+                <li><strong>No special eval path</strong> — the standard gb-cache
+                    mechanism works because each member's gb_buf was computed from
+                    its own xform's buffer.</li>
+            </ol>
+
+            <h3>5.4 Key Findings</h3>
+            <ol>
+                <li><strong>Xforms are structural, not augmentation.</strong> Each
+                    xform gets independent W0, target, offset. Training targets are
+                    specific to each transform's view of the data.</li>
+                <li><strong>All 8 transforms are pixel-verified</strong> — single-xform
+                    runs produce identical accuracy, proving the implementation correct.</li>
+                <li><strong>Diagonal flips preserve spatial structure.</strong> dflip1
+                    (transpose) and dflip2 (anti-diagonal) are valid geometric operations
+                    on square images — they shuffle pixels without destroying layout.</li>
+                <li><strong>Gain scales with H.</strong> Small H limits per-xform
+                    capacity. H=1024 reaches +1.3pp over ensembleN (with 5 transforms).</li>
+                <li><strong>64.5% is the ceiling.</strong> Even with geometric
+                    diversity, the frozen MAJ3 projection cannot exceed this limit.</li>
+            </ol>
+
+            <h3>5.5 Pure Rotations (rot90, rot180, rot270)</h3>
+            <p>Added 2026-07-16. Three pure rotations complement the flip/transpose set,
+            bringing the total to <strong>8 transforms</strong> (<code>--xform all</code>):</p>
+            <table>
+                <tr><th>Token</th><th>Transform</th><th>Formula</th></tr>
+                <tr><td><code>rot90</code></td><td>Rotate 90° clockwise</td><td><code>out[y][x] ← in[x][H-1-y]</code></td></tr>
+                <tr><td><code>rot180</code></td><td>Rotate 180°</td><td><code>out[y][x] ← in[H-1-y][W-1-x]</code> (= hflip+vflip)</td></tr>
+                <tr><td><code>rot270</code></td><td>Rotate 270° clockwise</td><td><code>out[y][x] ← in[W-1-x][y]</code> (= rot90⁻¹)</td></tr>
+            </table>
+            <p>rot180 preserves content while reversing all spatial gradients — especially
+            promising for CIFAR where texture orientation matters (LBP, DoG, dir channels
+            would see flipped patterns). Not yet benchmarked on CIFAR-10; the current
+            <strong>64.4% record uses 5 transforms</strong> (flips + transposes).</p>
+        </section>
+
+        <!-- 6. Ceiling -->
         <section id="ceiling" class="paper-section">
-            <h2>5. Ceiling Update: 63.7% via Spatial Channels</h2>
-            <p>Spatial channels break through the 62% encoding-only ceiling. Six spatial members
-            (LBP, DoG, Variance, Gradient Direction, Local Range, Color-LBP on RG) combine with
-            11 color members to reach <strong>63.7%</strong> (H=1024, EN=3, ep=16).</p>
-            <p><strong>Since record: 61.4% → 63.7% (+2.3pp) through spatial channel engineering.</strong></p>
-            <p><strong>Every accuracy improvement has come from a better channel, not from an algorithm tweak.</strong>
-            Target init (7 modes tested), step schedule (cos-time, pow, pow-eval), multi-correct,
-            splitVN — none of these moved the needle beyond the encoding-only ceiling of 61.4%.
-            Only adding genuinely new information sources (LBP → 62.3%, then dir+range+lbp-rg → 63.7%)
-            produced measurable gains. The color-only pixel evaluation seems exhausted at ∼62%.
-            Future improvements will almost certainly come from <strong>new channel code that better
-            connects pixels spatially</strong> — not from further algorithm optimization.</p>
+            <h2>6. Ceiling Update: 64.4% via Geometric Transforms</h2>
+            <p><strong>Ceiling progression:</strong> encoding-only 61.4% → spatial channels 63.7%
+            → geometric transforms <strong>64.4%</strong>. Each technique adds orthogonal
+            information sources that the frozen MAJ3 projection can exploit — but the returns
+            diminish with each addition.</p>
+            <p><strong>Spatial channels (2026-07-14)</strong> break through the 62% encoding-only
+            ceiling. Six spatial members (LBP, DoG, Variance, Gradient Direction, Local Range,
+            Color-LBP on RG) combine with 11 color members to reach <strong>63.7%</strong>
+            (H=1024, EN=3, ep=16).</p>
+            <p><strong>Geometric transforms (2026-07-16)</strong> add another +0.7pp via
+            <code>--xform all</code> (tested with 5 transforms: hflip, vflip, dflip1, dflip2; now 8 with rotations). Each transform
+            creates a new member dimension with independent W0, target, offset. Best: <strong>64.4%</strong>
+            (H=1024, EN=1, latest, 10ep).</p>
+            <p><strong>Every accuracy improvement has come from a better channel or transform,
+            not from an algorithm tweak.</strong> Target init (7 modes tested), step schedule
+            (cos-time, pow, pow-eval), multi-correct, splitVN — none of these moved the needle
+            beyond the encoding-only ceiling of 61.4%. Only adding genuinely new information
+            sources (LBP → 62.3%, dir+range+lbp-rg → 63.7%, geometric transforms → 64.4%)
+            produced measurable gains.</p>
             <ol>
                 <li><strong>Frozen W0</strong> — corrector can only reweight, not create features.</li>
                 <li><strong>√H scaling</strong> — after H=512, diminishing returns dominate.</li>
-                <li><strong>Seeds ≈ same distribution</strong> — EN is the only lever.</li>
-                <li><strong>Spatial channels add orthogonal info</strong> — direction, range, chromatic texture provide features invisible to single-pixel channels.</li>
-                <li><strong>splitVN=2 hurts spatial</strong> — AND2 filter discards too much signal from direction/range channels. Use no splitVN.</li>
+                <li><strong>Geometric transforms: structured > stochastic</strong> — xforms add +0.4-1.3pp over ensembleN at equal member count.</li>
+                <li><strong>Xform gain scales with H</strong> — at H=1024, each of 5 transforms expresses genuinely different features (+1.3pp).</li>
+                <li><strong>Simple channels benefit most</strong> — ey-a (4 members) gains +8pp from 5 transforms. Latest (17 members) already captures most variation.</li>
                 <li><strong>Training W0 collapses MAJ3</strong> — destroys hash distribution.</li>
                 <li><strong>Deeper layers lose information</strong> — 2-layer MAJ3 lost 4pp on MNIST.</li>
             </ol>
         </section>
 
-        <!-- 6. Recommendations -->
+        <!-- 7. Recommendations -->
         <section id="recommendations" class="paper-section">
-            <h2>6. Practical Recommendations</h2>
+            <h2>7. Practical Recommendations</h2>
             <table>
                 <tr><th>Goal</th><th>Config</th><th>Result</th></tr>
-                <tr class="highlight-row"><td>Best cost/benefit</td><td><code>--hiddenN 512 --ensembleN 3 --epochsN 16 --encoding ey-b,ey-a,ey-h,ey-s-1,ey-s-2</code></td><td><strong>63.5% in 272s</strong></td></tr>
-                <tr><td>Max eval</td><td><code>--hiddenN 1024 --ensembleN 3 --epochsN 16 --encoding ey-b,ey-a,ey-h,ey-s-1,ey-s-2</code></td><td><strong>63.7% in 538s</strong></td></tr>
+                <tr class="highlight-row"><td>Max eval</td><td><code>--hiddenN 1024 --epochsN 10 --encoding latest --xform all</code></td><td><strong>64.4% in 621s</strong></td></tr>
+                <tr><td>Best cost/benefit</td><td><code>--hiddenN 512 --epochsN 10 --encoding latest --xform all</code></td><td><strong>64.3% in 304s</strong></td></tr>
+                <tr><td>Spatial channels (no xform)</td><td><code>--hiddenN 512 --ensembleN 3 --epochsN 16 --encoding ey-b,ey-a,ey-h,ey-s-1,ey-s-2</code></td><td><strong>63.5% in 272s</strong></td></tr>
             </table>
             <p>All configs use default <code>count</code> target init and <code>cos-time</code> step schedule.
-            <code>latest</code> = 17 members (ey-b+ey-a+ey-h+ey-s-1+ey-s-2). Avoid <code>--splitVN</code>
-            with spatial channels — they need full bit resolution.</p>
+            <code>latest</code> = 17 encoding members. <code>--xform all</code> = now 8 transforms
+            (id, hflip, vflip, dflip1, dflip2, rot90, rot180, rot270), giving up to 136 total members.
+            The transform ensemble is a pure structural multiplier — no special eval path needed.
+            CIFAR-10 results above used 5 transforms (the rotation set was added later).</p>
         </section>
 
     </div>

@@ -460,6 +460,17 @@ int main(int argc, char *argv[]) {
      * ══════════════════════════════════════════════════════════════ */
     printf("\n══╡ TRAINING ╞══  lr=%.4f  lr_min=%.2f  batch=%d  warmup=%d\n",
            (double)aa.lr, (double)aa.lr_min, aa.batchN, aa.warmup_epochs);
+    if (aa.dry_run) {
+        printf("\n  (dry-run, exiting)\n");
+        for (int m = 0; m < n_mem && m < ADAM_MAX_MEM; m++) {
+            free(l0_arr[m].W); free(l1_arr[m].W);
+            free(best_W0[m]); free(best_W1[m]);
+            ki_adamw_free(&adamw_arr[m]);
+        }
+        free(idx);
+        ki_dataset_free(&data);
+        return 1;  /* INTENTIONAL: non-zero so run-research.sh suppresses logging */
+    }
 
     struct timeval tv_start;
     gettimeofday(&tv_start, NULL);

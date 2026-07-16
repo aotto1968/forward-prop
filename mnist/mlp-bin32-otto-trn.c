@@ -279,6 +279,7 @@ ki_Args aa = {
     .target_init_mode = KI_TARGET_COUNT,
     .multi_correct      = 0,
     .seed_splitmix      = 1,
+    .xforms             = (1 << KI_XFORM_ID),  /* default: identity only */
 };
 
 /* ═══════════════════════════════════════════════════════════════════════
@@ -899,7 +900,11 @@ static void print_setup(int H, int epochs, int trainN, int evalN,
     size_t hidden_bit = (size_t)H * bit_per_cont;
     size_t w0_bit = (size_t)H_local * (size_t)NC_slice * bit_per_cont;
     size_t w1_bit = (size_t)KI_NCLASSES * (size_t)H_local * (size_t)V * sizeof(int32_t) * 8;
-    int total_slots = ensembleN * eff_colors * splitHN;    /* VN no longer multiplies members */
+    int n_xf_active = 0;
+    for (int _x = 0; _x < KI_XFORM_COUNT; _x++)
+        if (aa.xforms & (1 << _x)) n_xf_active++;
+    if (n_xf_active < 1) n_xf_active = 1;
+    int total_slots = ensembleN * n_xf_active * eff_colors * splitHN;    /* VN no longer multiplies members */
     size_t tgt_total = (size_t)H_local * KI_NCLASSES * (size_t)V * (size_t)total_slots;
     printf("══════════════════════════════════════════════════════════════════════\n");
     printf("══╡ OTTO-SCORE ╞══  %s  %s\n", KI_DATASET_NAME, H0_STR);
@@ -928,10 +933,17 @@ static void print_setup(int H, int epochs, int trainN, int evalN,
     printf("  W1:          C1[%3d] × H0[%3d] ×  V[%3d] x int32 = %9zu bit  (%5.1f KB)  per member, target+offset\n",
            KI_NCLASSES, H_local, V, w1_bit, (double)w1_bit / 8 / 1024);
     printf("  ───────────────────────────────────────────────────────────\n");
-    printf("  TOTAL:       (W0+W1) x (EN[%d]×CO[%d]×HN[%d]=%d) = %9zu bit  (%5.1f KB)\n",
-           ensembleN, eff_colors, splitHN, total_slots,
-           (w0_bit + w1_bit) * (size_t)total_slots,
-           (double)((w0_bit + w1_bit) * (size_t)total_slots) / 8 / 1024);
+    if (n_xf_active > 1) {
+        printf("  TOTAL:       (W0+W1) x (EN[%d]×XF[%d]×CO[%d]×HN[%d]=%d) = %9zu bit  (%5.1f KB)\n",
+               ensembleN, n_xf_active, eff_colors, splitHN, total_slots,
+               (w0_bit + w1_bit) * (size_t)total_slots,
+               (double)((w0_bit + w1_bit) * (size_t)total_slots) / 8 / 1024);
+    } else {
+        printf("  TOTAL:       (W0+W1) x (EN[%d]×CO[%d]×HN[%d]=%d) = %9zu bit  (%5.1f KB)\n",
+               ensembleN, eff_colors, splitHN, total_slots,
+               (w0_bit + w1_bit) * (size_t)total_slots,
+               (double)((w0_bit + w1_bit) * (size_t)total_slots) / 8 / 1024);
+    }
     printf("                                                + %zu KB target/offset (all members)\n",
            tgt_total / 1024);
     printf("  OMP:         %d threads\n", threadN);
@@ -957,6 +969,11 @@ static void print_setup(int H, int epochs, int trainN, int evalN,
     }
     if (aa.export_merge_scores[0])
         printf("  Save-scores: %s\n", aa.export_merge_scores);
+    /* ── Show xforms if more than identity ── */
+    if (n_xf_active > 1) {
+        printf("\n  ───────────────────────────────────────────────────────────\n");
+        printf("  Xform:       %s  (%d× ensemble multiplier)\n", xform_str(), n_xf_active);
+    }
     printf("\n");
 }
 
@@ -970,12 +987,17 @@ static const char *opp_name(int ch);
  * Called by dry-run and main.*no data dependency.
  */
 static void print_member_structure(int ensembleN, int splitVN, int splitHN,
-                                    int H_local, int NC_slice, int channel) {
-    int total = ensembleN * eff_colors * splitHN;
+                                    int H_local, int NC_slice, int channel,
+                                    int n_xforms_eff) {
+    int total = ensembleN * n_xforms_eff * eff_colors * splitHN;
     (void)splitVN;
     printf("\n══╡ MEMBER ╞══════════════════════════════════════════════════\n");
-    printf("  Grid: ENSEMBLE[%d] × COLOR[%d] × HN[%d] = %d members\n",
-           ensembleN, eff_colors, splitHN, total);
+    if (n_xforms_eff > 1)
+        printf("  Grid: ENSEMBLE[%d] × XFORM[%d] × COLOR[%d] × HN[%d] = %d members\n",
+               ensembleN, n_xforms_eff, eff_colors, splitHN, total);
+    else
+        printf("  Grid: ENSEMBLE[%d] × COLOR[%d] × HN[%d] = %d members\n",
+               ensembleN, eff_colors, splitHN, total);
     printf("  Per member: W0[H=%d × I=%d], Target[K=%d × H=%d × V=%d]\n",
            H_local, NC_slice, KI_NCLASSES, H_local, 32 / splitVN);
     int max_col = eff_colors;
@@ -1040,6 +1062,8 @@ typedef struct ki_Member {
 
     /* Pointer to external data (Member owns target+offset, shares W0) */
     const uint32_t *W0;     /* W0 row start (geteilt oder eigen) */
+    const uint32_t *input_buf;    /* X buffer for this member's xform (train) */
+    const uint32_t *input_buf_te; /* X buffer for this member's xform (eval) */
     int32_t *target;        /* [H_local × KI_NCLASSES × 32] int32 — own memory */
     int64_t *offset;        /* [KI_NCLASSES] int64 — own memory */
 
@@ -1990,8 +2014,8 @@ static int ifc_load_model(const char *path,
  *   magic(4) ver(4) hash(4) samples(4) stride(4) data[...]
  */
 
-/* Config-Hash fr Cache-Key */
-static uint32_t input_cache_hash(void) {
+/* Config-Hash fr Cache-Key (xform_id: 0=identity) */
+static uint32_t input_cache_hash(int xform_id) {
     uint32_t h = 0;
     for (int i = 0; i < aa.enc_count; i++) {
         h = h * 31 + (uint32_t)(uint8_t)aa.enc_array[i].color;
@@ -2003,16 +2027,22 @@ static uint32_t input_cache_hash(void) {
     h = h * 31 + (uint32_t)KI_NC;
     h = h * 31 + (uint32_t)KI_PX;
     h = h * 31 + (uint32_t)KI_COLORS;
+    h = h * 31 + (uint32_t)xform_id;        /* xform changes the pixel data cache */
 #ifdef KI_DATASET_ID
     h = h * 31 + (uint32_t)KI_DATASET_ID;
 #endif
     return h;
 }
 
+/* Cache den Hash + (samples, stride) anhängen fürs Dateiname-Format: <hash>_<N>x<S>.pre */
+static void cache_path_build(char *buf, size_t bufsz, uint32_t hash, int n, size_t stride) {
+    snprintf(buf, bufsz, "data/prepped/%08x_%dx%zu.pre", hash, n, stride);
+}
+
 /* Versuche Cache zu laden, otherwise load_input() + speichern */
 static uint32_t *load_input_cached(const uint8_t *X_raw, int n_samples,
                                     size_t stride) {
-    uint32_t hash = input_cache_hash();
+    uint32_t hash = input_cache_hash(0);  /* xform_id=0 = identity */
     char cache_dir[512], cache_path[1024];
 
     snprintf(cache_dir, sizeof(cache_dir), "data/prepped");
@@ -2062,6 +2092,56 @@ static uint32_t *load_input_cached(const uint8_t *X_raw, int n_samples,
             fclose(sf);
             printf("  Input-cache: %s  (saved)\n", cache_path);
         }
+    }
+    return X;
+}
+
+/* ── Xform-bewusster Cache: xform_id ≠ 0 erzeugt anderen Cache-Key ── *
+ * Nutzt load_input_cached() Logik, aber mit xform_id im Hash.
+ * Für xform=KI_XFORM_ID (identity) verhält es sich identisch zu
+ * load_input_cached() wegen xform_id=0. */
+static uint32_t *load_input_cached_xform(int xform_id,
+                                          const uint8_t *X_raw,
+                                          int n_samples, size_t stride) {
+    if (xform_id == KI_XFORM_ID)
+        return load_input_cached(X_raw, n_samples, stride);
+    uint32_t hash = input_cache_hash(xform_id);
+    char cpath[1024];
+    cache_path_build(cpath, sizeof(cpath), hash, n_samples, stride);
+    FILE *cf = fopen(cpath, "rb");
+    if (cf) {
+        uint32_t magic, ver, chk_hash, chk_samples, chk_stride32;
+        if (fread(&magic, 4, 1, cf) == 1 && magic == 0x50524550 &&
+            fread(&ver, 4, 1, cf) == 1 && ver == 1 &&
+            fread(&chk_hash, 4, 1, cf) == 1 && chk_hash == hash &&
+            fread(&chk_samples, 4, 1, cf) == 1 && (int)chk_samples == n_samples &&
+            fread(&chk_stride32, 4, 1, cf) == 1 && (size_t)chk_stride32 == stride) {
+            size_t total = (size_t)n_samples * stride;
+            uint32_t *X = (uint32_t *)ki_xmalloc(total * sizeof(uint32_t));
+            if (fread(X, sizeof(uint32_t), total, cf) == total) {
+                fclose(cf);
+                printf("  Input-cache: %s\n", cpath);
+                return X;
+            }
+            free(X);
+        }
+        fclose(cf);
+    }
+    /* Cache miss: transform, load_input, save */
+    uint32_t *X = load_input(X_raw, n_samples);
+    mkdir("data/prepped", 0755);
+    FILE *sf = fopen(cpath, "wb");
+    if (sf) {
+        uint32_t magic = 0x50524550, ver = 1, samples = (uint32_t)n_samples, stride32 = (uint32_t)stride;
+        fwrite(&magic, 4, 1, sf);
+        fwrite(&ver, 4, 1, sf);
+        fwrite(&hash, 4, 1, sf);
+        fwrite(&samples, 4, 1, sf);
+        fwrite(&stride32, 4, 1, sf);
+        size_t total = (size_t)n_samples * stride;
+        fwrite(X, sizeof(uint32_t), total, sf);
+        fclose(sf);
+        printf("  Input-cache: %s  (saved)\n", cpath);
     }
     return X;
 }
@@ -2287,6 +2367,50 @@ int main(int argc, char *argv[]) {
         own_eval_data = 1;
     }
 
+    /* ── Xform input buffers — per-xform containers for member training ──
+     * Each active xform produces a separate encoded buffer from transformed
+     * raw pixels.  Members pick their buffer via input_buf/input_buf_te. */
+    uint32_t *X_xform[KI_XFORM_COUNT] = {NULL};
+    uint32_t *X_xform_te[KI_XFORM_COUNT];  /* non-owning views into train/eval splits */
+    memset(X_xform_te, 0, sizeof(X_xform_te));
+    int xf_id_list[KI_XFORM_COUNT], n_xforms_eff = 0;
+    for (int _xf = 0; _xf < KI_XFORM_COUNT; _xf++)
+        if (aa.xforms & (1 << _xf)) xf_id_list[n_xforms_eff++] = _xf;
+    if (n_xforms_eff < 1) { xf_id_list[0] = KI_XFORM_ID; n_xforms_eff = 1; }
+    if (!aa.dry_run) {
+        int img_size = data.rows * data.cols;        /* pixels per plane */
+        int channels = KI_COLORS;                     /* 3 for CIFAR, 1 for MNIST */
+        for (int xf = 0; xf < KI_XFORM_COUNT; xf++) {
+            if (!(aa.xforms & (1 << xf))) continue;
+            if (xf == KI_XFORM_ID) {
+                X_xform[xf] = X_all;  /* identity reuses main buffer */
+            } else {
+                /* Transform raw pixel data for ALL samples */
+                uint8_t *raw_xform = (uint8_t *)ki_xmalloc((size_t)total_all * (size_t)img_size * (size_t)channels);
+                for (int s = 0; s < total_all; s++) {
+                    ki_xform_raw(raw_xform + (size_t)s * (size_t)img_size * (size_t)channels,
+                                data.X_raw + (size_t)s * (size_t)KI_PX,
+                                data.cols, data.rows, channels, xf);
+                }
+                X_xform[xf] = load_input_cached_xform(xf, raw_xform, total_all, n_cont);
+                free(raw_xform);
+            }
+        }
+        /* NOTE: shuffle + xform: X_xform buffers are in original data order,
+         * while X_perm has shuffled indices.  When X_perm is active,
+         * xform members use X_xform directly (unshuffled) → MISMATCH.
+         * Fix: either shuffle X_xform too, or disable xforms with shuffle.
+         * For v1: disable xforms when shuffle active. */
+        if (aa.shuffle && (aa.xforms & ~(1 << KI_XFORM_ID))) {
+            printf("  [XFORM] Shuffle active — using identity only (shuffle + xform not yet compatible)\n");
+            aa.xforms = (1 << KI_XFORM_ID);
+            n_xforms_eff = 1;
+        }
+    }
+    /* Build eval pointers for each xform (split train/eval within each buffer) */
+    for (int xf = 0; xf < KI_XFORM_COUNT; xf++)
+        X_xform_te[xf] = X_xform[xf] ? X_xform[xf] + (size_t)total_train * n_cont : NULL;
+
     /* ── Compute per-block nc and offsets from enc_array ── */
     int multi_enc_blk_off[KI_ENC_MAX] = {0};
     int multi_enc_nc[KI_ENC_MAX] = {0};
@@ -2303,7 +2427,7 @@ int main(int argc, char *argv[]) {
     /* ── Compute slice dimensions ────────────────────────────── */
     int H_local   = H;
     int NC_slice  = nc_blk / splitHN;  /* base slice (from default width) */
-    int total_members = ensembleN * splitHN * eff_colors;
+    int total_members = ensembleN * n_xforms_eff * splitHN * eff_colors;
 
     /* ── Default W0 source: splitmix64 PRNG.*no more auto search) ─── */
     /* --seed-file override → w0_rand_set_file() in W0 init.
@@ -2366,6 +2490,10 @@ int main(int argc, char *argv[]) {
         free(pred_eval);
         for (int i = 0; i < n_mifc; i++) ki_member_destroy(mems[i]);
         free(mems); free(W0_ifc); free(tgt_ifc); free(off_ifc);
+        for (int _xf = 0; _xf < KI_XFORM_COUNT; _xf++) {
+            if (_xf == KI_XFORM_ID) continue;
+            if (X_xform[_xf] && X_xform[_xf] != X_all) free(X_xform[_xf]);
+        }
         ki_dataset_free(&data); free(X_all);
         if (X_perm) { free(X_perm); free(y_perm); }
         return 0;
@@ -2386,16 +2514,18 @@ int main(int argc, char *argv[]) {
         w0_rand_set_file(aa.seed_file);
 
     if (aa.ensemble_seed == ENS_SEED_CONST) {
-        /* const: each ensemble gets its own W0 chunk,
-         * all channel members share it. */
-        int memb_per_ens = eff_colors * splitHN;
+        /* const: each ensemble+xform gets its own W0 chunk,
+         * all channel+hn members share it. */
+        int memb_per_ens = n_xforms_eff * eff_colors * splitHN;
         for (int e = 0; e < ensembleN; e++) {
-            w0_srandom((unsigned int)(aa.seed + e));
-            for (size_t i = 0; i < w0_m_sz; i++) {
-                uint32_t v = w0_random();
-                for (int mm = 0; mm < memb_per_ens; mm++) {
-                    int m = e * memb_per_ens + mm;
-                    W0_ens[(size_t)m * w0_m_sz + i] = v;
+            for (int xf_idx = 0; xf_idx < n_xforms_eff; xf_idx++) {
+                w0_srandom((unsigned int)(aa.seed + e * n_xforms_eff + xf_idx));
+                for (size_t i = 0; i < w0_m_sz; i++) {
+                    uint32_t v = w0_random();
+                    for (int mm = 0; mm < eff_colors * splitHN; mm++) {
+                        int m = e * memb_per_ens + xf_idx * (eff_colors * splitHN) + mm;
+                        W0_ens[(size_t)m * w0_m_sz + i] = v;
+                    }
                 }
             }
         }
@@ -2434,13 +2564,16 @@ int main(int argc, char *argv[]) {
         for (int s = 0; s < total_train; s++)
             class_counts[(int)y_tr[s]]++;
 
-    print_member_structure(ensembleN, splitVN, splitHN, H_local, NC_slice, aa.channel);
+    print_member_structure(ensembleN, splitVN, splitHN, H_local, NC_slice, aa.channel, n_xforms_eff);
     /* Target is built from gb_buf AFTER h0-compute (s.u.). */
     printf("\n");
     fflush(stdout);
 
     {
         int step = (int)(aa.lr * (float)OT_F + 0.5f);
+        int n_xf_active = 0;
+        for (int _x = 0; _x < KI_XFORM_COUNT; _x++)
+            if (aa.xforms & (1 << _x)) n_xf_active++;
         printf("══╡ TRAINING ╞══  lr=%.4f  step=%d  mode=%s  F=%d",
              (double)aa.lr, step, mode_str(), OT_F);
         printf("  tgt-init=%s", target_init_str());
@@ -2449,8 +2582,16 @@ int main(int argc, char *argv[]) {
             printf("  tgt-nrm=%d", aa.opt_target_norm ? 1 : 0);
         if (aa.gap_k > 0.0f)
             printf("  gap-k=%.1f", (double)aa.gap_k);
+        if (n_xf_active > 1)
+            printf("  xform=%s", xform_str());
         printf("\n");
         fflush(stdout);
+    }
+    if (aa.dry_run) {
+        printf("\n  (dry-run, exiting)\n");
+        free(W0_ens);
+        ki_dataset_free(&data);
+        return 1;  /* INTENTIONAL: non-zero so run-research.sh suppresses logging */
     }
     struct timeval _tv0, _tv1, _target0, _target1, _logit0, _logit1, _total0, _total1;
     gettimeofday(&_total0, NULL);
@@ -2472,6 +2613,7 @@ int main(int argc, char *argv[]) {
         int mem_idx = 0;
         for (int m = 0; m < total_members; m++) {
             int vi = (m / splitHN) % eff_colors;  /* virtual block index */
+            int xf_idx = (m / (eff_colors * splitHN)) % n_xforms_eff;
             int color = (KI_COLORS > 1) ? active_chans[vi] : COLOR_MNIST;
             if (aa.channel >= 0 && !(aa.channel & (1 << color)) && KI_COLORS > 1) continue;
             int slc_off;
@@ -2490,6 +2632,9 @@ int main(int argc, char *argv[]) {
                 W0_ens + (size_t)m * w0_m_sz;
             members[mem_idx] = ki_member_create(H_local, mem_nc, slc_off,
                                             W0_m, total_train, total_eval);
+            int xf_id = xf_id_list[xf_idx];
+            members[mem_idx]->input_buf    = X_xform[xf_id];    /* train */
+            members[mem_idx]->input_buf_te = X_xform_te[xf_id]; /* eval */
             members[mem_idx]->orig_m = m;
             members[mem_idx]->vi = vi;
             /* target.*are populated from gb_buf AFTER h0-compute */
@@ -2514,7 +2659,7 @@ int main(int argc, char *argv[]) {
     gettimeofday(&_tv0, NULL);
     if (!aa.dry_run) {
 #ifdef USE_HIP
-        if (gpu_ok) {
+        if (gpu_ok && n_xforms_eff <= 1) {
             uint32_t *h0_all = (uint32_t *)malloc(
                 (size_t)active_members * (size_t)total_train * (size_t)H_local * sizeof(uint32_t));
             hip_mem_upload_X(X_tr);
@@ -2532,14 +2677,17 @@ int main(int argc, char *argv[]) {
         } else
 #endif
         {
-            //#pragma omp parallel for schedule(static) if(active_members > 8)
-            for (int _b = 0; _b < active_members; _b++)
-                ki_member_compute_h0(members[_b], X_tr, total_train, (int)n_cont);
+            for (int _b = 0; _b < active_members; _b++) {
+                ki_Member *mem = members[_b];
+                ki_member_compute_h0(mem, mem->input_buf, total_train, (int)n_cont);
+            }
         }
         /* Precompute test eval gb once (if test data exists) */
         if (total_eval > 0) {
-            for (int _b = 0; _b < active_members; _b++)
-                ki_member_compute_gb_te(members[_b], X_te, total_eval, (int)n_cont);
+            for (int _b = 0; _b < active_members; _b++) {
+                ki_Member *mem = members[_b];
+                ki_member_compute_gb_te(mem, mem->input_buf_te, total_eval, (int)n_cont);
+            }
         }
         /* free h0_buf after gb computation — is never needed again */
         for (int _b = 0; _b < active_members; _b++) {
@@ -2811,9 +2959,10 @@ int main(int argc, char *argv[]) {
 
       trn_ok = ki_evaluate_member(X_tr, y_tr, total_train,
                       members, active_members, (int)n_cont, pred_tr, 1);
-      if (total_eval > 0)
+      if (total_eval > 0) {
           evl_ok = ki_evaluate_member(X_te, y_te, total_eval,
                       members, active_members, (int)n_cont, pred_eval, 2);
+      }
     }
 
     /* ── Save per-member scores (f�r merge-ensemble) ────────── */
@@ -2965,6 +3114,12 @@ int main(int argc, char *argv[]) {
     }
 
     if (own_eval_data) { free(X_perm); free(y_perm); }
+    /* Free X_xform buffers (identity reuses X_all, already freed above) */
+    for (int _xf = 0; _xf < KI_XFORM_COUNT; _xf++) {
+        if (_xf == KI_XFORM_ID) continue;  /* freed via X_all */
+        if (X_xform[_xf] && X_xform[_xf] != X_all)
+            free(X_xform[_xf]);
+    }
     free(members);
     free(X_all);
     free(W0_ens);

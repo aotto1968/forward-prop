@@ -167,10 +167,10 @@ static inline int ki_color_parse(const char *tok) {
 #include "ki-local.h"
 
 /* ── Encoding alias lookup (dataset-specific, defined in ki-local.h) ──
- * Each dataset provides its own ki_alias_lookup() via KI_COMMON_ALIAS_LOOKUP
+ * Each dataset provides its own ki_encoding_alias_lookup() via KI_COMMON_ALIAS_LOOKUP
  * guard.  Fallback returns NULL (no aliases). */
 #ifndef KI_COMMON_ALIAS_LOOKUP
-static const char *ki_alias_lookup(const char *name) {
+static const char *ki_encoding_alias_lookup(const char *name) {
     (void)name;
     return NULL;
 }
@@ -355,7 +355,7 @@ static const struct _comp_entry _comp_table[] = {
     {"--debug-class-voting-all",        "none",  NULL},
     {"--debug-confusion-matrix",        "none",  NULL},
     {"--debug-confusion-matrix-all",    "none",  NULL},
-    {"--xform",              "token", "all id hflip vflip dflip1 dflip2 rot90 rot180 rot270"},
+    {"--xform",              "token", "all shift augmentation performance id hflip vflip dflip1 dflip2 rot90 rot180 rot270 sft-u1 sft-u2 sft-u3 sft-d1 sft-d2 sft-d3 sft-l1 sft-l2 sft-l3 sft-r1 sft-r2 sft-r3"},
     {"--filter",                        "token", NULL},
     {"--shuffle",                       "none",  NULL},
     {"--help",                          "none",  NULL},
@@ -413,6 +413,9 @@ static inline void ki_parse_args(int argc, char *argv[]) {
             printf("                    See --help-channels for details\n");
             printf("  --encoding [%s]  (default: latest)\n", ki_enc_names_all());
             printf("                    See --help-encoding for details\n");
+            printf("  --xform id,hflip,..,sft-d3,sft-r3      Image transform ensemble                 (default: id)\n");
+            printf("                    Aliases: all (8 D4), shift (12 shifts), performance (4×), augmentation (all+shift=20)\n");
+            printf("                    See --help-xform for details\n");
             printf("  --export-merge-scores DIR  Save per-member scores to archive files for merge    (default: none)\n");
             printf("  --export-scores FILE  Save per-sample ensemble scores (10×int64+uint8)          (default: none)\n");
             printf("  --export-neurons FILE  Save gb_buf+Target+Offset per member (v3) for Adam..     (default: none)\n");
@@ -432,8 +435,6 @@ static inline void ki_parse_args(int argc, char *argv[]) {
             printf("  --debug-h0        Per-neuron debug                                              (default: off)\n");
             printf("  --debug-class-voting?-all?  Member × Class accuracy table (end only)            (default: off)\n");
             printf("  --debug-confusion-matrix?-all?  Confusion matrix table (end only)               (default: off)\n");
-            printf("  --xform id,hflip,..,rot90,rot180,rot270  Image transform ensemble                (default: id)\n");
-            printf("                    See --help-xform for details\n");
             printf("  --filter #,#,... or name,name,...  Restrict to specific classes only            (default: none)\n");
             printf("                    See --help-filter for class names\n");
             printf("  --shuffle         Shuffle data before train/eval split                          (default: off)\n");
@@ -490,16 +491,20 @@ static inline void ki_parse_args(int argc, char *argv[]) {
             printf("\n");
             printf("  Dataset group aliases (multi-block, per --encoding):\n");
 #if KI_DATASET_ID == 1  /* CIFAR-10 */
-            printf("    latest   : 17 members: ey-b + ey-a + ey-h + ey-s-1 + ey-s-2\n");
-            printf("    latest-2 : 11 members: optimized via sweep (gamma/sqrt/cbrt)\n");
-            printf("    ey-a   : b=up,al=down,am=sig,ap=sig (4 blocks)\n");
-            printf("    ey-b   : g=up,bl=down,bm=sig,bp=sig (4 blocks)\n");
-            printf("    ey-c   : r=up,cl=down,cm=sig,cp=sig (4 blocks)\n");
-            printf("    ey-h   : h=down,c=exp,gb=sig        (3 blocks)\n");
-            printf("    ey-s   : lbp=up,dog=sig,var=exp     (3 spatial/texture)\n");
-            printf("    ey-s-1 : lbp=gamma,dog=sig,var=exp  (3 spatial, gamma variant)\n");
-            printf("    ey-s-2 : dir=down,range=log,lbp-rg=mid (3 spatial: dir+range+lbp-rg)\n");
-            printf("    top-rgb: r=down,g=down,b=down       (3 blocks)\n");
+            printf("    latest      : 17 members: ey-b,ey-a,ey-h,ey-s-1,ey-s-2\n");
+            printf("    latest-2    : 11 members: optimized via sweep (gamma/sqrt/cbrt)\n");
+            printf("    performance : 12 members: ey-b-2,ey-a-2,ey-h,ey-s-2 (color-free)\n");
+            printf("    ey-a        : b=up,al=down,am=sig,ap=sig          (4 blocks)\n");
+            printf("    ey-a-2      : al=down,am=sig,ap=sig               (3 blocks, no color)\n");
+            printf("    ey-b        : g=up,bl=down,bm=sig,bp=sig          (4 blocks)\n");
+            printf("    ey-b-2      : bl=down,bm=sig,bp=sig               (3 blocks, no color)\n");
+            printf("    ey-c        : r=up,cl=down,cm=sig,cp=sig          (4 blocks)\n");
+            printf("    ey-c-2      : cl=down,cm=sig,cp=sig               (3 blocks, no color)\n");
+            printf("    ey-h        : h=down,c=exp,gb=sig                 (3 blocks)\n");
+            printf("    ey-s        : lbp=up,dog=sig,var=exp              (3 spatial/texture)\n");
+            printf("    ey-s-1      : lbp=gamma,dog=sig,var=exp           (3 spatial, gamma variant)\n");
+            printf("    ey-s-2      : dir=down,range=log,lbp-rg=mid       (3 spatial: dir+range+lbp-rg)\n");
+            printf("    top-rgb     : r=down,g=down,b=down                (3 blocks)\n");
 #else  /* MNIST, Fashion-MNIST (grayscale) */
             printf("    latest : exp8 (single block)\n");
 #endif
@@ -523,19 +528,33 @@ static inline void ki_parse_args(int argc, char *argv[]) {
             printf("  dampen  : count >> 1 (shape preserved, peak/valley amplitude halved).\n");
             exit(1);   /* INTENTIONAL: non-zero so run-research.sh suppresses logging */
         } else if (strcmp(argv[i], "--help-xform") == 0) {
-            printf("--xform id,hflip,vflip,dflip1,dflip2,rot90,rot180,rot270  Image transforms  (default: id)\n");
-            printf("  id      : identity (original image)\n");
-            printf("  hflip   : horizontal flip (left-right mirror)\n");
-            printf("  vflip   : vertical flip (top-bottom mirror)\n");
-            printf("  dflip1  : main diagonal flip (transpose)\n");
-            printf("  dflip2  : anti-diagonal flip\n");
-            printf("  rot90   : rotate 90° clockwise\n");
-            printf("  rot180  : rotate 180° (= hflip+vflip combined)\n");
-            printf("  rot270  : rotate 270° clockwise (= rot90⁻¹)\n");
+            printf("--xform token[,token,...]  Image transform ensemble  (default: id)\n");
+            printf("  D4 geometric transforms (8):\n");
+            printf("    id       : identity (original image)\n");
+            printf("    hflip    : horizontal flip (left-right mirror)\n");
+            printf("    vflip    : vertical flip (top-bottom mirror)\n");
+            printf("    dflip1   : main diagonal flip (transpose)\n");
+            printf("    dflip2   : anti-diagonal flip\n");
+            printf("    rot90    : rotate 90° clockwise\n");
+            printf("    rot180   : rotate 180° (= hflip+vflip combined)\n");
+            printf("    rot270   : rotate 270° clockwise (= rot90⁻¹)\n");
+            printf("  Pixel shifts (12) — fill vacated pixels with 0:\n");
+            printf("    sft-u1/2/3  : shift up by 1/2/3 px\n");
+            printf("    sft-d1/2/3  : shift down by 1/2/3 px\n");
+            printf("    sft-l1/2/3  : shift left by 1/2/3 px\n");
+            printf("    sft-r1/2/3  : shift right by 1/2/3 px\n");
+            printf("  Aliases:\n");
+            printf("    all          : all 8 D4 transforms\n");
+            printf("    shift        : all 12 pixel shifts (= augmentation - all)\n");
+            printf("    performance  : id,hflip,vflip,rot90 (4×, faster experiments)\n");
+            printf("    augmentation : all + shift = 20 transforms\n");
             printf("  Multiple transforms create independent members with own W0+Target.\n");
             printf("  Each transform is applied BEFORE channel computation.\n");
-            printf("  Example: --xform id,hflip  → 2× member multiplier\n");
-            printf("           --xform all       → 8× member multiplier\n");
+            printf("  Example: --xform id,hflip       → 2× member multiplier\n");
+            printf("           --xform all            → 8× member multiplier\n");
+            printf("           --xform shift          → 12× member multiplier\n");
+            printf("           --xform performance    → 4× member multiplier\n");
+            printf("           --xform augmentation   → 20× member multiplier\n");
             exit(1);   /* INTENTIONAL: non-zero so run-research.sh suppresses logging */
         } else if (strcmp(argv[i], "--completion") == 0) {
             if (i + 1 < argc && argv[i+1][0] == '-' && argv[i+1][1] == '-') {
@@ -721,6 +740,18 @@ static inline void ki_parse_args(int argc, char *argv[]) {
                                | (1 << KI_XFORM_VFLIP) | (1 << KI_XFORM_DFLIP1)
                                | (1 << KI_XFORM_DFLIP2) | (1 << KI_XFORM_ROT90)
                                | (1 << KI_XFORM_ROT180) | (1 << KI_XFORM_ROT270);
+                } else if (ki_strcasecmp(tok, "performance") == 0) {
+                    aa.xforms |= (1 << KI_XFORM_ID) | (1 << KI_XFORM_HFLIP)
+                               | (1 << KI_XFORM_VFLIP) | (1 << KI_XFORM_ROT90);
+                } else if (ki_strcasecmp(tok, "augmentation") == 0) {
+                    aa.xforms = (1 << KI_XFORM_COUNT) - 1;  /* all 20 transforms */
+                } else if (ki_strcasecmp(tok, "shift") == 0) {
+                    aa.xforms |= (1 << KI_XFORM_SFT_U1) | (1 << KI_XFORM_SFT_U2)
+                               | (1 << KI_XFORM_SFT_U3) | (1 << KI_XFORM_SFT_D1)
+                               | (1 << KI_XFORM_SFT_D2) | (1 << KI_XFORM_SFT_D3)
+                               | (1 << KI_XFORM_SFT_L1) | (1 << KI_XFORM_SFT_L2)
+                               | (1 << KI_XFORM_SFT_L3) | (1 << KI_XFORM_SFT_R1)
+                               | (1 << KI_XFORM_SFT_R2) | (1 << KI_XFORM_SFT_R3);
                 } else if (ki_strcasecmp(tok, "id") == 0) {
                     aa.xforms |= (1 << KI_XFORM_ID);
                 } else if (ki_strcasecmp(tok, "hflip") == 0) {
@@ -737,9 +768,34 @@ static inline void ki_parse_args(int argc, char *argv[]) {
                     aa.xforms |= (1 << KI_XFORM_ROT180);
                 } else if (ki_strcasecmp(tok, "rot270") == 0) {
                     aa.xforms |= (1 << KI_XFORM_ROT270);
+                } else if (ki_strcasecmp(tok, "sft-u1") == 0) {
+                    aa.xforms |= (1 << KI_XFORM_SFT_U1);
+                } else if (ki_strcasecmp(tok, "sft-u2") == 0) {
+                    aa.xforms |= (1 << KI_XFORM_SFT_U2);
+                } else if (ki_strcasecmp(tok, "sft-u3") == 0) {
+                    aa.xforms |= (1 << KI_XFORM_SFT_U3);
+                } else if (ki_strcasecmp(tok, "sft-d1") == 0) {
+                    aa.xforms |= (1 << KI_XFORM_SFT_D1);
+                } else if (ki_strcasecmp(tok, "sft-d2") == 0) {
+                    aa.xforms |= (1 << KI_XFORM_SFT_D2);
+                } else if (ki_strcasecmp(tok, "sft-d3") == 0) {
+                    aa.xforms |= (1 << KI_XFORM_SFT_D3);
+                } else if (ki_strcasecmp(tok, "sft-l1") == 0) {
+                    aa.xforms |= (1 << KI_XFORM_SFT_L1);
+                } else if (ki_strcasecmp(tok, "sft-l2") == 0) {
+                    aa.xforms |= (1 << KI_XFORM_SFT_L2);
+                } else if (ki_strcasecmp(tok, "sft-l3") == 0) {
+                    aa.xforms |= (1 << KI_XFORM_SFT_L3);
+                } else if (ki_strcasecmp(tok, "sft-r1") == 0) {
+                    aa.xforms |= (1 << KI_XFORM_SFT_R1);
+                } else if (ki_strcasecmp(tok, "sft-r2") == 0) {
+                    aa.xforms |= (1 << KI_XFORM_SFT_R2);
+                } else if (ki_strcasecmp(tok, "sft-r3") == 0) {
+                    aa.xforms |= (1 << KI_XFORM_SFT_R3);
                 } else {
                     fprintf(stderr, "[ERROR] --xform: unknown '%s'. "
-                            "Valid: all, id, hflip, vflip, dflip1, dflip2, rot90, rot180, rot270\n", tok);
+                            "Valid: all, shift, augmentation, performance, id, hflip, vflip, dflip1, dflip2, "
+                            "rot90, rot180, rot270, sft-u1/2/3, sft-d1/2/3, sft-l1/2/3, sft-r1/2/3\n", tok);
                     exit(1);
                 }
             }
@@ -841,11 +897,11 @@ static inline void ki_parse_args(int argc, char *argv[]) {
 
             /* ── Encoding-Alias-Expansion ─────────────────────────────
              * Dataset-specific aliases defined in ki-local.h
-             * via ki_alias_lookup().  Iterative 5-pass expansion:
+             * via ki_encoding_alias_lookup().  Iterative 5-pass expansion:
              * Phase 1: full-string match, Phase 2: per-token. */
             for (int _iter = 0; _iter < 5; _iter++) {
                 /* Phase 1: full string match */
-                const char *_full = ki_alias_lookup(buf);
+                const char *_full = ki_encoding_alias_lookup(buf);
                 if (_full) {
                     strncpy(buf, _full, sizeof(buf) - 1);
                     buf[sizeof(buf) - 1] = '\0';
@@ -858,7 +914,7 @@ static inline void ki_parse_args(int argc, char *argv[]) {
                 char *_t = strtok(_tmp, ",");
                 int _any = 0;
                 while (_t) {
-                    const char *_val = ki_alias_lookup(_t);
+                    const char *_val = ki_encoding_alias_lookup(_t);
                     if (_val) {
                         if (_new[0]) strncat(_new, ",", sizeof(_new) - 1);
                         strncat(_new, _val, sizeof(_new) - strlen(_new) - 1);
@@ -1004,7 +1060,7 @@ static inline void ki_parse_args(int argc, char *argv[]) {
                 char _def_buf[256] = "latest";
                 for (int _iter = 0; _iter < 5; _iter++) {
                     /* Phase 1: full-string match */
-                    const char *_full = ki_alias_lookup(_def_buf);
+                    const char *_full = ki_encoding_alias_lookup(_def_buf);
                     if (_full) {
                         strncpy(_def_buf, _full, sizeof(_def_buf) - 1);
                         _def_buf[sizeof(_def_buf) - 1] = '\0';
@@ -1018,7 +1074,7 @@ static inline void ki_parse_args(int argc, char *argv[]) {
                     int _any = 0;
                     while (_t) {
                         while (*_t == ' ' || *_t == '\t') _t++;
-                        const char *_val = ki_alias_lookup(_t);
+                        const char *_val = ki_encoding_alias_lookup(_t);
                         if (_val) {
                             if (_new[0]) strncat(_new, ",", sizeof(_new) - 1);
                             strncat(_new, _val, sizeof(_new) - strlen(_new) - 1);
@@ -1256,7 +1312,7 @@ static const char *target_init_str(void) {
  * Uses static buffer, analog to color_str(). */
 __attribute__((unused))
 static const char *xform_str(void) {
-    static char _xform_buf[64];
+    static char _xform_buf[192];
     int pos = 0;
     for (int x = 0; x < KI_XFORM_COUNT; x++) {
         if (!(aa.xforms & (1 << x))) continue;

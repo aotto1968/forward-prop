@@ -328,7 +328,12 @@ Voting:  Σ_members score[k]  →  argmax</pre>
             </table>
             <p><strong>ey-a, ey-b, ey-c are the same pattern permuted.</strong> All three use
             <code>up+down+sig+sig</code> on different raw color channels: ey-b → G, ey-a → B,
-            ey-c → R. After ey-a (B) and ey-b (G) are in the system, ey-c (R) adds no new
+            ey-c → R. <code>ey-a-2</code>, <code>ey-b-2</code>, <code>ey-c-2</code> are
+            <strong>color-free</strong> variants that omit the raw color block (3 blocks instead
+            of 4) — useful for testing whether color information drives performance, or whether
+            opponent channels alone suffice. The <code>performance</code> alias combines
+            <code>ey-b-2,ey-a-2,ey-h,ey-s-2</code> for a 12-member color-free ensemble.
+            After ey-a (B) and ey-b (G) are in the system, ey-c (R) adds no new
             encoding structure — only another projection onto the remaining raw color channel.
             The information from <code>up+down+sig+sig</code> on RGB is already captured by the
             first two combinations.</p>
@@ -355,13 +360,20 @@ Voting:  Σ_members score[k]  →  argmax</pre>
         <section id="xform" class="paper-section">
             <h2>5. Geometric Transform Ensemble (<code>--xform</code>)</h2>
 
-            <p>Introduced 2026-07-16. Each active image transform (8 transforms:
+            <p>Introduced 2026-07-16. Each active image transform (8 D4 transforms:
             <code>id</code>, <code>hflip</code>, <code>vflip</code>, <code>dflip1</code>,
             <code>dflip2</code>, <code>rot90</code>, <code>rot180</code>, <code>rot270</code>)
             becomes a <strong>new dimension in the member grid</strong> — like adding an extra
             <code>--ensembleN</code> but with <strong>structured geometric variation</strong>
-            instead of random seeds. Note: CIFAR-10 results below use <strong>5 transforms</strong>
-            (flips + transposes); the 3 pure rotations were added later and not yet benchmarked on CIFAR.</p>
+            instead of random seeds. Four aliases are available:</p>
+            <ul>
+                <li><code>--xform all</code> — all 8 D4 transforms</li>
+                <li><code>--xform shift</code> — all 12 pixel shifts (= augmentation - all)</li>
+                <li><code>--xform performance</code> — id, hflip, vflip, rot90 (4 transforms, faster experiments)</li>
+                <li><code>--xform augmentation</code> — all + shift = <strong>20 transforms total</strong></li>
+            </ul>
+            <p>Note: CIFAR-10 results below use <strong>5 transforms</strong> (flips + transposes);
+            the 3 pure rotations were added later and not yet benchmarked on CIFAR.</p>
 
             <pre>Grid: ENSEMBLE[EN] × XFORM[XF] × COLOR[C] × HN[H] = EN × XF × C × H members
 Each xform gets its OWN W0 + Target + Offset — trained independently.</pre>
@@ -427,7 +439,35 @@ Each xform gets its OWN W0 + Target + Offset — trained independently.</pre>
                     capacity. H=1024 reaches +1.3pp over ensembleN (with 5 transforms).</li>
                 <li><strong>64.5% is the ceiling.</strong> Even with geometric
                     diversity, the frozen MAJ3 projection cannot exceed this limit.</li>
+                <li><strong>Xforms + encoding help low H, not the ceiling.</strong>
+                    More transforms or encoding members provide extra signal that matters
+                    most at low hiddenN — but they do <em>not</em> raise the ceiling.
+                    The ceiling is determined by H (hidden neurons), not by input
+                    diversity. The table below compares <code>--xform all</code> (8 D4)
+                    vs <code>--xform performance</code> (4 D4) at equal
+                    <code>--encoding performance</code>:</li>
             </ol>
+            <table>
+                <tr><th>H</th><th>8 xforms</th><th>4 xforms</th><th>Δ</th></tr>
+                <tr><td>512</td><td>64.4%</td><td>63.7%</td><td>+0.7pp</td></tr>
+                <tr><td>256</td><td>64.1%</td><td>63.5%</td><td>+0.6pp</td></tr>
+                <tr><td>128</td><td>63.3%</td><td>62.2%</td><td>+1.1pp</td></tr>
+                <tr><td>64</td><td>61.4%</td><td>59.3%</td><td>+2.1pp</td></tr>
+                <tr><td>32</td><td>58.7%</td><td>57.4%</td><td>+1.3pp</td></tr>
+                <tr><td>16</td><td>54.8%</td><td>53.4%</td><td>+1.4pp</td></tr>
+                <tr><td>8</td><td>48.8%</td><td>47.1%</td><td>+1.7pp</td></tr>
+            </table>
+            <p><strong>Interpretation:</strong> At H=8, doubling the transforms from
+            4→8 gives +1.7pp — the extra signal is meaningful because H is the
+            bottleneck. At H=512, the same doubling gives only +0.7pp — H is no
+            longer the bottleneck; the data ceiling dominates. More transforms or
+            encoding members simply accelerate the convergence curve at each H —
+            they cannot exceed the information capacity of H neurons.</p>
+            <p><strong>Same pattern for encoding diversity:</strong> Section 4.7 shows
+            that at H=64, more encoding members always help (54.5% with 11 members vs
+            53.0% with 5× repeat). But at H=1024 (Section 4.3), adding ey-c (15 members)
+            reaches <em>worse</em> accuracy than latest (11 members) — the member
+            ceiling has been reached. <strong>More members help only until H saturates.</strong></p>
 
             <h3>5.5 Pure Rotations (rot90, rot180, rot270)</h3>
             <p>Added 2026-07-16. Three pure rotations complement the flip/transpose set,
@@ -442,6 +482,29 @@ Each xform gets its OWN W0 + Target + Offset — trained independently.</pre>
             promising for CIFAR where texture orientation matters (LBP, DoG, dir channels
             would see flipped patterns). Not yet benchmarked on CIFAR-10; the current
             <strong>64.4% record uses 5 transforms</strong> (flips + transposes).</p>
+
+            <h3>5.6 Pixel Shifts — Resolution Diversity</h3>
+            <p>Added 2026-07-16. Twelve pixel shifts (up/down/left/right × 1/2/3 px)
+            complement the D4 geometric set. Unlike D4 transforms (which permute pixels
+            within the image), shifts <strong>move the MAJ3 projection window</strong>,
+            exposing different 3×3 neighborhoods at each position. Vacated pixels are
+            filled with 0 (black), making the shift visible to all channels (Sobel
+            gradients, LBP texture, DoG edges all see the new border).</p>
+            <table>
+                <tr><th>Token</th><th>Transform</th><th>Effect</th></tr>
+                <tr><td><code>sft-u1/2/3</code></td><td>Shift up</td><td>Rows 1-3 from top become 0</td></tr>
+                <tr><td><code>sft-d1/2/3</code></td><td>Shift down</td><td>Rows 1-3 from bottom become 0</td></tr>
+                <tr><td><code>sft-l1/2/3</code></td><td>Shift left</td><td>Cols 1-3 from left become 0</td></tr>
+                <tr><td><code>sft-r1/2/3</code></td><td>Shift right</td><td>Cols 1-3 from right become 0</td></tr>
+            </table>
+            <p><strong>Key difference from D4:</strong> Shifts change the pixel content
+            (some pixels lost to zero border), not just the arrangement. This creates
+            <strong>resolution diversity</strong> — the corrector sees the same object
+            at different sub-pixel alignments, forcing it to learn shift-invariant
+            features. The <code>--xform shift</code> alias activates all 12 shifts at once.
+            Combined with D4 transforms via <code>--xform augmentation</code>,
+            the grid expands to <strong>20 transforms × up to 17 channels = 340 members</strong>.
+            Not yet benchmarked on CIFAR-10.</p>
         </section>
 
         <!-- 6. Ceiling -->
@@ -465,6 +528,13 @@ Each xform gets its OWN W0 + Target + Offset — trained independently.</pre>
             beyond the encoding-only ceiling of 61.4%. Only adding genuinely new information
             sources (LBP → 62.3%, dir+range+lbp-rg → 63.7%, geometric transforms → 64.4%)
             produced measurable gains.</p>
+            <p><strong>Critical nuance: input diversity helps low H, not the ceiling.</strong>
+            More transforms or encoding members provide a genuine boost at small H (up to
+            +2.1pp at H=64) — but the gain shrinks as H grows (+0.7pp at H=512). The
+            ceiling of ~65% is determined by the number of hidden neurons, not by how many
+            transforms or encoding members feed them. This is because the corrector has
+            only H×32 bits of target memory — information capacity scales with H, not
+            with input diversity. See Section 5.4 for the full data.</p>
             <ol>
                 <li><strong>Frozen W0</strong> — corrector can only reweight, not create features.</li>
                 <li><strong>√H scaling</strong> — after H=512, diminishing returns dominate.</li>
@@ -486,10 +556,13 @@ Each xform gets its OWN W0 + Target + Offset — trained independently.</pre>
                 <tr><td>Spatial channels (no xform)</td><td><code>--hiddenN 512 --ensembleN 3 --epochsN 16 --encoding ey-b,ey-a,ey-h,ey-s-1,ey-s-2</code></td><td><strong>63.5% in 272s</strong></td></tr>
             </table>
             <p>All configs use default <code>count</code> target init and <code>cos-time</code> step schedule.
-            <code>latest</code> = 17 encoding members. <code>--xform all</code> = now 8 transforms
+            <code>latest</code> = 17 encoding members. <code>--xform all</code> = 8 D4 transforms
             (id, hflip, vflip, dflip1, dflip2, rot90, rot180, rot270), giving up to 136 total members.
-            The transform ensemble is a pure structural multiplier — no special eval path needed.
-            CIFAR-10 results above used 5 transforms (the rotation set was added later).</p>
+            <code>--xform augmentation</code> = all 8 D4 + 12 pixel shifts = 20 transforms,
+            giving up to <strong>340 total members</strong>. The transform ensemble is a pure
+            structural multiplier — no special eval path needed.
+            CIFAR-10 results above used 5 transforms (the rotation set was added later).
+            Shifts have not yet been benchmarked on CIFAR-10.</p>
         </section>
 
     </div>

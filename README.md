@@ -416,6 +416,14 @@ bash bin/run-ensemble.sh --repeat 20 ./cifar/cifar-mlp-bin32-otto-trn-xnor.exe \
   (train + test). No h0_neuron during training.
 - **Flat arrays removed**: `target_ens`/`offset_ens`/`best_ens`/`err_ens` eliminated.
   Each member stores its own targets.
+- **Xforms + Encoding help low H, not the ceiling**: Geometric transforms (`--xform`)
+  and encoding diversity (`--encoding`) improve accuracy at low hiddenN by providing
+  more signal per member — but they do NOT raise the ~65% CIFAR-10 ceiling.
+  Example: H=8 reaches 48.8% with 8 transforms vs 47.1% with 4 transforms (+1.7pp),
+  but at H=512 both plateau at 64.4% vs 63.7% (+0.7pp). The ceiling is determined
+  by H (hidden neurons), not by input diversity. More transforms or encoding members
+  simply accelerate the convergence curve at each H — they cannot exceed the
+  information capacity of H neurons.
 
 ## References
 

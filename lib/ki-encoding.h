@@ -51,7 +51,20 @@ enum ki_xform {
     KI_XFORM_ROT90   = 5,   /* Rotate 90° clockwise */
     KI_XFORM_ROT180  = 6,   /* Rotate 180° (hflip+vflip) */
     KI_XFORM_ROT270  = 7,   /* Rotate 270° clockwise (≡ rot90⁻¹) */
-    KI_XFORM_COUNT   = 8
+    /* Shifts (12 variants) — move image in 4 directions × 3 distances */
+    KI_XFORM_SFT_U1  = 8,   /* Shift up 1 px */
+    KI_XFORM_SFT_U2  = 9,   /* Shift up 2 px */
+    KI_XFORM_SFT_U3  = 10,  /* Shift up 3 px */
+    KI_XFORM_SFT_D1  = 11,  /* Shift down 1 px */
+    KI_XFORM_SFT_D2  = 12,  /* Shift down 2 px */
+    KI_XFORM_SFT_D3  = 13,  /* Shift down 3 px */
+    KI_XFORM_SFT_L1  = 14,  /* Shift left 1 px */
+    KI_XFORM_SFT_L2  = 15,  /* Shift left 2 px */
+    KI_XFORM_SFT_L3  = 16,  /* Shift left 3 px */
+    KI_XFORM_SFT_R1  = 17,  /* Shift right 1 px */
+    KI_XFORM_SFT_R2  = 18,  /* Shift right 2 px */
+    KI_XFORM_SFT_R3  = 19,  /* Shift right 3 px */
+    KI_XFORM_COUNT   = 20
 };
 
 /* ── Xform short name for display ──────────────────────────────── */
@@ -65,6 +78,18 @@ static inline const char *ki_xform_name(int xf) {
         [KI_XFORM_ROT90]  = "rot90",
         [KI_XFORM_ROT180] = "rot180",
         [KI_XFORM_ROT270] = "rot270",
+        [KI_XFORM_SFT_U1] = "sft-u1",
+        [KI_XFORM_SFT_U2] = "sft-u2",
+        [KI_XFORM_SFT_U3] = "sft-u3",
+        [KI_XFORM_SFT_D1] = "sft-d1",
+        [KI_XFORM_SFT_D2] = "sft-d2",
+        [KI_XFORM_SFT_D3] = "sft-d3",
+        [KI_XFORM_SFT_L1] = "sft-l1",
+        [KI_XFORM_SFT_L2] = "sft-l2",
+        [KI_XFORM_SFT_L3] = "sft-l3",
+        [KI_XFORM_SFT_R1] = "sft-r1",
+        [KI_XFORM_SFT_R2] = "sft-r2",
+        [KI_XFORM_SFT_R3] = "sft-r3",
     };
     if (xf >= 0 && xf < KI_XFORM_COUNT) return names[xf];
     return "?";
@@ -131,6 +156,43 @@ static inline void ki_xform_raw(uint8_t *restrict out,
                 for (int x = 0; x < w; x++)
                     dst[y * w + x] = src[(w - 1 - x) * w + y];
             break;
+        /* ── Shifts: move entire image, fill vacated with 0 ──────── */
+        case KI_XFORM_SFT_U1: case KI_XFORM_SFT_U2: case KI_XFORM_SFT_U3: {
+            int n = xf - KI_XFORM_SFT_U1 + 1;
+            for (int y = 0; y < h; y++) {
+                if (y + n < h)
+                    memcpy(dst + y * w, src + (y + n) * w, (size_t)w);
+                else
+                    memset(dst + y * w, 0, (size_t)w);
+            }
+            break;
+        }
+        case KI_XFORM_SFT_D1: case KI_XFORM_SFT_D2: case KI_XFORM_SFT_D3: {
+            int n = xf - KI_XFORM_SFT_D1 + 1;
+            for (int y = h - 1; y >= 0; y--) {
+                if (y - n >= 0)
+                    memcpy(dst + y * w, src + (y - n) * w, (size_t)w);
+                else
+                    memset(dst + y * w, 0, (size_t)w);
+            }
+            break;
+        }
+        case KI_XFORM_SFT_L1: case KI_XFORM_SFT_L2: case KI_XFORM_SFT_L3: {
+            int n = xf - KI_XFORM_SFT_L1 + 1;
+            for (int y = 0; y < h; y++) {
+                memmove(dst + y * w, src + y * w + n, (size_t)(w - n));
+                memset(dst + y * w + w - n, 0, (size_t)n);
+            }
+            break;
+        }
+        case KI_XFORM_SFT_R1: case KI_XFORM_SFT_R2: case KI_XFORM_SFT_R3: {
+            int n = xf - KI_XFORM_SFT_R1 + 1;
+            for (int y = 0; y < h; y++) {
+                memmove(dst + y * w + n, src + y * w, (size_t)(w - n));
+                memset(dst + y * w, 0, (size_t)n);
+            }
+            break;
+        }
         }
     }
 }

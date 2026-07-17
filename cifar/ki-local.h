@@ -368,17 +368,24 @@ static const char *ki_class_names[KI_NCLASSES] = {
 
 /* ── Encoding aliases (dataset-specific) ──────────────────────── */
 #define KI_COMMON_ALIAS_LOOKUP
-static const char *ki_alias_lookup(const char *name) {
+static const char *ki_encoding_alias_lookup(const char *name) {
     if (strcasecmp(name, "ey-a") == 0) return "b=up,al=down,am=sig,ap=sig";
     if (strcasecmp(name, "ey-b") == 0) return "g=up,bl=down,bm=sig,bp=sig";
     if (strcasecmp(name, "ey-c") == 0) return "r=up,cl=down,cm=sig,cp=sig";
+    if (strcasecmp(name, "ey-a-2") == 0) return "al=down,am=sig,ap=sig";
+    if (strcasecmp(name, "ey-b-2") == 0) return "bl=down,bm=sig,bp=sig";
+    if (strcasecmp(name, "ey-c-2") == 0) return "cl=down,cm=sig,cp=sig";
     if (strcasecmp(name, "ey-h") == 0) return "h=down,c=exp,gb=sig";
+    if (strcasecmp(name, "ey-h-2") == 0) return "h=up,c=gamma,gb=sig";
     if (strcasecmp(name, "ey-s") == 0) return "lbp=up,dog=sig,var=exp";
     if (strcasecmp(name, "ey-s-1") == 0) return "lbp=gamma,dog=sig,var=exp";
     if (strcasecmp(name, "ey-s-2") == 0) return "dir=down,range=log,lbp-rg=mid";
+    if (strcasecmp(name, "ey-s-3") == 0) return "range=exp,var=log,dir=tri";
     if (strcasecmp(name, "best-mnist") == 0) return "exp,log,log";
     if (strcasecmp(name, "top-rgb") == 0) return "r=down,g=down,b=down";
-    if (strcasecmp(name, "latest") == 0) return "ey-b,ey-a,ey-h,ey-s-1,ey-s-2";
+    if (strcasecmp(name, "latest") == 0) return "performance";
+    if (strcasecmp(name, "performance") == 0) return "ey-b-2,ey-a-2,ey-h-2,ey-s-2";
+    if (strcasecmp(name, "performance-2") == 0) return "ey-b-2,ey-a-2,ey-h,ey-s-2";
     if (strcasecmp(name, "latest-2") == 0) return "g=down,bl=gamma,bm=sig,bp=sig,b=sqrt,al=down,am=sig,ap=sig,h=lin,c=cbrt,gb=sig";
     return NULL;
 }

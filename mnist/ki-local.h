@@ -336,7 +336,7 @@ static const char *ki_class_names[KI_NCLASSES] = {
 
 /* ── Encoding aliases (dataset-specific) ──────────────────────── */
 #define KI_COMMON_ALIAS_LOOKUP
-static const char *ki_alias_lookup(const char *name) {
+static const char *ki_encoding_alias_lookup(const char *name) {
     if (strcasecmp(name, "latest") == 0) return "exp";
     return NULL;
 }

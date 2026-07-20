@@ -65,7 +65,7 @@ The MAJ3 operation compresses NC_slice containers into 32 bits via bitwise major
 For each neuron h (0..H-1):
     For each container c (0..NC_slice-1):
         match[c] = MAJ3( ~(input[c] ⊕ W0[h][c]) )
-    h0[h] = majority_tree(match, NC_slice)
+    h0[h] = majority_tree3(match, NC_slice)
 ```
 
 **Hardware mapping:** NC_slice DRAM rows per neuron. Each cell stores 1 weight bit + XNOR logic. The MAJ3 gate computes per-container agreement. The majority tree combines all containers into one 32-bit result.

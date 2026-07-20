@@ -17,7 +17,7 @@
 CC       = gcc
 CFLAGS   = -O3 -g -march=native -fopenmp -Wall -Wextra -Werror \
            -Wconversion -Wsign-conversion -Wfloat-equal -Wundef -Wshadow -Wunused \
-           -I../lib
+           -I. -I../lib -I..
 LDLIBS   = -lm -lz
 
 MODEL_DIR = ../models
@@ -35,7 +35,7 @@ setup:
 # ═══════════════════════════════════════════════════════════
 # Otto Score Trainer
 # ═══════════════════════════════════════════════════════════
-OTTO_SRC = mlp-bin32-otto-trn.c
+OTTO_SRC = mlp-bin32-otto-trn-seq.c
 
 otto: fashion-mlp-bin32-otto-trn-xnor.exe fashion-mlp-bin32-otto-trn-xor.exe
 
@@ -137,6 +137,17 @@ test-adam: fashion-mlp-flt32-adam-trn.exe
 	  --import $(MODEL_DIR)/fashion-adam-h512-e10 --evalN 10000 2>&1 | grep '^REPORT'
 
 test: test-otto test-adam test-hebbian
+
+# ═══════════════════════════════════════════════════════════════
+# Bit-Voting Baseline (experiment)
+# ═══════════════════════════════════════════════════════════════
+
+BITVOTE_SRC = mlp-bin32-otto-trn-bitvoting.c
+
+bitvote: fashion-mlp-bin32-otto-trn-bitvoting.exe
+
+fashion-mlp-bin32-otto-trn-bitvoting.exe: $(BITVOTE_SRC) $(HDRS)
+	$(CC) $(CFLAGS) -Wno-sign-conversion -Wno-unused-parameter -Wno-unused-function -Wno-unused-variable -o $@ $< $(LDLIBS)
 
 # ═══════════════════════════════════════════════════════════
 # Clean

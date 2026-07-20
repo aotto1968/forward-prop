@@ -27,6 +27,10 @@
 #define KI_DATASET_ID             3       /* unique for cache key (0=MNIST, 1=CIFAR, 2=CINIC) */
 #define KI_DATASET_NAME         "FASHION"
 #define KI_PX                   784
+#define KI_BIT_WIDTH            8       /* bits per pixel (8/16/24/32) */
+#define KI_PX_PER_CONT_W        (32 / KI_BIT_WIDTH)  /* 4 bei 8bit, 2 bei 16bit, 1 bei 32bit */
+#define KI_ROWS                 28
+#define KI_COLS                 28
 #define KI_NCLASSES             10
 #define KI_DEFAULT_LR           0.05f   /* → step = 0.05 × 131072 = 6554 */
 #define KI_DEFAULT_STEP_POWER   0.1f    /* higher yields smaller trn */
@@ -34,13 +38,9 @@
 #define KI_DEFAULT_BATCH_N      64      /* optimum */
 #define KI_COLORS               1       /* Fashion-MNIST is grayscale */
 #define KI_DEFAULT_COLOR        (1<<COLOR_MNIST)  /* single grayscale block */
-#ifndef KI_NC
-#define KI_NC                   196     /* Packed containers per image: 784/4 */
-#endif
+#define KI_NC                   (KI_PX / KI_PX_PER_CONT_W)  /* Container: 784/4=196 bei 8bit, 784/1=784 bei 32bit */
 #define KI_NC_TOTAL             (KI_NC * KI_COLORS)
-#ifndef KI_PACK
-#define KI_PACK                 (784 / KI_NC)  /* Pixels per container */
-#endif
+#define KI_PACK                 KI_PX_PER_CONT_W
 
 #ifndef NC
 #define NC  KI_NC

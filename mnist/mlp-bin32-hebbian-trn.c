@@ -133,7 +133,7 @@ static uint32_t *load_input(const uint8_t *X_raw, int n_samples) {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
- * H0 via majority_tree (full MAJ3 over nc_slice containers)
+ * H0 via majority_tree3 (full MAJ3 over nc_slice containers)
  * ═══════════════════════════════════════════════════════════════════════ */
 static inline void h0_compute(const uint32_t *in, const uint32_t *W0,
                                uint32_t *h0, int H, int nc) {
@@ -142,7 +142,7 @@ static inline void h0_compute(const uint32_t *in, const uint32_t *W0,
         uint32_t match[4096];
         for (int c = 0; c < nc; c++)
             match[c] = H0_OP(in[c], row[c]);
-        h0[h] = majority_tree(match, nc);
+        h0[h] = majority_tree3(match, nc);
     }
 }
 
@@ -333,7 +333,9 @@ ki_Args aa = {
     .seed     = 42,
     .hebbian_pct = 50,
     .ensembleN   = 1,
+    .enc_size    = KI_ENC_WIDTH_DEFAULT,
     .seed_splitmix = 1,
+    .member_threshold = 0,
 };
 
 int main(int argc, char *argv[]) {
@@ -411,7 +413,7 @@ int main(int argc, char *argv[]) {
 
         printf("\n══╡ RESULT ╞══  %d members  H=%d  Hebbian %s  Eval: %.1f%%  time=%dms\n",
                n_loaded, models[0]->H, H0_STR, acc, el);
-        ki_report_show(0, 0, (int)(acc * (float)te / 100.0f + 0.5f), te, el, aa.threadN, 0, 0.0f);
+        ki_report_show(0, 0, (int)(acc * (float)te / 100.0f + 0.5f), te, el, aa.threadN, 0, 0.0f, 0);
         free(X_all); ki_dataset_free(&data);
         for (int i = 0; i < n_loaded; i++) model_free(models[i]);
         return 0;
@@ -588,7 +590,7 @@ int main(int argc, char *argv[]) {
            H, aa.ensembleN, total_members, epochs, (double)trn_acc, (double)acc, (double)best_acc, ms);
     int eval_ok = (int)(acc * (float)te / 100.0f + 0.5f);
     int train_ok = (int)(trn_acc * (float)aa.trainN / 100.0f + 0.5f);
-    ki_report_show(train_ok, aa.trainN, eval_ok, te, ms, aa.threadN, 0, 0.0f);
+    ki_report_show(train_ok, aa.trainN, eval_ok, te, ms, aa.threadN, 0, 0.0f, 0);
 
     /* ── Confusion matrix (end only) ───────────────────────────── */
     if ((aa.debug_confusion || aa.debug_confusion_all) && !aa.dry_run) {

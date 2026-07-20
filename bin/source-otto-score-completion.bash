@@ -84,9 +84,12 @@ _otto_trn_complete() {
     [[ -z "$binpath" ]] && { COMPREPLY=(); return 0; }
 
     # ── Cache: flag list from binary --completion ────────
-    if [[ "${_OTTO_FLAGS_CACHE_BIN:-}" != "$binpath" ]]; then
+    local _otto_mtime
+    _otto_mtime=$(stat -c '%Y' "$binpath" 2>/dev/null || echo 0)
+    if [[ "${_OTTO_FLAGS_CACHE_BIN:-}" != "$binpath" || "${_OTTO_FLAGS_CACHE_MTIME:-0}" != "$_otto_mtime" ]]; then
         _OTTO_FLAGS_CACHE=$("$binpath" --completion 2>/dev/null)
         _OTTO_FLAGS_CACHE_BIN="$binpath"
+        _OTTO_FLAGS_CACHE_MTIME="$_otto_mtime"
     fi
 
     # ── Complete flag name ──────────────────────────────

@@ -17,7 +17,7 @@
 CC       = gcc
 CFLAGS   = -O3 -g -march=native -fopenmp -Wall -Wextra -Werror \
            -Wconversion -Wsign-conversion -Wfloat-equal -Wundef -Wshadow -Wunused \
-           -I../lib
+           -I. -I../lib -I..
 LDLIBS   = -lm -lz
 
 MODEL_DIR = ../models
@@ -35,7 +35,7 @@ setup:
 # ═══════════════════════════════════════════════════════════
 # Otto Score Trainer
 # ═══════════════════════════════════════════════════════════
-OTTO_SRC = mlp-bin32-otto-trn.c
+OTTO_SRC = mlp-bin32-otto-trn-seq.c
 
 otto: mnist-mlp-bin32-otto-trn-xnor.exe mnist-mlp-bin32-otto-trn-xor.exe
 
@@ -70,6 +70,7 @@ mnist-mlp-bin32-hebbian-trn-xor.exe: $(HEBB_SRC) ki-common.h
 	$(CC) $(CFLAGS) \
 	  -Wno-sign-conversion -Wno-unused-parameter -Wno-unused-function -Wno-unused-variable \
 	  -DH0_XOR -o $@ $< $(LDLIBS)
+
 
 model-hebbian: mnist-mlp-bin32-hebbian-trn-xnor.exe
 	@mkdir -p $(MODEL_DIR)/mnist-hebbian-h512-e10
@@ -142,9 +143,23 @@ merge-ensemble: mnist-merge-ensemble.exe
 mnist-merge-ensemble.exe: $(MERGE_SRC)
 	$(CC) $(CFLAGS) -Wno-sign-conversion -Wno-unused-parameter -Wno-unused-function -o $@ $< $(LDLIBS)
 
+# ═══════════════════════════════════════════════════════════════
+# Bit-Voting Baseline (experiment)
+# ═══════════════════════════════════════════════════════════════
+
+BITVOTE_SRC = mlp-bin32-otto-trn-bitvoting.c
+
+bitvote: mnist-mlp-bin32-otto-trn-bitvoting.exe
+
+mnist-mlp-bin32-otto-trn-bitvoting.exe: $(BITVOTE_SRC) $(HDRS)
+	$(CC) $(CFLAGS) -Wno-sign-conversion -Wno-unused-parameter -Wno-unused-function -Wno-unused-variable -o $@ $< $(LDLIBS)
+
 # ── Clean ──────────────────────────────────────────────────
 clean:
 	rm -f *.exe
 
 clean-all: clean
 	rm -rf $(MODEL_DIR)/mnist-*
+
+optimize-ensemble:
+	@echo "  [SKIP] optimize-ensemble is a Python tool at bin/optimize-ensemble"

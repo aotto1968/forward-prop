@@ -15,7 +15,7 @@ For each container position c ∈ [0..NC_slice-1]:
     # MAJ3(a,b,c) = (a & b) | (a & c) | (b & c)
     # → 1 if at least 2 of 3 bits are 1
 
-H0[neuron] = majority_tree(match, NC_slice)
+H0[neuron] = majority_tree3(match, NC_slice)
 # → 1 bit per position if majority of containers agree
 ```
 
@@ -39,7 +39,7 @@ The full H0 computation for one neuron is:
 
 ```
 match[c] = MAJ3( ~(input[c] ⊕ W0[c]) )       // per container
-H0       = majority_tree(match, NC_slice)      // per neuron
+H0       = majority_tree3(match, NC_slice)      // per neuron
 ```
 
 ## Historical Lineage
@@ -67,7 +67,7 @@ output[neuron] = sign(popcount(XNOR(w, x)) - threshold)
 # Forward-Prop per-bit majority vote (bin32 via MAJ3):
 for c in 0..NC_slice-1:
     match[c] = MAJ3( ~(input[c] ⊕ W0[c]) )
-H0 = majority_tree(match, NC_slice)
+H0 = majority_tree3(match, NC_slice)
 # → 32 independent decisions, each bit preserved individually
 ```
 

@@ -223,7 +223,7 @@
             <div class="card">
                 <div class="driver-number" style="font-size:1.4rem; color:var(--amber);">Insight #1</div>
                 <h3>MAJ3 output is a bit-string, not a number</h3>
-                <p style="font-size:0.85rem;">The uint32 from <code>majority_tree</code> encodes 32 independent yes/no decisions. Treating it as a number (uint32 comparison) loses the pattern. <strong>The information is in the bits, not in the value.</strong></p>
+                <p style="font-size:0.85rem;">The uint32 from <code>majority_tree3</code> encodes 32 independent yes/no decisions. Treating it as a number (uint32 comparison) loses the pattern. <strong>The information is in the bits, not in the value.</strong></p>
             </div>
             <div class="card">
                 <div class="driver-number" style="font-size:1.4rem; color:var(--amber);">Insight #2</div>
@@ -233,7 +233,7 @@
             <div class="card">
                 <div class="driver-number" style="font-size:1.4rem; color:var(--amber);">Insight #3</div>
                 <h3>Random W0 is enough — frozen, never trained</h3>
-                <p style="font-size:0.85rem;">The random projection W0 balances MAJ3 input at ~50% 1s. This is the <em>only</em> condition where majority_tree produces informative features. <strong>Training W0 would destroy the balance.</strong></p>
+                <p style="font-size:0.85rem;">The random projection W0 balances MAJ3 input at ~50% 1s. This is the <em>only</em> condition where majority_tree3 produces informative features. <strong>Training W0 would destroy the balance.</strong></p>
             </div>
         </div>
 
@@ -585,7 +585,7 @@ MAJ3 + iterative   ──→ logit  (pattern + per-bit + 0-1 loss)     → 96%
 32-bit container   → 86.6%    ✓
 64-bit container   → same     ✓ (wider = more precision)
 128-bit container  → same     ✓ (no limit!)
-256-bit container  → same     ✓ (same majority_tree)
+256-bit container  → same     ✓ (same majority_tree3)
 ↑↑↑ MORE bits = MORE information. No upper bound.</pre>
             </div>
             <div class="card" style="background:#fce4ec; border-top-color:#c62828;">
@@ -672,7 +672,7 @@ fp4  → 4-bit, near random
         <div class="content-split" style="margin-top:1.5rem;">
             <div>
                 <h3>MAJ3 Library (lib/maj3.h)</h3>
-                <p style="font-size:0.9rem;">The <code>majority_tree</code> algorithm has a fix for edge cases:</p>
+                <p style="font-size:0.9rem;">The <code>majority_tree3</code> algorithm has a fix for edge cases:</p>
                 <ul class="bullet-list" style="font-size:0.85rem;">
                     <li><strong>n = 3^k+1</strong> (e.g., 244, 730): pass-through cascade → result ≈ 0</li>
                     <li><strong>n % 3 == 2</strong> (e.g., 32): AND cascade → too restrictive</li>
@@ -682,7 +682,7 @@ fp4  → 4-bit, near random
             </div>
             <div>
                 <h3>2-Layer Experiment</h3>
-                <p style="font-size:0.9rem;">A second random MAJ3 layer (W1 + majority_tree) adds no value. H0=H1=512 → 84.8% vs 1-layer 86.2%. Random projection is not hierarchical — one layer extracts as much as two.</p>
+                <p style="font-size:0.9rem;">A second random MAJ3 layer (W1 + majority_tree3) adds no value. H0=H1=512 → 84.8% vs 1-layer 86.2%. Random projection is not hierarchical — one layer extracts as much as two.</p>
             </div>
         </div>
     </section>

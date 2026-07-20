@@ -1,7 +1,7 @@
 # Otto Score — DRAM-Native MLP Classifier
 
 **MNIST: 99.0% in 4s  |  CIFAR-10: 61.2% single-run / 61.66% ensemble  |  Fashion-MNIST: 90.2%** — Zero floating point, zero matmul in inference.
-Only `&|~` + int32 + popcount. Also includes float32 AdamW + multi-member Hebbian baselines.
+Only `&|~` + int32 + popcount. Also includes float32 AdamW + multi-member Hebbian + **Bit-Voting linear baseline** (proves the 5pp W0 nonlinearity gap).
 
 ---
 
@@ -75,12 +75,62 @@ REPORT train=71.8% (60000) eval=71.0% (10000) ...
 | `make test-fashion-otto`      | Otto Score Fashion-MNIST only     |
 | `make test-fashion-adam`      | Float32 AdamW Fashion-MNIST only  |
 | `make test-fashion-hebbian`   | Bin32 Hebbian Fashion-MNIST only  |
+| `make test-mnist-bitvote`    | Bit-Voting baseline MNIST only    |
+| `make test-cifar-bitvote`    | Bit-Voting baseline CIFAR-10 only |
+| `make test-fashion-bitvote`  | Bit-Voting baseline Fashion-MNIST only |
 
 First run trains all 9 models. Subsequent runs use cached models (<1s total).
 
 ---
 
-## 📁 Directory Structure
+## 🔬 Key Findings
+
+### Majority Mode: `maj=3` > `maj=1` > `maj=1p`
+
+The lossy 3-group tree majority (`--maj 3`, default) consistently outperforms
+both the flat container majority (`--maj 1`) and the pixel-accurate majority
+(`--maj 1p`) — **at lower runtime cost**.
+
+CIFAR-10, H=768, 10 epochs, performance encoding, 12 members:
+
+| Majority | Eval | Time | vs maj=3 |
+|----------|------|------|----------|
+| **maj=3** (3-group tree) | **61.3%** | **57s** | baseline |
+| maj=1 (container flat) | 60.2% | 66s | −1.1pp, +16% |
+| maj=1p (pixel-accurate) | 60.2% | **178s** | −1.1pp, **3× slower** |
+
+**Insight:** The W0 random projection scatters 24576 input bits across 768×32=24576
+H0-bits. The 3-group majority (`maj=3`) compresses every 3 bits into 1 output bit
+with a threshold (2 of 3 = 1). This **lossy nonlinear compression** creates better
+feature abstraction than exact pixel-level counting (`maj=1p`), which is 3× slower
+and adds nothing. The nonlinearity comes from the **majority threshold**, not from
+pixel accuracy.
+
+### Otto Score vs Bit-Voting Baseline: +7pp at 3.6× Time
+
+CIFAR-10, H=768, 10 epochs, performance encoding, 12 members:
+
+| Approach | Eval | Time | Key Difference |
+|----------|------|------|----------------|
+| **Otto Score** (W0 + majority) | **61.3%** | 57s | Nonlinear feature abstraction |
+| Bit-Voting (linear) | 54.3% | **16s** | Direct bit voting, no W0 |
+
+Otto's +7pp come from the **dense W0 random projection** (24576 → 768×32 H0 bits)
+followed by majority-threshold — the same 24576 input bits distributed overcomplete
+and then nonlinearly compressed. The 41s overhead is the one-time W0×I0 computation
+(12 members × 768 H × 256 NC × 50K samples). DRAM hardware would execute this at
+memory speed with zero software overhead.
+
+### Bit-Masse Equivalence
+
+All three formats (flt32, int32, bin32) share the same information-theoretic
+container principle: **every neuron is a 32-bit container**. Float32 and int32
+differ only in computation format (multiply-add vs XNOR+popcount), not in
+capacity. The Bit-Voting baseline proves that the +5–7pp gap between Otto and
+linear voting is due to **nonlinear feature abstraction from W0 + majority**,
+not from more parameters or higher precision.
+
+---
 
 ```
 otto-score-ifc/
@@ -132,6 +182,7 @@ Each trainer doubles as inference engine via `--import`. Zero code drift.
 | `make models`  | Train all 9 models (cached)                       |
 | `make clean`   | Remove executables                                |
 | `make ensemble`| Build merge-ensemble only (mnist/ + cifar/)       |
+| `make bitvote` | Build Bit-Voting baseline (linear perceptron, no W0) |
 
 ## CLI Flags (unified across all trainers)
 
@@ -404,7 +455,7 @@ bash bin/run-ensemble.sh --repeat 20 ./cifar/cifar-mlp-bin32-otto-trn-xnor.exe \
 ./cifar/cifar-merge-ensemble.exe scores/ --filter eval gt 58
 ```
 
-## Key Findings (2026-07)
+### Implementation Details (2026-07)
 
 - **VN=2 Sweet Spot**: 25% retention via AND2 filter. Optimal for noisy data (CIFAR).
   For clean data (MNIST), VN=1 is better. VN=3+ (strict AND) only at very large H.
@@ -427,6 +478,9 @@ bash bin/run-ensemble.sh --repeat 20 ./cifar/cifar-mlp-bin32-otto-trn-xnor.exe \
 
 ## References
 
+- **Bit-Voting Baseline**: Linear perceptron on bit-level, no W0, no majority.
+  Proves the +5–7pp gap comes from nonlinear W0 projection, not information content.
+  [`www/papers/bitvoting-baseline.html`](www/papers/bitvoting-baseline.html)
 - **Float32 AdamW**: 1-layer MLP with LeakyReLU(0.05), MSE loss, AdamW optimizer.
   MNIST: 92.6% (10 ep). CIFAR: 41.2% (5 ep).
 - **Bin32 Hebbian (legacy)**: The old single-member Hebbian (raw pixels, no encoding)

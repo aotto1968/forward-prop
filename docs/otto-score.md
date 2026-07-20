@@ -66,7 +66,7 @@ uint32_t h0_neuron(const uint32_t *packed, const uint32_t *W0_row) {
     uint32_t match[NC];
     for (int c = 0; c < NC; c++)
         match[c] = H0_MATCH(packed, W0_row, c);
-    return majority_tree(match, NC);
+    return majority_tree3(match, NC);
 }
 // H0_MATCH = ~(in[c] ^ W0_row[c])    XNOR (default)
 // H0_MATCH =   in[c] ^ W0_row[c]     XOR  (-DH0_XOR)

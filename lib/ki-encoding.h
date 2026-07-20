@@ -220,7 +220,11 @@ enum ki_encoding {
     KI_ENC_COUNT    = 14
 };
 
-#define KI_ENC_WIDTH_DEFAULT 8
+#ifdef KI_BIT_WIDTH
+#  define KI_ENC_WIDTH_DEFAULT KI_BIT_WIDTH
+#else
+#  define KI_ENC_WIDTH_DEFAULT 8
+#endif
 
 /* ═══════════════════════════════════════════════════════════════════════
  * ENCODING NAMES (for display)

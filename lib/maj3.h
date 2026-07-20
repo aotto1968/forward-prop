@@ -4,7 +4,7 @@
  *
  * Provides:
  *   maj3(a,b,c)              — Majority of 3 uint32 (bit-parallel)
- *   majority_tree(vals, n)  — Majority tree over n values
+ *   majority_tree3(vals, n)  — Majority tree over n values
  *
  * Fix 2026-06-17: Passthrough cascade at n = 3^k+1
  *   When n%3==1 at EVERY level, a single value without majority vote
@@ -13,7 +13,7 @@
  *
  * Usage:
  *   #include "maj3.h"
- *   uint32_t r = majority_tree(data, 196);
+ *   uint32_t r = majority_tree3(data, 196);
  *
  * BUF: buffer size (uint32 count), default 4096 = 16 KB stack
  *      Overridable via -DMAJ3_BUF=8192
@@ -43,7 +43,7 @@ static inline uint32_t maj3(uint32_t a, uint32_t b, uint32_t c) {
 
 
 /**
- * majority_tree(vals, n) — Majority tree over n uint32 values.
+ * majority_tree3(vals, n) — Majority tree over n uint32 values.
  *
  * Reduces n uint32 values to 1 uint32 via majority tree.
  * Each level: partition into 3-groups → maj3 per group.
@@ -58,7 +58,7 @@ static inline uint32_t maj3(uint32_t a, uint32_t b, uint32_t c) {
  * @param n     number of values (> 0, ≤ MAJ3_BUF when using stack)
  * @return      Majority over all n values (per bit)
  */
-static inline uint32_t majority_tree(const uint32_t *vals, int n) {
+static inline uint32_t majority_tree3(const uint32_t *vals, int n) {
     uint32_t buf[MAJ3_BUF];
     if (n <= 0) return 0;
     if (n > MAJ3_BUF) n = MAJ3_BUF;

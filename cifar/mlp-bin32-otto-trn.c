@@ -1,1 +1,0 @@
-../mnist/mlp-bin32-otto-trn.c

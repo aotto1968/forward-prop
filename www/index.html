@@ -253,7 +253,7 @@ Score (Bayes log-Score):
   // bit=0: no extra term (log(1-P) in offset_k)
 pred = argmax(Score)</pre>
         <p style="font-size:0.82rem; text-align:right; margin-top:0.25rem;">
-             <a href="https://github.com/aotto1968/forward-prop/blob/master/otto-score-ifc/mnist/mlp-bin32-otto-trn.c" target="_blank">View trainer/inference source →</a>
+             <a href="https://github.com/aotto1968/forward-prop/blob/master/mnist/mlp-bin32-otto-trn.c" target="_blank">View trainer/inference source →</a>
         </p>
 
         <h3 style="margin-top:2rem;">Why offset + logit instead of raw counts?</h3>
@@ -382,7 +382,7 @@ CPU/GPU                            DRAM
 └──────────────────────┘         └──────────────┘
 Energy: ~90% data movement, ~10% computation</pre>
             <p style="font-size:0.75rem; text-align:right;">
-                <a href="https://github.com/aotto1968/forward-prop/blob/master/otto-score-ifc/mnist/ki-common.h" target="_blank">View matmul helpers →</a>
+                <a href="https://github.com/aotto1968/forward-prop/blob/master/mnist/ki-common.h" target="_blank">View matmul helpers →</a>
             </p>
             </div>
             <div class="card">
@@ -402,7 +402,7 @@ DRAM Row (784 cells)
 └──────────────────────────────────────┘
 Plus: int32 log-odds addition in peripheral logic</pre>
             <p style="font-size:0.75rem; text-align:right;">
-                <a href="https://github.com/aotto1968/forward-prop/blob/master/otto-score-ifc/lib/maj3.h" target="_blank">View MAJ3 source →</a>
+                <a href="https://github.com/aotto1968/forward-prop/blob/master/lib/maj3.h" target="_blank">View MAJ3 source →</a>
             </p>
             </div>
         </div>
@@ -567,9 +567,9 @@ MAJ3 + iterative   ──→ logit  (pattern + per-bit + 0-1 loss)     → 96%
   + AdamW bridge   ──→ float  (all of the above + AdamW)         → 95%
   (reference only)</pre>
         <p style="font-size:0.82rem; text-align:right; margin-top:0.25rem;">
-            <a href="https://github.com/aotto1968/forward-prop/blob/master/otto-score-ifc/mnist/mlp-bin32-hebbian-trn.c" target="_blank">View Hebbian source →</a>
+            <a href="https://github.com/aotto1968/forward-prop/blob/master/mnist/mlp-bin32-hebbian-trn.c" target="_blank">View Hebbian source →</a>
             &nbsp;|&nbsp;
-            <a href="https://github.com/aotto1968/forward-prop/blob/master/otto-score-ifc/reference/mnist-mlp-flt32-adam-trn.c" target="_blank">View AdamW source →</a>
+            <a href="https://github.com/aotto1968/forward-prop/blob/master/reference/mnist-mlp-flt32-adam-trn.c" target="_blank">View AdamW source →</a>
         </p>
     </section>
 
@@ -715,9 +715,9 @@ fp4  → 4-bit, near random
         <p>BitNeuron Research — Andreas Otto — 18 June 2026</p>
         <p><a href="https://forward-prop.nhi1.de/">forward-prop.nhi1.de</a> &nbsp;|&nbsp; <a href="https://github.com/aotto1968/forward-prop" target="_blank">GitHub</a></p>
         <p style="font-size:0.72rem; margin-top:0.5rem;">
-             Source code: <a href="https://github.com/aotto1968/forward-prop/blob/master/otto-score-ifc/mnist/mlp-bin32-otto-trn.c" target="_blank">otto-score (trainer+ifc)</a> ·
-             <a href="https://github.com/aotto1968/forward-prop/blob/master/otto-score-ifc/mnist/mlp-bin32-hebbian-trn.c" target="_blank">Hebbian (trainer+ifc)</a> ·
-             <a href="https://github.com/aotto1968/forward-prop/blob/master/otto-score-ifc/reference/mnist-mlp-flt32-adam-trn.c" target="_blank">AdamW (trainer)</a>
+             Source code: <a href="https://github.com/aotto1968/forward-prop/blob/master/mnist/mlp-bin32-otto-trn.c" target="_blank">otto-score (trainer+ifc)</a> ·
+             <a href="https://github.com/aotto1968/forward-prop/blob/master/mnist/mlp-bin32-hebbian-trn.c" target="_blank">Hebbian (trainer+ifc)</a> ·
+             <a href="https://github.com/aotto1968/forward-prop/blob/master/reference/mnist-mlp-flt32-adam-trn.c" target="_blank">AdamW (trainer)</a>
         </p>
     </div>
 </footer>

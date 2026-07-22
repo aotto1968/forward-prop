@@ -60,6 +60,17 @@
 <h1 style="font-size:2rem; color:var(--navy); margin-bottom:0.25rem;">Status Report — July 2026</h1>
 <p style="font-size:1.1rem; color:var(--mid-gray); margin-bottom:2rem;"><em>DRAM-native Classification via Bit-Logic Operations</em></p>
 
+<div style="background:linear-gradient(135deg, rgba(156,39,176,0.12), rgba(156,39,176,0.04)); border:2px solid #9C27B0; border-radius:8px; padding:1rem 1.5rem; margin-bottom:2rem;">
+    <strong style="font-size:1rem;">📈 Update July 21, 2026 — <a href="mnist-number.html#shuffle" style="color:#7B1FA2;">Pixel Shuffle Xforms Published</a> — Relation Beats Position</strong>
+    <ul style="margin:0.5rem 0 0 1.2rem; font-size:0.9rem;">
+        <li><strong><a href="mnist-number.html#shuffle">Pixel Shuffle Xform</a></strong> — New xform type: <code>--xform shuffle1..shuffle10</code> performs pairwise pixel permutation (Fisher-Yates, fixed seeds 1–10). Key insight: <strong>Otto Score compares pixel relations, not pixel positions</strong> — Shuffle costs only 0.4pp vs Identity on MNIST (97.2% vs 97.6%)</li>
+        <li><strong>Complete test series H=32..1024 × 1..7 Shuffles</strong> — 49 data points, all 10 epochs, MNIST. <a href="mnist-number.html#shuffle">See table in MNIST Paper</a></li>
+        <li><strong>Shuffle vs Ensemble:</strong> Different shuffles beat same shuffle (≙ W0 ensemble) by <strong>+1.5–1.7pp</strong>. Xform diversity > W0 diversity</li>
+        <li><strong>Three diversity sources (ranked):</strong> Xform (different neighborhoods) &gt; Geometric xforms (hflip, rot90) &gt; W0 ensemble (different seeds)</li>
+        <li><strong>Optimal config table:</strong> For every eval% target the fastest H/EN/Xform combination — <a href="mnist-number.html#recommendations">See Recommendations</a></li>
+    </ul>
+</div>
+
 <div style="background:linear-gradient(135deg, rgba(33,150,243,0.12), rgba(33,150,243,0.04)); border:2px solid #2196F3; border-radius:8px; padding:1rem 1.5rem; margin-bottom:2rem;">
     <strong style="font-size:1rem;">📈 Update July 20, 2026 — <a href="bitvoting-baseline.html" style="color:#1565C0;">Bit-Voting Baseline Published</a> — The 5pp Gap Proves W0 Nonlinearity</strong>
     <ul style="margin:0.5rem 0 0 1.2rem; font-size:0.9rem;">
@@ -322,6 +333,7 @@ parameters (H, epochs, VN, etc.) match — the tool validates this and rejects m
 <tr><td>Repository consolidated under <code>otto-score-ifc/</code></td><td>✅ Complete</td></tr>
 <tr><td><a href="mnist-number.html">MNIST research paper</a> — xforms replace ensembleN (7× faster)</td><td>✅ Published 2026-07-17</td></tr>
 <tr><td><a href="bitvoting-baseline.html">Bit-Voting Baseline</a> — 5pp gap proves W0 nonlinearity</td><td>✅ Published 2026-07-20</td></tr>
+<tr><td><a href="mnist-number.html#shuffle">Pixel Shuffle Xform</a> — Relation beats position, 10 shuffles, optimal config table</td><td>✅ Published 2026-07-21</td></tr>
 </table>
 
 <p style="margin-top:2rem;"><em>Andreas Otto — July 2026</em><br>

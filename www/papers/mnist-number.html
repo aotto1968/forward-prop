@@ -137,11 +137,16 @@
                 <tr><td>3</td><td><strong>97.9%</strong></td><td>100%</td><td>3</td><td><strong>512</strong></td><td>7</td><td>exp8</td><td><strong>all 5</strong></td><td><strong>31.0s</strong></td><td><strong>max eval (EN×XF)</strong></td></tr>
                 <tr><td>4</td><td><strong>97.9%</strong></td><td>100%</td><td>3</td><td>1024</td><td>7</td><td>exp8</td><td>all 5</td><td>62.7s</td><td>ceiling confirmed</td></tr>
                 <tr><td>5</td><td><strong>97.9%</strong></td><td>100%</td><td>1</td><td>512</td><td>7</td><td>exp8</td><td>all 8</td><td>10.4s</td><td>fast + max eval</td></tr>
-                <tr class="highlight-row"><td>6</td><td><strong>97.7%</strong></td><td>100%</td><td><strong>1</strong></td><td><strong>128</strong></td><td><strong>7</strong></td><td>exp8</td><td><strong>all 8</strong></td><td><strong>5.2s</strong></td><td><strong>🏆 fastest 97.7%</strong></td></tr>
-                <tr><td>7</td><td>97.7%</td><td>100%</td><td>1</td><td>128</td><td>10</td><td>exp8</td><td>all 8</td><td>6.4s</td><td>10 epochs, err=9</td></tr>
-                <tr><td>8</td><td>97.7%</td><td>100%</td><td>1</td><td>256</td><td>11</td><td>exp8</td><td>all 5</td><td>7.4s</td><td>err=1, near-perfect fit</td></tr>
+                <tr class="highlight-row"><td>1</td><td><strong>97.9%</strong></td><td>100%</td><td><strong>1</strong></td><td><strong>512</strong></td><td><strong>6</strong></td><td><strong>exp8</strong></td><td><strong>shuffle1..6</strong></td><td><strong>9.9s</strong></td><td><strong>🏆 max eval (<10s record)</strong></td></tr>
+                <tr><td>2</td><td><strong>98.1%</strong></td><td>99.6%</td><td>7</td><td>128</td><td>8</td><td>exp8,log8,sig8</td><td>id</td><td>39.4s</td><td>data-limited (evalN=1000)</td></tr>
+                <tr><td>3</td><td><strong>97.9%</strong></td><td>100%</td><td>1</td><td>1024</td><td>10</td><td>exp8</td><td>shuffle1..5</td><td>23.3s</td><td>max accuracy (slow)</td></tr>
+                <tr><td>4</td><td><strong>97.9%</strong></td><td>100%</td><td>3</td><td>512</td><td>7</td><td>exp8</td><td>all 5</td><td>31.0s</td><td>max eval (EN×XF, old)</td></tr>
+                <tr><td>5</td><td><strong>97.9%</strong></td><td>100%</td><td>1</td><td>512</td><td>7</td><td>exp8</td><td>all 8</td><td>10.4s</td><td>old xform record</td></tr>
+                <tr><td>6</td><td><strong>97.9%</strong></td><td>100%</td><td>3</td><td>1024</td><td>7</td><td>exp8</td><td>all 5</td><td>62.7s</td><td>ceiling confirmed</td></tr>
+                <tr class="highlight-row"><td>7</td><td><strong>97.7%</strong></td><td>100%</td><td><strong>1</strong></td><td><strong>128</strong></td><td><strong>7</strong></td><td>exp8</td><td><strong>all 8</strong></td><td><strong>5.2s</strong></td><td><strong>fastest 97.7%</strong></td></tr>
+                <tr><td>8</td><td>97.7%</td><td>100%</td><td>1</td><td>128</td><td>10</td><td>exp8</td><td>all 8</td><td>6.4s</td><td>10 epochs, err=9</td></tr>
                 <tr><td>9</td><td>97.8%</td><td>100%</td><td>3</td><td>256</td><td>7</td><td>exp8</td><td>all 5</td><td>16.2s</td><td>max eval (EN×XF)</td></tr>
-                <tr><td>10</td><td>97.7%</td><td>100%</td><td>3</td><td>128</td><td>7</td><td>exp8</td><td>all 5</td><td>9.4s</td><td>best budget (old)</td></tr>
+                <tr><td>10</td><td>97.9%</td><td>100%</td><td>1</td><td>1024</td><td>10</td><td>exp8</td><td>shuffle1..5</td><td>23.3s</td><td>max accuracy (slow)</td></tr>
             </table>
             <p style="font-size: 0.85rem; color: #666;"><strong>Note:</strong> On MNIST, <code>--encoding latest</code> = <code>--encoding exp8</code> (single grayscale channel). All thermometric encodings produce identical output on binary pixels.</p>
 
@@ -382,15 +387,107 @@ Result: <strong class="efficiency-badge">7× FASTER</strong> for the same accura
             </table>
         </section>
 
-        <!-- 8. Recommendations -->
+        <!-- 8. Random Pixel Shuffle -->
+        <section id="shuffle" class="paper-section">
+            <h2>8. Random Pixel Shuffle — Relation Beats Position</h2>
+
+            <p><code>--xform shuffle1..shuffle10</code> performs a random pairwise pixel permutation
+            (Fisher-Yates, fixed seeds 1–10, compiled into the code). Unlike geometric xforms
+            (hflip, rot90), shuffle destroys spatial neighborhood structure completely — but
+            preserves all information (bijection, no loss).</p>
+
+            <p><strong>Result: only 0.4pp below identity.</strong> H=196 with 6 shuffles reaches
+            97.6% vs 97.6% with id. The W0 random projection partially recovers spatial structure
+            because each h0-neuron mixes random pixels. <strong>Otto Score compares pixel
+            relations, not pixel positions.</strong></p>
+
+            <h3>8.1 Complete Test Series (10 epochs)</h3>
+
+            <table>
+                <tr><th>H</th><th>1 Shuf</th><th>2 Shuf</th><th>3 Shuf</th><th>4 Shuf</th><th>5 Shuf</th><th>6 Shuf</th><th>7 Shuf</th></tr>
+                <tr><td>32</td><td>89.8%</td><td>94.0%</td><td>95.0%</td><td>95.8%</td><td>96.1%</td><td>96.3%</td><td>96.5%</td></tr>
+                <tr><td>64</td><td>92.5%</td><td>95.5%</td><td>96.3%</td><td>96.8%</td><td>96.9%</td><td>97.0%</td><td>97.0%</td></tr>
+                <tr class="highlight-row"><td><strong>128</strong></td><td><strong>94.9%</strong></td><td><strong>96.7%</strong></td><td><strong>97.0%</strong></td><td><strong>97.2%</strong></td><td><strong>97.4%</strong></td><td><strong>97.5%</strong></td><td><strong>97.5%</strong></td></tr>
+                <tr><td>196</td><td>95.6%</td><td>96.8%</td><td>97.2%</td><td>97.4%</td><td>97.5%</td><td>97.6%</td><td>97.6%</td></tr>
+                <tr><td>256</td><td>96.1%</td><td>97.2%</td><td>97.5%</td><td>97.6%</td><td>97.6%</td><td>97.7%</td><td>97.7%</td></tr>
+                <tr><td>512</td><td>96.8%</td><td>97.5%</td><td>97.7%</td><td>97.8%</td><td>97.8%</td><td>97.8%</td><td>97.8%</td></tr>
+                <tr><td>1024</td><td>97.3%</td><td>97.6%</td><td>97.8%</td><td>97.8%</td><td>97.9%</td><td>97.9%</td><td>97.9%</td></tr>
+            </table>
+
+            <h3>8.2 Optimal Config per Accuracy Target</h3>
+
+            <p>For every eval% target, the <strong>fastest</strong> combination of H, ensembleN,
+            and shuffle count (10 epochs, MNIST standard split):</p>
+
+            <table>
+                <tr><th>Target</th><th>H</th><th>EN</th><th>Xf</th><th>Time</th><th>Config</th></tr>
+                <tr><td>89.8%</td><td>32</td><td>1</td><td>1</td><td>0.3s</td><td><code>H32 shuffle1</code></td></tr>
+                <tr><td>92.5%</td><td>64</td><td>1</td><td>1</td><td>0.4s</td><td><code>H64 shuffle1</code></td></tr>
+                <tr><td>94.0%</td><td>32</td><td>1</td><td>2</td><td>0.5s</td><td><code>H32 shuffle1+2</code></td></tr>
+                <tr><td>94.9%</td><td>128</td><td>1</td><td>1</td><td>0.7s</td><td><code>H128 shuffle1</code></td></tr>
+                <tr><td>95.5%</td><td>64</td><td>1</td><td>2</td><td>0.8s</td><td><code>H64 shuffle1+2</code></td></tr>
+                <tr><td>96.1%</td><td>256</td><td>1</td><td>1</td><td>1.2s</td><td><code>H256 shuffle1</code></td></tr>
+                <tr><td>96.3%</td><td>64</td><td>1</td><td>3</td><td>1.2s</td><td><code>H64 shuffle1..3</code></td></tr>
+                <tr><td>96.7%</td><td>128</td><td>1</td><td>2</td><td>1.5s</td><td><code>H128 shuffle1+2</code></td></tr>
+                <tr class="highlight-row"><td><strong>97.0%</strong></td><td><strong>128</strong></td><td><strong>1</strong></td><td><strong>3</strong></td><td><strong>2.2s</strong></td><td><strong>H128 shuffle1..3</strong></td></tr>
+                <tr><td>97.2%</td><td>256</td><td>1</td><td>2</td><td>2.4s</td><td><code>H256 shuffle1+2</code></td></tr>
+                <tr><td>97.4%</td><td>128</td><td>1</td><td>5</td><td>3.6s</td><td><code>H128 shuffle1..5</code></td></tr>
+                <tr><td>97.5%</td><td>256</td><td>1</td><td>3</td><td>3.5s</td><td><code>H256 shuffle1..3</code></td></tr>
+                <tr><td>97.6%</td><td>256</td><td>1</td><td>4</td><td>4.8s</td><td><code>H256 shuffle1..4</code></td></tr>
+                <tr><td>97.7%</td><td>512</td><td>1</td><td>3</td><td>6.8s</td><td><code>H512 shuffle1..3</code></td></tr>
+                <tr><td>97.8%</td><td>512</td><td>1</td><td>4</td><td>8.9s</td><td><code>H512 shuffle1..4</code></td></tr>
+                <tr class="highlight-row"><td><strong>97.9%</strong></td><td><strong>512</strong></td><td><strong>1</strong></td><td><strong>6</strong></td><td><strong>9.9s</strong></td><td><strong>🏆 H512 shuffle1..6</strong></td></tr>
+                <tr><td>97.9%</td><td>1024</td><td>1</td><td>5</td><td>23.3s</td><td><code>H1024 shuffle1..5</code></td></tr>
+            </table>
+
+            <p><strong>Sweet spots:</strong></p>
+            <ul>
+                <li><strong>97.0% in 2.2s</strong> — H128 + 3 shuffles (best cost/benefit)</li>
+                <li><strong>97.5% in 3.5s</strong> — H256 + 3 shuffles</li>
+                <li><strong>97.9% in 9.9s</strong> — H512 + 6 shuffles, 6 epochs (max accuracy record 🏆)</li>
+            </ul>
+
+            <h3>8.3 Shuffle vs Ensemble: Diversity Source</h3>
+
+            <p><strong>Different shuffles (xform diversity) outperform same shuffle
+            (W0 diversity) by +1.5–1.7pp.</strong> Same shuffle + different W0 = pure
+            ensemble effect. Different shuffles + same W0 = different pixel neighborhoods.
+            The latter is more effective because targets learn true pixel relations rather
+            than position-dependent patterns.</p>
+
+            <table>
+                <tr><th>Members</th><th>Different Shuffles</th><th>Same Shuffle (≙ Ensemble)</th></tr>
+                <tr><td>1</td><td>92.5%</td><td>92.5%</td></tr>
+                <tr><td>2</td><td>95.5%</td><td>94.5%</td></tr>
+                <tr><td>3</td><td>96.3%</td><td>95.0%</td></tr>
+                <tr><td>4</td><td>96.8%</td><td>95.1%</td></tr>
+                <tr><td>5</td><td>96.9%</td><td>95.2%</td></tr>
+                <tr><td>6</td><td>97.0%</td><td>95.2%</td></tr>
+                <tr><td>7</td><td>97.0%</td><td>95.3%</td></tr>
+            </table>
+
+            <h3>8.4 Generalization: Diversity Needs Structure</h3>
+
+            <p>Three sources of member diversity, sorted by effectiveness:</p>
+            <ol>
+                <li><strong>Xform (different shuffles)</strong> — different pixel neighborhoods,
+                    maximal error decorrelation</li>
+                <li><strong>Geometric xforms (hflip, rot90)</strong> — structured variation of
+                    pixel arrangement</li>
+                <li><strong>W0 ensemble (--ensembleN)</strong> — different random projections on
+                    the same arrangement, weakest diversity</li>
+            </ol>
+        </section>
+
+        <!-- 9. Recommendations -->
         <section id="recommendations" class="paper-section">
-            <h2>8. Practical Recommendations</h2>
+            <h2>9. Practical Recommendations</h2>
             <table>
                 <tr><th>Goal</th><th>Config</th><th>Result</th></tr>
-                <tr class="highlight-row"><td>Max accuracy (data-rich)</td><td><code>--hiddenN 128 --ensembleN 7 --epochsN 8 --encoding exp8,log8,sig8 --trainN 59900 --evalN 100</code></td><td><strong>99.0% in 39.9s</strong></td></tr>
-                <tr class="highlight-row"><td>Max accuracy (standard split)</td><td><code>--hiddenN 512 --ensembleN 1 --epochsN 7 --encoding exp8 --xform all</code></td><td><strong>97.9% in 10.4s</strong></td></tr>
+                <tr class="highlight-row"><td>Max accuracy (standard split)</td><td><code>--hiddenN 512 --ensembleN 1 --epochsN 6 --encoding exp8 --xform shuffle1,shuffle2,shuffle3,shuffle4,shuffle5,shuffle6</code></td><td><strong>🏆 97.9% in 9.9s</strong></td></tr>
                 <tr><td>Best cost/benefit</td><td><code>--hiddenN 128 --ensembleN 1 --epochsN 7 --encoding exp8 --xform all</code></td><td><strong>97.7% in 5.2s</strong></td></tr>
-                <tr><td>Budget (minimal time)</td><td><code>--hiddenN 64 --ensembleN 1 --epochsN 7 --encoding exp8 --xform id,hflip</code></td><td><strong>95.8% in 0.9s</strong></td></tr>
+                <tr><td>Fast 97.5%</td><td><code>--hiddenN 256 --ensembleN 1 --epochsN 7 --encoding exp8 --xform shuffle1..3</code></td><td><strong>97.5% in 3.5s</strong></td></tr>
+                <tr><td>Budget (minimal time)</td><td><code>--hiddenN 64 --ensembleN 1 --epochsN 7 --encoding exp8 --xform shuffle1,shuffle2</code></td><td><strong>95.5% in 0.8s</strong></td></tr>
             </table>
             <p>All configs use default <code>count</code> target init and <code>cos-time</code> step schedule.
             <code>--xform all</code> = 8 transforms (id, hflip, vflip, dflip1, dflip2, rot90, rot180, rot270).

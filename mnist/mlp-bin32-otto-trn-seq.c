@@ -284,6 +284,8 @@ ki_Args aa = {
     .multi_correct      = 0,
     .seed_splitmix      = 1,
     .maj_mode           = KI_MAJ_3,  /* --maj 3: tree approximation (faster + more accurate than 1) */
+    .maj_step           = 0,      /* 0=auto (KI_PX_PER_CONT) */
+    .debug_maj          = 0,      /* 0=auto, 1=container, 2=pixel */
     .rows_mode          = 0,      /* 0=flat, 1=per-row members */
     .member_threshold   = 0,      /* 0=disabled, else min trn%% to participate */
     .xforms             = (1 << KI_XFORM_ID),  /* default: identity only */
@@ -386,7 +388,7 @@ static int active_chans[KI_ENC_MAX];    /* Mapping: seq_idx → Bit-Position (0.
  * nc_local:  number of Container for this member
  */
 static uint32_t h0_neuron(const uint32_t *in, const uint32_t *W0_row, int nc_local) {
-    uint32_t match[4096]; /* max nc_local */
+    uint32_t match[4096] = {0}; /* max nc_local */
     switch (aa.maj_mode) {
         case KI_MAJ_1: {
             /* Container-level flat (original majority_tree1) */
@@ -441,7 +443,20 @@ static uint32_t h0_neuron(const uint32_t *in, const uint32_t *W0_row, int nc_loc
         default: {
             for (int c = 0; c < nc_local; c++)
                 match[c] = H0_MATCH(in, W0_row, c);
-            return majority_tree3(match, nc_local);  /* KI_MAJ_3 */
+            /* KI_MAJ_3 with optional pixel step (0=auto=KI_PX_PER_CONT) */
+            int _step = aa.maj_step;
+            if (_step == 0) _step = KI_PX_PER_CONT;
+            /* --debug-maj overrides auto-detection */
+            if (aa.debug_maj == 1) {
+                return majority_tree3(match, nc_local);
+            } else if (aa.debug_maj == 2) {
+                return majority_tree3_pixel_step(match, nc_local, _step);
+            }
+            /* Default auto: fast path for container-aligned steps, pixel for others */
+            if (_step == KI_PX_PER_CONT) {
+                return majority_tree3(match, nc_local);
+            }
+            return majority_tree3_pixel_step(match, nc_local, _step);
         }
     }
 }
@@ -458,23 +473,23 @@ static uint32_t h0_neuron(const uint32_t *in, const uint32_t *W0_row, int nc_loc
  * NC_slice: containers for this member (NC / splitHN)
  * nc_off:  container offset in input (member_idx × NC_slice)
  */
-static int32_t *ki_build_target(const uint32_t *X, const uint8_t *Y, int N,
+static COUNTER_TYPE *ki_build_target(const uint32_t *X, const uint8_t *Y, int N,
                                const uint32_t *W0, int H_local, int NC_slice,
                                int nc_off, int stride, int silent) {
     int V = VN_GROUPS_, G = aa.splitVN, TH = VN_THRESH_;
     size_t sz = (size_t)H_local * KI_NCLASSES * (size_t)V;
-    int32_t *target = (int32_t *)ki_xcalloc(sz, sizeof(int32_t));
+    COUNTER_TYPE *target = (COUNTER_TYPE *)ki_xcalloc(sz, sizeof(COUNTER_TYPE));
 
     if (!silent) {
         printf("\n=== OTTO TARGET ===\n");
         printf("  Target[%d][%d][%d] = %zu KB\n",
-               KI_NCLASSES, H_local, V, sz * sizeof(int32_t) / 1024);
+               KI_NCLASSES, H_local, V, sz * sizeof(COUNTER_TYPE) / 1024);
         fflush(stdout);
     }
 
     #pragma omp parallel
     {
-        int32_t *lt = (int32_t *)ki_xcalloc(sz, sizeof(int32_t));
+        int32_t *lt = (int32_t *)ki_xcalloc(sz, sizeof(COUNTER_TYPE));
         #pragma omp for schedule(static)
         for (int s = 0; s < N; s++) {
             int k = (int)Y[s];
@@ -500,7 +515,7 @@ static int32_t *ki_build_target(const uint32_t *X, const uint8_t *Y, int N,
             }
         }
         #pragma omp critical
-        { for (size_t i = 0; i < sz; i++) target[i] += lt[i]; }
+        { for (size_t i = 0; i < sz; i++) target[i] += (COUNTER_TYPE)lt[i]; }
         free(lt);
     }
     return target;
@@ -510,11 +525,11 @@ static int32_t *ki_build_target(const uint32_t *X, const uint8_t *Y, int N,
  * Uses precomputed gb_buf data instead of h0_neuron + VN reduction.
  * Twice as fast as ki_build_target because both h0_neuron AND
  * VN group computation are eliminated (both are already in gb_buf). */
-static int32_t *ki_build_target_from_gb(const uint8_t *Y, int N,
+static COUNTER_TYPE *ki_build_target_from_gb(const uint8_t *Y, int N,
     const uint32_t *gb_buf, int H_local, int V,
     const int class_counts[KI_NCLASSES]) {
     size_t sz = (size_t)H_local * KI_NCLASSES * (size_t)V;
-    int32_t *target = (int32_t *)ki_xcalloc(sz, sizeof(int32_t));
+    COUNTER_TYPE *target = (COUNTER_TYPE *)ki_xcalloc(sz, sizeof(COUNTER_TYPE));
     if (aa.target_init_mode == KI_TARGET_RANDOM) {
         /* Random init: target = uniform [0, nk] per class.
          * class_counts is provided by the caller (1× in main). */
@@ -524,7 +539,7 @@ static int32_t *ki_build_target_from_gb(const uint8_t *Y, int N,
             for (int h = 0; h < H_local; h++)
                 for (int v = 0; v < V; v++)
                     target[TGT_IDX(k, h, v, H_local, V)] =
-                        (int32_t)(w0_random() % (uint32_t)(nk + 1));
+                        (COUNTER_TYPE)(w0_random() % (uint32_t)(nk + 1));
         }
     } else if (aa.target_init_mode == KI_TARGET_UNIFORM) {
         /* Uniform: all raw counts = 1 (constant, no per-class or
@@ -541,7 +556,7 @@ static int32_t *ki_build_target_from_gb(const uint8_t *Y, int N,
             if (nk <= 0) continue;
             for (int h = 0; h < H_local; h++)
                 for (int v = 0; v < V; v++)
-                    target[TGT_IDX(k, h, v, H_local, V)] = nk;
+                    target[TGT_IDX(k, h, v, H_local, V)] = (COUNTER_TYPE)nk;
         }
     } else if (aa.target_init_mode == KI_TARGET_INVERSE) {
         /* Inverse: count-mode raw counts (same as count below), then
@@ -551,7 +566,7 @@ static int32_t *ki_build_target_from_gb(const uint8_t *Y, int N,
          * compute_class_offset() valid (avoids t > nk overflow). */
         #pragma omp parallel
         {
-            int32_t *lt = (int32_t *)ki_xcalloc(sz, sizeof(int32_t));
+            int32_t *lt = (int32_t *)ki_xcalloc(sz, sizeof(COUNTER_TYPE));
             #pragma omp for schedule(static)
             for (int s = 0; s < N; s++) {
                 int k = (int)Y[s];
@@ -566,7 +581,7 @@ static int32_t *ki_build_target_from_gb(const uint8_t *Y, int N,
                 }
             }
             #pragma omp critical
-            { for (size_t i = 0; i < sz; i++) target[i] += lt[i]; }
+            { for (size_t i = 0; i < sz; i++) target[i] += (COUNTER_TYPE)lt[i]; }
             free(lt);
         }
     } else if (aa.target_init_mode == KI_TARGET_LAPLACE) {
@@ -574,7 +589,7 @@ static int32_t *ki_build_target_from_gb(const uint8_t *Y, int N,
          * Clamped to n_k to avoid p = 1 overflow in logit_convert. */
         #pragma omp parallel
         {
-            int32_t *lt = (int32_t *)ki_xcalloc(sz, sizeof(int32_t));
+            int32_t *lt = (int32_t *)ki_xcalloc(sz, sizeof(COUNTER_TYPE));
             #pragma omp for schedule(static)
             for (int s = 0; s < N; s++) {
                 int k = (int)Y[s];
@@ -589,7 +604,7 @@ static int32_t *ki_build_target_from_gb(const uint8_t *Y, int N,
                 }
             }
             #pragma omp critical
-            { for (size_t i = 0; i < sz; i++) target[i] += lt[i]; }
+            { for (size_t i = 0; i < sz; i++) target[i] += (COUNTER_TYPE)lt[i]; }
             free(lt);
         }
         /* Laplace +1: add 1 to each (k, h, v) but never exceed n_k. */
@@ -608,7 +623,7 @@ static int32_t *ki_build_target_from_gb(const uint8_t *Y, int N,
          * amplitude — initial log-odds are less extreme. */
         #pragma omp parallel
         {
-            int32_t *lt = (int32_t *)ki_xcalloc(sz, sizeof(int32_t));
+            int32_t *lt = (int32_t *)ki_xcalloc(sz, sizeof(COUNTER_TYPE));
             #pragma omp for schedule(static)
             for (int s = 0; s < N; s++) {
                 int k = (int)Y[s];
@@ -623,16 +638,18 @@ static int32_t *ki_build_target_from_gb(const uint8_t *Y, int N,
                 }
             }
             #pragma omp critical
-            { for (size_t i = 0; i < sz; i++) target[i] += lt[i]; }
+            { for (size_t i = 0; i < sz; i++) target[i] += (COUNTER_TYPE)lt[i]; }
             free(lt);
         }
-        /* Dampen: divide all raw counts by 2 (right-shift preserves sign). */
-        for (size_t _i = 0; _i < sz; _i++)
-            target[_i] >>= 1;
+        /* Dampen: divide all raw counts by 2. */
+        for (size_t _i = 0; _i < sz; _i++) {
+            int32_t _tmp = (int32_t)(target[_i]);
+            target[_i] = (COUNTER_TYPE)(_tmp >> 1);
+        }
     } else {
         #pragma omp parallel
         {
-            int32_t *lt = (int32_t *)ki_xcalloc(sz, sizeof(int32_t));
+            int32_t *lt = (int32_t *)ki_xcalloc(sz, sizeof(COUNTER_TYPE));
             #pragma omp for schedule(static)
             for (int s = 0; s < N; s++) {
                 int k = (int)Y[s];
@@ -647,7 +664,7 @@ static int32_t *ki_build_target_from_gb(const uint8_t *Y, int N,
                 }
             }
             #pragma omp critical
-            { for (size_t i = 0; i < sz; i++) target[i] += lt[i]; }
+            { for (size_t i = 0; i < sz; i++) target[i] += (COUNTER_TYPE)lt[i]; }
             free(lt);
         }
     }
@@ -663,7 +680,7 @@ static int32_t *ki_build_target_from_gb(const uint8_t *Y, int N,
  *
  * Dependency: ot_precision defines the int32 scaling.
  */
-static void logit_convert(int32_t *target, int H_local, const int class_counts[KI_NCLASSES]) {
+static void logit_convert(COUNTER_TYPE *target, int H_local, const int class_counts[KI_NCLASSES]) {
     int V = VN_GROUPS_;
     for (int k = 0; k < KI_NCLASSES; k++) {
         int nk = class_counts[k];
@@ -671,9 +688,9 @@ static void logit_convert(int32_t *target, int H_local, const int class_counts[K
         for (int h = 0; h < H_local; h++) {
             for (int v = 0; v < V; v++) {
                 size_t idx = TGT_IDX(k, h, v, H_local, V);
-                int t = target[idx];
+                int t = (int)target[idx];
                 double p = (double)(t + 1) / (double)(nk + 2);
-                target[idx] = (int32_t)ot_precision(log(p / (1.0 - p)));
+                target[idx] = (COUNTER_TYPE)ot_precision(log(p / (1.0 - p)));
             }
         }
     }
@@ -701,19 +718,19 @@ static void logit_convert(int32_t *target, int H_local, const int class_counts[K
  * See: 2026-06-18 experiment — 3 runs with/without 0.5 gave identical
  * results within normal OpenMP scheduling noise.
  */
-static void compute_class_offset(int64_t class_offset[KI_NCLASSES],
-                                  const int32_t *target, int H_local,
+static void compute_class_offset(SCORE_TYPE class_offset[KI_NCLASSES],
+                                  const COUNTER_TYPE *target, int H_local,
                                   const int class_counts[KI_NCLASSES]) {
     int V = VN_GROUPS_;
     for (int k = 0; k < KI_NCLASSES; k++) {
-        int64_t sum = 0;
+        SCORE_TYPE sum = 0;
         int nk = class_counts[k];
-        if (nk <= 0) { class_offset[k] = 0; continue; }
+        if (nk <= 0) { class_offset[k] = (SCORE_TYPE)0; continue; }
         for (int h = 0; h < H_local; h++) {
             for (int v = 0; v < V; v++) {
-                int t = target[TGT_IDX(k, h, v, H_local, V)];
+                int t = (int)target[TGT_IDX(k, h, v, H_local, V)];
                 double p1 = (double)(nk - t + 1) / (double)(nk + 2);
-                sum += (int64_t)ot_precision(log(p1));
+                sum += (SCORE_TYPE)ot_precision(log(p1));
             }
         }
         class_offset[k] = sum;
@@ -727,11 +744,11 @@ static void compute_class_offset(int64_t class_offset[KI_NCLASSES],
  */
 static void scores_otto(const uint32_t *in, const uint32_t *W0,
                          int H_local, int NC_slice,
-                         const int32_t *target,
-                         const int64_t class_offset[KI_NCLASSES],
-                         int64_t scores[KI_NCLASSES]) {
+                         const COUNTER_TYPE *target,
+                         const SCORE_TYPE class_offset[KI_NCLASSES],
+                         SCORE_TYPE scores[KI_NCLASSES]) {
     for (int k = 0; k < KI_NCLASSES; k++)
-        scores[k] = class_offset[k];
+        scores[k] = (SCORE_TYPE)class_offset[k];
 
     int _ws2 = aa.rows_mode && aa.maj_mode == KI_MAJ_1 ? NC_slice * 4 : NC_slice;
     for (int h = 0; h < H_local; h++) {
@@ -755,12 +772,12 @@ static void scores_otto(const uint32_t *in, const uint32_t *W0,
  * For test eval without cache there is scores_otto (oben). */
 static void scores_otto_from_gb(int s, int H_local,
                                  const uint32_t *gb_buf,
-                                 const int32_t *target,
-                                 const int64_t class_offset[KI_NCLASSES],
-                                 int64_t scores[KI_NCLASSES]) {
+                                 const COUNTER_TYPE *target,
+                         const SCORE_TYPE class_offset[KI_NCLASSES],
+                                 SCORE_TYPE scores[KI_NCLASSES]) {
     const uint32_t *gb_row = gb_buf + (size_t)s * (size_t)H_local;
     for (int k = 0; k < KI_NCLASSES; k++)
-        scores[k] = class_offset[k];
+        scores[k] = (SCORE_TYPE)class_offset[k];
 
     for (int h = 0; h < H_local; h++) {
         switch (aa.splitVN) {
@@ -812,8 +829,8 @@ static void scores_otto_from_gb(int s, int H_local,
  */
 static void export_model(const char *out_dir,
                           const uint32_t *W0, int H,
-                          const int32_t *target,
-                          const int64_t class_offset[KI_NCLASSES]) {
+                          const COUNTER_TYPE *target,
+                          const SCORE_TYPE class_offset[KI_NCLASSES]) {
     /* Not used in ensemble mode — use export_ensemble instead */
     (void)W0; (void)target; (void)class_offset;
     fprintf(stderr, "[ERROR] Use export_ensemble with --ensembleN (independent copies)\n");
@@ -856,7 +873,7 @@ static void print_setup(int H, int epochs, int trainN, int evalN,
     size_t bit_per_cont = 32;
     size_t hidden_bit = (size_t)H * bit_per_cont;
     size_t w0_bit = (size_t)H_local * (size_t)NC_slice * bit_per_cont;
-    size_t w1_bit = (size_t)KI_NCLASSES * (size_t)H_local * (size_t)V * sizeof(int32_t) * 8;
+    size_t w1_bit = (size_t)KI_NCLASSES * (size_t)H_local * (size_t)V * sizeof(COUNTER_TYPE) * 8;
     int n_xf_active = 0;
     for (int _x = 0; _x < KI_XFORM_COUNT; _x++)
         if (aa.xforms & (1 << _x)) n_xf_active++;
@@ -865,8 +882,8 @@ static void print_setup(int H, int epochs, int trainN, int evalN,
     size_t tgt_total = (size_t)H_local * KI_NCLASSES * (size_t)V * (size_t)total_slots;
     printf("══════════════════════════════════════════════════════════════════════\n");
     printf("══╡ OTTO-SCORE ╞══  %s  %s\n", KI_DATASET_NAME, H0_STR);
-    printf("  Args:        H=%d  B=%d  Ep=%d  NC=%d V=%d  HN=%d  H_sub=%d  NC_sub=%d\n", 
-            H, batchN, epochs, nc_per_blk, V, splitHN, H_local, NC_slice);
+    printf("  Args:        H=%d  B=%d  Ep=%d  NC=%d V=%d  HN=%d  H_sub=%d  NC_sub=%d  Maj=%s\n",
+           H, batchN, epochs, nc_per_blk, V, splitHN, H_local, NC_slice, maj_str());
     printf("\n");
 
     printf("══╡ SETUP ╞══════════════════════════════════════════════════════════\n");
@@ -1038,8 +1055,8 @@ typedef struct ki_Member {
     const uint32_t *W0;     /* W0 row start (geteilt oder eigen) */
     const uint32_t *input_buf;    /* X buffer for this member's xform (train) */
     const uint32_t *input_buf_te; /* X buffer for this member's xform (eval) */
-    int32_t *target;        /* [H_local × KI_NCLASSES × 32] int32 — own memory */
-    int64_t *offset;        /* [KI_NCLASSES] int64 — own memory */
+    COUNTER_TYPE *target;   /* [H_local × KI_NCLASSES × V] — own memory */
+    SCORE_TYPE *offset;        /* [KI_NCLASSES] SCORE_TYPE — own memory */
 
     /* Training buffers.*allocated once.*reused each epoch) */
     uint32_t *h0_buf;       /* [total_train × H_local] — rohe H0-Werte */
@@ -1048,13 +1065,13 @@ typedef struct ki_Member {
     uint32_t *gb_buf_te;    /* [total_eval × H_local] — eval cache.*NULL if no eval) */
 
     /* Best-State (for export bei bestem eval) */
-    int32_t *best_target;   /* [H_local × KI_NCLASSES × V] — Snapshot bei bestem eval */
-    int64_t *best_offset;   /* [KI_NCLASSES] */
+    COUNTER_TYPE *best_target;  /* [H_local × KI_NCLASSES × V] — Snapshot bei bestem eval */
+    SCORE_TYPE *best_offset;   /* [KI_NCLASSES] SCORE_TYPE — Snapshot bei bestem eval */
     float   fin_evl;       /* eval bei bestem Snapshot */
 
     /* Err state.*for rollback.*only when aa.err_rollback) */
-    int32_t *err_target;    /* [H_local × KI_NCLASSES × V] — Snapshot bei bestem train-err */
-    int64_t *err_offset;    /* [KI_NCLASSES] */
+    COUNTER_TYPE *err_target;   /* [H_local × KI_NCLASSES × V] — Snapshot bei bestem train-err */
+    SCORE_TYPE *err_offset;    /* [KI_NCLASSES] SCORE_TYPE — Snapshot bei bestem train-err */
 
     /* Member-Zustand (per epoch aktualisiert) */
     int step;               /* aktueller Schritt */
@@ -1100,17 +1117,17 @@ static void export_ensemble(const char *out_dir,
         int found = 0;
         for (int b = 0; b < active_members && !found; b++) {
             if (members[b]->orig_m == m) {
-                fwrite(members[b]->target, sizeof(int32_t), (size_t)H_local * KI_NCLASSES * VN_GROUPS_, f);
-                fwrite(members[b]->offset, sizeof(int64_t), KI_NCLASSES, f);
+                fwrite(members[b]->target, sizeof(COUNTER_TYPE), (size_t)H_local * KI_NCLASSES * VN_GROUPS_, f);
+                fwrite(members[b]->offset, sizeof(SCORE_TYPE), KI_NCLASSES, f);
                 found = 1;
             }
         }
         if (!found) {
-            int32_t *zeros = (int32_t *)calloc((size_t)H_local * KI_NCLASSES * VN_GROUPS_, sizeof(int32_t));
-            fwrite(zeros, sizeof(int32_t), (size_t)H_local * KI_NCLASSES * VN_GROUPS_, f);
+            COUNTER_TYPE *zeros = (COUNTER_TYPE *)calloc((size_t)H_local * KI_NCLASSES * VN_GROUPS_, sizeof(COUNTER_TYPE));
+            fwrite(zeros, sizeof(COUNTER_TYPE), (size_t)H_local * KI_NCLASSES * VN_GROUPS_, f);
             free(zeros);
-            int64_t *oz = (int64_t *)calloc(KI_NCLASSES, sizeof(int64_t));
-            fwrite(oz, sizeof(int64_t), KI_NCLASSES, f);
+            SCORE_TYPE *oz = (SCORE_TYPE *)calloc(KI_NCLASSES, sizeof(SCORE_TYPE));
+            fwrite(oz, sizeof(SCORE_TYPE), KI_NCLASSES, f);
             free(oz);
         }
         total += w0_bytes + tgt_bytes + off_bytes;
@@ -1144,14 +1161,14 @@ static ki_Member *ki_member_create(int H_local, int NC_slice, int slc_off,
     m->trn_acc  = 100.0f;  /* initially: all members participate */
 
     size_t tgt_sz = (size_t)H_local * KI_NCLASSES * VN_GROUPS_;
-    m->target = (int32_t *)ki_xcalloc(tgt_sz, sizeof(int32_t));
-    m->offset = (int64_t *)ki_xcalloc(KI_NCLASSES, sizeof(int64_t));
-    m->best_target = (int32_t *)ki_xcalloc(tgt_sz, sizeof(int32_t));
-    m->best_offset = (int64_t *)ki_xcalloc(KI_NCLASSES, sizeof(int64_t));
+    m->target = (COUNTER_TYPE *)ki_xcalloc(tgt_sz, sizeof(COUNTER_TYPE));
+    m->offset = (SCORE_TYPE *)ki_xcalloc(KI_NCLASSES, sizeof(SCORE_TYPE));
+    m->best_target = (COUNTER_TYPE *)ki_xcalloc(tgt_sz, sizeof(COUNTER_TYPE));
+    m->best_offset = (SCORE_TYPE *)ki_xcalloc(KI_NCLASSES, sizeof(SCORE_TYPE));
     m->fin_evl = 0.0f;
     if (aa.err_rollback) {
-        m->err_target = (int32_t *)ki_xcalloc(tgt_sz, sizeof(int32_t));
-        m->err_offset = (int64_t *)ki_xcalloc(KI_NCLASSES, sizeof(int64_t));
+        m->err_target = (COUNTER_TYPE *)ki_xcalloc(tgt_sz, sizeof(COUNTER_TYPE));
+        m->err_offset = (SCORE_TYPE *)ki_xcalloc(KI_NCLASSES, sizeof(SCORE_TYPE));
     } else {
         m->err_target = NULL;
         m->err_offset = NULL;
@@ -1292,12 +1309,12 @@ static int export_merge_scores_archive(const char *out_dir, const uint32_t *X,
     size_t score_sz = (size_t)N * (size_t)KI_NCLASSES;
     for (int m = 0; m < active_members; m++) {
         ki_Member *mem = members[m];
-        int64_t *sc = (int64_t *)calloc(score_sz, sizeof(int64_t));
+        SCORE_TYPE *sc = (SCORE_TYPE *)calloc(score_sz, sizeof(SCORE_TYPE));
         if (!sc) { fprintf(stderr, "[FATAL] export_merge_scores: OOM\n"); fclose(f); return -1; }
 
         #pragma omp parallel for schedule(static)
         for (int s = 0; s < N; s++) {
-            int64_t scc[KI_NCLASSES];
+            SCORE_TYPE scc[KI_NCLASSES];
             scores_otto(X + (size_t)s * (size_t)n_cont + mem->slc_off,
                         mem->W0, mem->H_local, mem->NC_slice,
                         mem->target, mem->offset, scc);
@@ -1305,7 +1322,7 @@ static int export_merge_scores_archive(const char *out_dir, const uint32_t *X,
                 sc[(size_t)s * KI_NCLASSES + (size_t)k] = scc[k];
         }
 
-        fwrite(sc, sizeof(int64_t), score_sz, f);
+        fwrite(sc, sizeof(SCORE_TYPE), score_sz, f);
         free(sc);
     }
 
@@ -1315,7 +1332,7 @@ static int export_merge_scores_archive(const char *out_dir, const uint32_t *X,
     fclose(f);
     printf("  Archive:  %s  (%d members x %d samples, %zu KB)\n",
            fname, active_members, N,
-           (sizeof(int64_t) * score_sz * (size_t)active_members + 44) / 1024);
+           (sizeof(SCORE_TYPE) * score_sz * (size_t)active_members + 44) / 1024);
     return 0;
 }
 
@@ -1405,18 +1422,18 @@ static inline int ki_omp_nthreads(void) {
     return n;
 }
 
-static inline int32_t **ki_cache_alloc(int n_threads, size_t tgt_sz) {
-    int32_t **cache = (int32_t **)malloc((size_t)n_threads * sizeof(int32_t *));
+static inline COUNTER_TYPE **ki_cache_alloc(int n_threads, size_t tgt_sz) {
+    COUNTER_TYPE **cache = (COUNTER_TYPE **)malloc((size_t)n_threads * sizeof(COUNTER_TYPE *));
     if (!cache) { fprintf(stderr, "[FATAL] ki_cache_alloc(%d) failed\n", n_threads); exit(1); }
     for (int t = 0; t < n_threads; t++)
-        cache[t] = (int32_t *)ki_xcalloc(tgt_sz, sizeof(int32_t));
+        cache[t] = (COUNTER_TYPE *)ki_xcalloc(tgt_sz, sizeof(COUNTER_TYPE));
     return cache;
 }
 
-static inline void ki_cache_apply_free(int32_t **cache, int n_threads,
-                                        int32_t *target, size_t tgt_sz) {
+static inline void ki_cache_apply_free(COUNTER_TYPE **cache, int n_threads,
+                                        size_t tgt_sz, COUNTER_TYPE *target) {
     for (int t = 0; t < n_threads; t++) {
-        int32_t *ct = cache[t];
+        COUNTER_TYPE *ct = cache[t];
         for (size_t i = 0; i < tgt_sz; i++)
             target[i] += ct[i];
         free(ct);
@@ -1456,7 +1473,7 @@ static inline void ki_cache_apply_free(int32_t **cache, int n_threads,
 static inline int ki_member_batch_correct(ki_Member *m, const uint8_t *y, int N, int step) {
     m->step = step;
     int err = ki_batch_correct(m->target, m->H_local, m->offset,
-                                m->gb_buf, y, N, step, (size_t)m->H_local * KI_NCLASSES * 32,
+                                 m->gb_buf, y, N, (COUNTER_TYPE)step, (size_t)m->H_local * KI_NCLASSES * 32,
                                 aa.filter_mask, m->H_local, 0);
     m->last_err = err;
     m->ep++;
@@ -1485,13 +1502,17 @@ static int ki_evaluate_member(const uint32_t *X, const uint8_t *y, int N,
     if (N <= 0) return 0;
 
     /* Votes-Accumulator: N Samples × KI_NCLASSES Klassen */
-    int64_t (*votes)[KI_NCLASSES] = (int64_t (*)[KI_NCLASSES])calloc((size_t)N, sizeof(int64_t[KI_NCLASSES]));
+    SCORE_TYPE (*votes)[KI_NCLASSES] = (SCORE_TYPE (*)[KI_NCLASSES])calloc((size_t)N, sizeof(SCORE_TYPE[KI_NCLASSES]));
     if (!votes) { fprintf(stderr, "[FATAL] evaluate: votes OOM\n"); exit(1); }
 
     /* Each member gets equal voting power: Scale sc.*so that
      * max|sc[k]| ≤ SCALE_MAX. Prevents members with large
      * target weights (more corrections, different channels) from dominating. */
-    #define VOTE_SCALE ((int64_t)1 << 24)  /* 16.7 Mio, passt ×16 in int64 */
+    #if COUNTER_TYPE_IS_FLOAT
+    #define VOTE_SCALE ((SCORE_TYPE)16777216.0f)
+    #else
+    #define VOTE_SCALE ((SCORE_TYPE)1 << 24)
+    #endif
 
     /* Members outer: target.*stays warm in L1 cache */
     //#pragma omp parallel for schedule(static) if(active_members > 8)
@@ -1504,7 +1525,7 @@ static int ki_evaluate_member(const uint32_t *X, const uint8_t *y, int N,
 
         #pragma omp parallel for schedule(static)
         for (int s = 0; s < N; s++) {
-            int64_t sc[KI_NCLASSES];
+            SCORE_TYPE sc[KI_NCLASSES];
             if (use_gb == 2) {
                 /* ── Test eval: gb_buf_te is computed once and cached. */
                 scores_otto_from_gb(s, mem->H_local, mem->gb_buf_te,
@@ -1525,9 +1546,9 @@ static int ki_evaluate_member(const uint32_t *X, const uint8_t *y, int N,
              * All members thus have equal voting power,
              * regardless of target size or channel. */
             if (aa.opt_target_norm) {
-                int64_t max_abs = 0;
+                SCORE_TYPE max_abs = 0;
                 for (int k = 0; k < KI_NCLASSES; k++) {
-                    int64_t a = (sc[k] >= 0) ? sc[k] : -sc[k];
+                    SCORE_TYPE a = (SCORE_TYPE)((sc[k] >= 0) ? sc[k] : -sc[k]);
                     if (a > max_abs) max_abs = a;
                 }
                 if (max_abs > 0) {
@@ -1550,7 +1571,7 @@ static int ki_evaluate_member(const uint32_t *X, const uint8_t *y, int N,
     for (int s = 0; s < N; s++) {
         int pred = -1;
         for (int k = 0; k < KI_NCLASSES; k++)
-            if (votes[s][k] != 0 && (pred < 0 || votes[s][k] > votes[s][pred]))
+            if ((votes[s][k] > 0 || votes[s][k] < 0) && (pred < 0 || votes[s][k] > votes[s][pred]))
                 pred = k;
         if (pred_out) pred_out[s] = (uint8_t)(pred >= 0 ? pred : 0);
         if (pred >= 0 && pred == (int)y[s]) ok++;
@@ -1599,9 +1620,9 @@ static void print_member_debug(ki_Member **members, int active_members,
         int tgt_min = 0, tgt_max = 0;
         size_t pos_min = 0, pos_max = 0;
         if (tgt_sz > 0) {
-            tgt_min = tgt_max = mem->target[0];
+            tgt_min = tgt_max = (int)mem->target[0];
             for (size_t i = 1; i < tgt_sz; i++) {
-                int v = mem->target[i];
+                int v = (int)mem->target[i];
                 if (v < tgt_min) { tgt_min = v; pos_min = i; }
                 if (v > tgt_max) { tgt_max = v; pos_max = i; }
             }
@@ -1617,10 +1638,10 @@ static void print_member_debug(ki_Member **members, int active_members,
         /* ── Independent eval (this member only) ───────────── */
         int member_ok = 0;
         if (N > 0) {
-            int64_t *sc = (int64_t *)calloc((size_t)N * KI_NCLASSES, sizeof(int64_t));
+            SCORE_TYPE *sc = (SCORE_TYPE *)calloc((size_t)N * KI_NCLASSES, sizeof(SCORE_TYPE));
             if (sc) {
                 for (int s = 0; s < N; s++) {
-                    int64_t scc[KI_NCLASSES];
+                    SCORE_TYPE scc[KI_NCLASSES];
                     scores_otto(X + (size_t)s * (size_t)n_cont + mem->slc_off,
                                 mem->W0, mem->H_local, mem->NC_slice,
                                 mem->target, mem->offset, scc);
@@ -1630,7 +1651,7 @@ static void print_member_debug(ki_Member **members, int active_members,
                 }
                 for (int s = 0; s < N; s++) {
                     int pred = 0;
-                    int64_t *row = sc + (size_t)s * KI_NCLASSES;
+                    SCORE_TYPE *row = sc + (size_t)s * KI_NCLASSES;
                     for (int k = 1; k < KI_NCLASSES; k++)
                         if (row[k] > row[pred]) pred = k;
                     if (pred == (int)y[s]) member_ok++;
@@ -1688,7 +1709,7 @@ static void print_class_voting_debug(ki_Member **members, int active_members,
     for (int m = 0; m < active_members; m++) {
         ki_Member *mem = members[m];
         for (int s = 0; s < N; s++) {
-            int64_t sc[KI_NCLASSES];
+            SCORE_TYPE sc[KI_NCLASSES];
             scores_otto(X + (size_t)s * (size_t)n_cont + mem->slc_off,
                         mem->W0, mem->H_local, mem->NC_slice,
                         mem->target, mem->offset, sc);
@@ -1774,7 +1795,7 @@ static void print_class_voting_debug(ki_Member **members, int active_members,
  * Returns arrays allocated by the caller (must free).
  */
 static int ifc_load_model(const char *path,
-                           uint32_t **W0_out, int32_t **tgt_out, int64_t **off_out,
+                           uint32_t **W0_out, COUNTER_TYPE **tgt_out, SCORE_TYPE **off_out,
                            int *n_mem, int *H_local, int *NC_slice) {
     FILE *f = fopen(path, "rb");
     if (!f) { fprintf(stderr, "[FATAL] Cannot open %s\n", path); return -1; }
@@ -1794,16 +1815,16 @@ static int ifc_load_model(const char *path,
     size_t tgt_msz = (size_t)h_local * KI_NCLASSES * 32;
     size_t off_msz = KI_NCLASSES;
     *W0_out  = (uint32_t *)malloc(w0_sz * sizeof(uint32_t));
-    *tgt_out = (int32_t *)malloc((size_t)n_members * tgt_msz * sizeof(int32_t));
-    *off_out = (int64_t *)calloc((size_t)n_members * off_msz, sizeof(int64_t));
+    *tgt_out = (COUNTER_TYPE *)malloc((size_t)n_members * tgt_msz * sizeof(COUNTER_TYPE));
+    *off_out = (SCORE_TYPE *)calloc((size_t)n_members * off_msz, sizeof(SCORE_TYPE));
     if (!*W0_out || !*tgt_out || !*off_out) { fprintf(stderr, "[FATAL] OOM\n"); exit(1); }
     /* Datei-Layout (wie export_ensemble): per-member interleaved
      *   W0_m0  TGT_m0  OFF_m0  W0_m1  TGT_m1  OFF_m1  ...
      * Import must read in the same loop. */
     for (uint32_t m = 0; m < n_members; m++) {
         if (fread(*W0_out + (size_t)m * w0_msz, sizeof(uint32_t), w0_msz, f) != w0_msz ||
-            fread(*tgt_out + (size_t)m * tgt_msz, sizeof(int32_t), tgt_msz, f) != tgt_msz ||
-            fread(*off_out + (size_t)m * off_msz, sizeof(int64_t), off_msz, f) != off_msz) {
+            fread(*tgt_out + (size_t)m * tgt_msz, sizeof(COUNTER_TYPE), tgt_msz, f) != tgt_msz ||
+            fread(*off_out + (size_t)m * off_msz, sizeof(SCORE_TYPE), off_msz, f) != off_msz) {
             fprintf(stderr, "[FATAL] Short read (member %u) from %s\n", m, path);
             free(*W0_out); free(*tgt_out); free(*off_out);
             fclose(f); return -1;
@@ -1891,7 +1912,7 @@ int main(int argc, char *argv[]) {
     for (int i = 0; i < aa.enc_count && i < KI_ENC_MAX; i++) {
         int w = (int)aa.enc_array[i].width;
         if (w < 1) w = KI_ENC_WIDTH_DEFAULT;
-        int ncc = (KI_COLORS > 1) ? KI_NC * w / 8 : NC * w / 8;
+        int ncc = (KI_COLORS > 1) ? KI_NC * w / KI_BIT_WIDTH : NC * w / KI_BIT_WIDTH;
         if (ncc % splitHN != 0) {
             fprintf(stderr, "[FATAL] NC=%d not divisible by splitHN=%d\n", ncc, splitHN);
             fprintf(stderr, "  Valid splitHN values (divisors of %d): ", ncc);
@@ -1906,10 +1927,10 @@ int main(int argc, char *argv[]) {
     for (int i = 0; i < aa.enc_count && i < KI_ENC_MAX; i++) {
         int w = (int)aa.enc_array[i].width;
         if (w < 1) w = KI_ENC_WIDTH_DEFAULT;
-        int ncc = (KI_COLORS > 1) ? KI_NC * w / 8 : NC * w / 8;
+        int ncc = (KI_COLORS > 1) ? KI_NC * w / KI_BIT_WIDTH : NC * w / KI_BIT_WIDTH;
         if (ncc > nc_blk) nc_blk = ncc;
     }
-    if (nc_blk == 0) nc_blk = (KI_COLORS > 1 ? KI_NC : NC) * KI_ENC_WIDTH_DEFAULT / 8;
+    if (nc_blk == 0) nc_blk = (KI_COLORS > 1 ? KI_NC : NC) * KI_ENC_WIDTH_DEFAULT / KI_BIT_WIDTH;
 
     /* ── step validation (before data loading!) ────────────────── */
     {
@@ -1970,12 +1991,12 @@ int main(int argc, char *argv[]) {
         for (int i = 0; i < aa.enc_count; i++) {
             int w = (int)aa.enc_array[i].width;
             if (w < 1) w = KI_ENC_WIDTH_DEFAULT;
-            n_cont += (size_t)((KI_COLORS > 1 ? KI_NC : NC) * w / 8);
+            n_cont += (size_t)((KI_COLORS > 1 ? KI_NC : NC) * w / KI_BIT_WIDTH);
         }
     } else {
         /* Default single encoding: NC containers (KI_ENC_WIDTH_DEFAULT bits/px) */
         int w = (aa.enc_default_width > 0) ? (int)aa.enc_default_width : KI_ENC_WIDTH_DEFAULT;
-        n_cont = (size_t)((KI_COLORS > 1 ? KI_NC : NC) * w / 8);
+        n_cont = (size_t)((KI_COLORS > 1 ? KI_NC : NC) * w / KI_BIT_WIDTH);
     }
     /* ── Pixel-data-dependent init (skipped for dry-run) ────── */
     uint32_t *X_all = NULL;
@@ -1984,7 +2005,14 @@ int main(int argc, char *argv[]) {
     uint8_t  *y_perm = NULL;
     int own_eval_data = 0;
     if (!aa.dry_run) {
-        X_all = load_input_cached(data.X_raw, total_all, n_cont);
+        /* Only load X_all if identity (id) is in the xform list */
+        int _need_identity = (aa.xform_list_count == 0);
+        if (!_need_identity) {
+            for (int _li = 0; _li < aa.xform_list_count; _li++)
+                if (aa.xform_list[_li] == KI_XFORM_ID) { _need_identity = 1; break; }
+        }
+        if (_need_identity)
+            X_all = load_input_cached(data.X_raw, total_all, n_cont);
 
         /* ── Flat mode: concat selected blocks into contiguous array ── */
         if (aa.debug_flat && eff_colors_orig > 1) {
@@ -1996,7 +2024,7 @@ int main(int argc, char *argv[]) {
                 for (int ei = 0; ei < aa.enc_count && ei < KI_ENC_MAX; ei++)
                     if ((int)aa.enc_array[ei].color == bit) { w = (int)aa.enc_array[ei].width; break; }
                 if (w < 1) w = KI_ENC_WIDTH_DEFAULT;
-                int ncb = KI_NC * w / 8;
+                int ncb = KI_NC * w / KI_BIT_WIDTH;
                 block_off_f[bi] = (int)flat_cont;
                 flat_cont += (size_t)ncb;
             }
@@ -2010,7 +2038,7 @@ int main(int argc, char *argv[]) {
                     for (int ei = 0; ei < aa.enc_count && ei < KI_ENC_MAX; ei++)
                         if ((int)aa.enc_array[ei].color == bit) { w = (int)aa.enc_array[ei].width; break; }
                     if (w < 1) w = KI_ENC_WIDTH_DEFAULT;
-                    int ncb = KI_NC * w / 8;
+                    int ncb = KI_NC * w / KI_BIT_WIDTH;
                     memcpy(dst + (size_t)block_off_f[bi],
                            X_all + (size_t)s * n_cont + (size_t)block_off_f[bi],
                            (size_t)ncb * sizeof(uint32_t));
@@ -2064,19 +2092,23 @@ int main(int argc, char *argv[]) {
     uint32_t *X_xform[KI_XFORM_COUNT] = {NULL};
     uint32_t *X_xform_te[KI_XFORM_COUNT];  /* non-owning views into train/eval splits */
     memset(X_xform_te, 0, sizeof(X_xform_te));
-    int xf_id_list[KI_XFORM_COUNT], n_xforms_eff = 0;
-    for (int _xf = 0; _xf < KI_XFORM_COUNT; _xf++)
-        if (aa.xforms & (1 << _xf)) xf_id_list[n_xforms_eff++] = _xf;
-    if (n_xforms_eff < 1) { xf_id_list[0] = KI_XFORM_ID; n_xforms_eff = 1; }
+    int n_xforms_eff = aa.xform_list_count;
+    if (n_xforms_eff < 1) {
+        /* Default: identity only */
+        n_xforms_eff = 1;
+        aa.xform_list[0] = KI_XFORM_ID;
+        aa.xform_list_count = 1;
+    }
     if (!aa.dry_run) {
         int img_size = data.rows * data.cols;        /* pixels per plane */
         int channels = KI_COLORS;                     /* 3 for CIFAR, 1 for MNIST */
-        for (int xf = 0; xf < KI_XFORM_COUNT; xf++) {
-            if (!(aa.xforms & (1 << xf))) continue;
+        /* Load each UNIQUE xform once from the list (duplicates share data) */
+        for (int li = 0; li < n_xforms_eff; li++) {
+            int xf = aa.xform_list[li];
+            if (X_xform[xf]) continue;  /* already loaded */
             if (xf == KI_XFORM_ID) {
                 X_xform[xf] = X_all;  /* identity reuses main buffer */
             } else {
-                /* Transform raw pixel data for ALL samples */
                 uint8_t *raw_xform = (uint8_t *)ki_xmalloc((size_t)total_all * (size_t)img_size * (size_t)channels);
                 for (int s = 0; s < total_all; s++) {
                     ki_xform_raw(raw_xform + (size_t)s * (size_t)img_size * (size_t)channels,
@@ -2086,16 +2118,6 @@ int main(int argc, char *argv[]) {
                 X_xform[xf] = load_input_cached_xform(xf, raw_xform, total_all, n_cont);
                 free(raw_xform);
             }
-        }
-        /* NOTE: shuffle + xform: X_xform buffers are in original data order,
-         * while X_perm has shuffled indices.  When X_perm is active,
-         * xform members use X_xform directly (unshuffled) → MISMATCH.
-         * Fix: either shuffle X_xform too, or disable xforms with shuffle.
-         * For v1: disable xforms when shuffle active. */
-        if (aa.shuffle && (aa.xforms & ~(1 << KI_XFORM_ID))) {
-            printf("  [XFORM] Shuffle active — using identity only (shuffle + xform not yet compatible)\n");
-            aa.xforms = (1 << KI_XFORM_ID);
-            n_xforms_eff = 1;
         }
     }
     /* Build eval pointers for each xform (split train/eval within each buffer) */
@@ -2109,7 +2131,7 @@ int main(int argc, char *argv[]) {
         for (int i = 0; i < aa.enc_count && i < KI_ENC_MAX; i++) {
             int w = (int)aa.enc_array[i].width;
             if (w < 1) w = KI_ENC_WIDTH_DEFAULT;
-            multi_enc_nc[i] = (KI_COLORS > 1 ? KI_NC : NC) * w / 8;
+            multi_enc_nc[i] = (KI_COLORS > 1 ? KI_NC : NC) * w / KI_BIT_WIDTH;
             multi_enc_blk_off[i] = off;
             off += multi_enc_nc[i];
         }
@@ -2136,7 +2158,7 @@ int main(int argc, char *argv[]) {
         printf("\n══╡ INFERENCE ╞══════════════════════════════════════════════════\n");
         char model_path[1024];
         snprintf(model_path, sizeof(model_path), "%s/model.otto", aa.importD);
-        uint32_t *W0_ifc; int32_t *tgt_ifc; int64_t *off_ifc;
+        uint32_t *W0_ifc; COUNTER_TYPE *tgt_ifc; SCORE_TYPE *off_ifc;
         int n_mifc, hl_ifc, ns_ifc;
         if (ifc_load_model(model_path, &W0_ifc, &tgt_ifc, &off_ifc,
                            &n_mifc, &hl_ifc, &ns_ifc) < 0) return 1;
@@ -2148,8 +2170,8 @@ int main(int argc, char *argv[]) {
             mems[i] = ki_member_create(hl_ifc, ns_ifc, (int)((size_t)i * (size_t)ns_ifc),
                                        W0_ifc + w0_off, total_eval, 0);
             memcpy(mems[i]->target, tgt_ifc + (size_t)i * (size_t)hl_ifc * K * V,
-                   (size_t)hl_ifc * K * V * sizeof(int32_t));
-            memcpy(mems[i]->offset, off_ifc + (size_t)i * K, (size_t)K * sizeof(int64_t));
+                   (size_t)hl_ifc * K * V * sizeof(COUNTER_TYPE));
+            memcpy(mems[i]->offset, off_ifc + (size_t)i * K, (size_t)K * sizeof(SCORE_TYPE));
         }
         /* Evaluate (no correction, just forward) */
         uint8_t *pred_eval = aa.predictions[0]
@@ -2298,7 +2320,7 @@ int main(int argc, char *argv[]) {
     gettimeofday(&_total0, NULL);
 
     /* ── Iterative target tuning ──────────────────────────────────── */
-    int step_init = (aa.lr > 0) ? (int)ot_precision(aa.lr) : aa.lr_step;
+    COUNTER_TYPE step_init = (aa.lr > 0) ? (COUNTER_TYPE)ot_precision(aa.lr) : (COUNTER_TYPE)aa.lr_step;
     int epochs = aa.epochs;
 
     /* ── Create member array: each member manages itself ─── */
@@ -2347,7 +2369,7 @@ int main(int argc, char *argv[]) {
                 members[mem_idx] = ki_member_create(H_local, mem_nc, slc_off,
                                                 W0_m, total_train, total_eval);
                 members[mem_idx]->w0_step = mem_nc * pixel_groups;
-                int xf_id = xf_id_list[xf_idx];
+                int xf_id = aa.xform_list[xf_idx];
                 members[mem_idx]->input_buf    = X_xform[xf_id];
                 members[mem_idx]->input_buf_te = X_xform_te[xf_id];
                 members[mem_idx]->orig_m = m_idx;
@@ -2433,10 +2455,10 @@ int main(int argc, char *argv[]) {
                 }
             }
             if (tg_gb) {
-                int32_t *tgt = ki_build_target_from_gb(y_tr, total_train,
+                COUNTER_TYPE *tgt = ki_build_target_from_gb(y_tr, total_train,
                     tg_gb, mem->H_local, V, class_counts);
                 /* Overwrites the uniform init values */
-                memcpy(mem->target, tgt, (size_t)mem->H_local * KI_NCLASSES * (size_t)V * sizeof(int32_t));
+                memcpy(mem->target, tgt, (size_t)mem->H_local * KI_NCLASSES * (size_t)V * sizeof(COUNTER_TYPE));
                 free(tgt);
                 if (free_tg_gb) free(tg_gb);
             }
@@ -2450,9 +2472,9 @@ int main(int argc, char *argv[]) {
         for (int _b = 0; _b < active_members; _b++) {
             ki_Member *mem = members[_b];
             size_t m_tgt_sz = (size_t)mem->H_local * KI_NCLASSES * (size_t)V;
-            int64_t off_m[KI_NCLASSES];
+            SCORE_TYPE off_m[KI_NCLASSES];
             compute_class_offset(off_m, mem->target, mem->H_local, class_counts);
-            memcpy(mem->offset, off_m, KI_NCLASSES * sizeof(int64_t));
+            memcpy(mem->offset, off_m, KI_NCLASSES * sizeof(SCORE_TYPE));
             logit_convert(mem->target, mem->H_local, class_counts);
             /* Inverse: negate logits → target = -count_logit.
              * Offset stays unchanged (class prior, not per-neuron). */
@@ -2461,11 +2483,11 @@ int main(int argc, char *argv[]) {
                     mem->target[_i] = -mem->target[_i];
             }
             /* First snapshot in best/err (for export / Rollback) */
-            memcpy(mem->best_target, mem->target, m_tgt_sz * sizeof(int32_t));
-            memcpy(mem->best_offset, mem->offset, KI_NCLASSES * sizeof(int64_t));
+            memcpy(mem->best_target, mem->target, m_tgt_sz * sizeof(COUNTER_TYPE));
+            memcpy(mem->best_offset, mem->offset, KI_NCLASSES * sizeof(SCORE_TYPE));
             if (aa.err_rollback) {
-                memcpy(mem->err_target, mem->target, m_tgt_sz * sizeof(int32_t));
-                memcpy(mem->err_offset, mem->offset, KI_NCLASSES * sizeof(int64_t));
+                memcpy(mem->err_target, mem->target, m_tgt_sz * sizeof(COUNTER_TYPE));
+                memcpy(mem->err_offset, mem->offset, KI_NCLASSES * sizeof(SCORE_TYPE));
             }
         }
     }
@@ -2482,10 +2504,10 @@ int main(int argc, char *argv[]) {
           setup_tv_ms, setup_target_ms, setup_logit_ms, setup_total_ms);
 
     /* ── SEQUENTIAL TRAINING: one member at a time, all epochs ───── */
-    int64_t (*acc_votes_tr)[KI_NCLASSES] = (int64_t (*)[KI_NCLASSES])calloc(
-        (size_t)total_train, sizeof(int64_t[KI_NCLASSES]));
-    int64_t (*acc_votes_te)[KI_NCLASSES] = total_eval > 0
-        ? (int64_t (*)[KI_NCLASSES])calloc((size_t)total_eval, sizeof(int64_t[KI_NCLASSES]))
+    SCORE_TYPE (*acc_votes_tr)[KI_NCLASSES] = (SCORE_TYPE (*)[KI_NCLASSES])calloc(
+        (size_t)total_train, sizeof(SCORE_TYPE[KI_NCLASSES]));
+    SCORE_TYPE (*acc_votes_te)[KI_NCLASSES] = total_eval > 0
+        ? (SCORE_TYPE (*)[KI_NCLASSES])calloc((size_t)total_eval, sizeof(SCORE_TYPE[KI_NCLASSES]))
         : NULL;
     int final_trn_ok = 0, final_evl_ok = 0, best_evl_ok = 0;
 
@@ -2504,7 +2526,7 @@ int main(int argc, char *argv[]) {
     int _agree_trn = 0, _disagree_trn = 0, _agree_evl = 0, _disagree_evl = 0;
 
     /* Export buffers for per-member data (filled during member loop) */
-    int64_t *_export_scores_buf = NULL;
+    SCORE_TYPE *_export_scores_buf = NULL;
     int _export_scores_nm = 0;
 
     /* Member scores file (--debug-member-stats) */
@@ -2566,33 +2588,33 @@ int main(int argc, char *argv[]) {
 
         /* ── Build target from gb ── */
         if (!aa.dry_run && V > 1) {
-            int32_t *tgt = ki_build_target_from_gb(y_tr, total_train,
+            COUNTER_TYPE *tgt = ki_build_target_from_gb(y_tr, total_train,
                 mem->gb_buf, mem->H_local, V, class_counts);
-            memcpy(mem->target, tgt, (size_t)mem->H_local * KI_NCLASSES * (size_t)V * sizeof(int32_t));
+            memcpy(mem->target, tgt, (size_t)mem->H_local * KI_NCLASSES * (size_t)V * sizeof(COUNTER_TYPE));
             free(tgt);
-            int64_t off_m[KI_NCLASSES];
+            SCORE_TYPE off_m[KI_NCLASSES];
             compute_class_offset(off_m, mem->target, mem->H_local, class_counts);
-            memcpy(mem->offset, off_m, KI_NCLASSES * sizeof(int64_t));
+            memcpy(mem->offset, off_m, KI_NCLASSES * sizeof(SCORE_TYPE));
             logit_convert(mem->target, mem->H_local, class_counts);
             if (aa.target_init_mode == KI_TARGET_INVERSE) {
                 size_t m_tgt_sz = (size_t)mem->H_local * KI_NCLASSES * (size_t)V;
                 for (size_t _i = 0; _i < m_tgt_sz; _i++)
                     mem->target[_i] = -mem->target[_i];
             }
-            memcpy(mem->best_target, mem->target, (size_t)mem->H_local * KI_NCLASSES * (size_t)V * sizeof(int32_t));
-            memcpy(mem->best_offset, mem->offset, KI_NCLASSES * sizeof(int64_t));
+            memcpy(mem->best_target, mem->target, (size_t)mem->H_local * KI_NCLASSES * (size_t)V * sizeof(COUNTER_TYPE));
+            memcpy(mem->best_offset, mem->offset, KI_NCLASSES * sizeof(SCORE_TYPE));
             if (aa.err_rollback && mem->err_target) {
-                memcpy(mem->err_target, mem->target, (size_t)mem->H_local * KI_NCLASSES * (size_t)V * sizeof(int32_t));
-                memcpy(mem->err_offset, mem->offset, KI_NCLASSES * sizeof(int64_t));
+                memcpy(mem->err_target, mem->target, (size_t)mem->H_local * KI_NCLASSES * (size_t)V * sizeof(COUNTER_TYPE));
+                memcpy(mem->err_offset, mem->offset, KI_NCLASSES * sizeof(SCORE_TYPE));
             }
         }
 
         /* ── Train all epochs for this member ── */
         int member_best_err = total_train;
-        int step_init_local = step_init;  /* per-member step, reduced by rollbacks */
+        COUNTER_TYPE step_init_local = step_init;  /* per-member step, reduced by rollbacks */
         int rb_depth = 0;  /* rollback counter per member */
         float member_gap = 0.0f;  /* train/eval gap for step damping */
-        int64_t _gap_sc[KI_NCLASSES];
+        SCORE_TYPE _gap_sc[KI_NCLASSES];
         for (int ep = 0; ep < epochs; ep++) {
             int s_step;
             if (aa.warmup_epochs > 0 && mem->ep < aa.warmup_epochs) {
@@ -2614,7 +2636,7 @@ int main(int argc, char *argv[]) {
             mem->step = s_step;
 
              int err = ki_batch_correct(mem->target, mem->H_local, mem->offset,
-                         mem->gb_buf, y_tr, total_train, s_step,
+                         mem->gb_buf, y_tr, total_train, (COUNTER_TYPE)s_step,
                          (size_t)mem->H_local * KI_NCLASSES * 32, aa.filter_mask,
                          mem->H_local, 0);
             mem->last_err = err;
@@ -2644,7 +2666,7 @@ int main(int argc, char *argv[]) {
                 int _dep_trn = total_train - err;
                 int _dep_evl = 0;
                 if (total_eval > 0 && mem->gb_buf_te) {
-                    int64_t _dep_sc[KI_NCLASSES];
+                    SCORE_TYPE _dep_sc[KI_NCLASSES];
                     #pragma omp parallel for firstprivate(_dep_sc) reduction(+:_dep_evl) schedule(static)
                     for (int s = 0; s < total_eval; s++) {
                         scores_otto_from_gb(s, mem->H_local, mem->gb_buf_te,
@@ -2680,12 +2702,12 @@ int main(int argc, char *argv[]) {
             /* ── err-rollback: revert targets if error increased ── */
             if (aa.err_rollback && err > member_best_err && rb_depth < 5) {
                 memcpy(mem->target, mem->err_target,
-                       (size_t)mem->H_local * KI_NCLASSES * (size_t)V * sizeof(int32_t));
-                memcpy(mem->offset, mem->err_offset, KI_NCLASSES * sizeof(int64_t));
+                       (size_t)mem->H_local * KI_NCLASSES * (size_t)V * sizeof(COUNTER_TYPE));
+                memcpy(mem->offset, mem->err_offset, KI_NCLASSES * sizeof(SCORE_TYPE));
                 float reduction = 2.0f / 3.0f;
                 step_init_local = (int)((float)step_init_local * reduction + 0.5f);
-                if (step_init_local < 2) step_init_local = 2;
-                mem->step = step_init_local;
+                if (step_init_local < (COUNTER_TYPE)2) step_init_local = (COUNTER_TYPE)2;
+                mem->step = (int)step_init_local;
                 rb_depth++;
                 ep--;  /* retry this epoch */
                 continue;
@@ -2693,8 +2715,8 @@ int main(int argc, char *argv[]) {
             if (aa.err_rollback && err < member_best_err) {
                 member_best_err = err;
                 memcpy(mem->err_target, mem->target,
-                       (size_t)mem->H_local * KI_NCLASSES * (size_t)V * sizeof(int32_t));
-                memcpy(mem->err_offset, mem->offset, KI_NCLASSES * sizeof(int64_t));
+                       (size_t)mem->H_local * KI_NCLASSES * (size_t)V * sizeof(COUNTER_TYPE));
+                memcpy(mem->err_offset, mem->offset, KI_NCLASSES * sizeof(SCORE_TYPE));
             }
         }
 
@@ -2702,7 +2724,7 @@ int main(int argc, char *argv[]) {
         int _member_trn = 0, _member_evl = 0;
         int _skip_member = 0;
         if (aa.member_threshold > 0) {
-            {   int64_t _sc[KI_NCLASSES];
+            {   SCORE_TYPE _sc[KI_NCLASSES];
                 for (int s = 0; s < total_train + total_eval; s++) {
                     int _is_eval = (s >= total_train);
                     int _ns = _is_eval ? s - total_train : s;
@@ -2724,13 +2746,13 @@ int main(int argc, char *argv[]) {
         if (!_skip_member) {
             /* Reset _member_trn if Phase 1 already set it (avoid double-count) */
             _member_trn = 0; _member_evl = 0;
-            {   int64_t sc[KI_NCLASSES];
+            {   SCORE_TYPE sc[KI_NCLASSES];
                 #pragma omp parallel for firstprivate(sc) reduction(+:final_trn_ok,final_evl_ok,_member_trn,_member_evl,_agree_trn,_disagree_trn,_agree_evl,_disagree_evl) schedule(static)
                 for (int s = 0; s < total_train + total_eval; s++) {
                     int is_eval = (s >= total_train);
                     int ns = is_eval ? s - total_train : s;
                     const uint32_t *gb = is_eval ? mem->gb_buf_te : mem->gb_buf;
-                    int64_t *acc = is_eval ? acc_votes_te[ns] : acc_votes_tr[s];
+                    SCORE_TYPE *acc = is_eval ? acc_votes_te[ns] : acc_votes_tr[s];
                     if (!gb) continue;
                     scores_otto_from_gb(ns, mem->H_local, gb, mem->target, mem->offset, sc);
                     /* Member accuracy */
@@ -2763,14 +2785,14 @@ int main(int argc, char *argv[]) {
             for (int s = 0; s < total_train; s++) {
                 int pred = -1;
                 for (int k = 0; k < KI_NCLASSES; k++)
-                    if (acc_votes_tr[s][k] != 0 && (pred < 0 || acc_votes_tr[s][k] > acc_votes_tr[s][pred]))
+                    if ((acc_votes_tr[s][k] > 0 || acc_votes_tr[s][k] < 0) && (pred < 0 || acc_votes_tr[s][k] > acc_votes_tr[s][pred]))
                         pred = k;
                 if (pred >= 0 && pred == (int)y_tr[s]) _trn_ok++;
             }
             for (int s = 0; s < total_eval; s++) {
                 int pred = -1;
                 for (int k = 0; k < KI_NCLASSES; k++)
-                    if (acc_votes_te[s][k] != 0 && (pred < 0 || acc_votes_te[s][k] > acc_votes_te[s][pred]))
+                    if ((acc_votes_te[s][k] > 0 || acc_votes_te[s][k] < 0) && (pred < 0 || acc_votes_te[s][k] > acc_votes_te[s][pred]))
                         pred = k;
                 if (pred >= 0 && pred == (int)y_te[s]) _evl_ok++;
             }
@@ -2852,13 +2874,13 @@ int main(int argc, char *argv[]) {
         /* --export-scores: accumulate per-member scores */
         if (aa.export_scores[0] && !aa.dry_run) {
             size_t _member_sz = (size_t)(total_train + total_eval) * KI_NCLASSES;
-            int64_t *_m_sc = (int64_t *)calloc(_member_sz, sizeof(int64_t));
-            int64_t sc[KI_NCLASSES];
+            SCORE_TYPE *_m_sc = (SCORE_TYPE *)calloc(_member_sz, sizeof(SCORE_TYPE));
+            SCORE_TYPE sc[KI_NCLASSES];
             #pragma omp parallel for firstprivate(sc) schedule(static)
             for (int s = 0; s < total_train; s++) {
                 scores_otto_from_gb(s, mem->H_local, mem->gb_buf,
                                    mem->target, mem->offset, sc);
-                int64_t *dst = _m_sc + (size_t)s * KI_NCLASSES;
+                SCORE_TYPE *dst = _m_sc + (size_t)s * KI_NCLASSES;
                 for (int k = 0; k < KI_NCLASSES; k++) dst[k] = sc[k];
             }
             if (total_eval > 0) {
@@ -2866,7 +2888,7 @@ int main(int argc, char *argv[]) {
                 for (int s = 0; s < total_eval; s++) {
                     scores_otto_from_gb(s, mem->H_local, mem->gb_buf_te,
                                        mem->target, mem->offset, sc);
-                    int64_t *dst = _m_sc + (size_t)(total_train + s) * KI_NCLASSES;
+                    SCORE_TYPE *dst = _m_sc + (size_t)(total_train + s) * KI_NCLASSES;
                     for (int k = 0; k < KI_NCLASSES; k++) dst[k] = sc[k];
                 }
             }
@@ -2876,9 +2898,9 @@ int main(int argc, char *argv[]) {
                 _export_scores_nm = 1;
             } else {
                 size_t _es = (size_t)(total_train + total_eval) * KI_NCLASSES;
-                _export_scores_buf = (int64_t *)realloc(_export_scores_buf,
-                    (size_t)(_export_scores_nm + 1) * _es * sizeof(int64_t));
-                memcpy(_export_scores_buf + (size_t)_export_scores_nm * _es, _m_sc, _es * sizeof(int64_t));
+                _export_scores_buf = (SCORE_TYPE *)realloc(_export_scores_buf,
+                    (size_t)(_export_scores_nm + 1) * _es * sizeof(SCORE_TYPE));
+                memcpy(_export_scores_buf + (size_t)_export_scores_nm * _es, _m_sc, _es * sizeof(SCORE_TYPE));
                 _export_scores_nm++;
                 free(_m_sc);
             }
@@ -2898,15 +2920,15 @@ int main(int argc, char *argv[]) {
             if (nf) {
                 fwrite(mem->gb_buf, sizeof(uint32_t), gb_tr_sz, nf);
                 fwrite(mem->gb_buf_te, sizeof(uint32_t), gb_te_sz, nf);
-                fwrite(mem->target, sizeof(int32_t), tgt_sz, nf);
-                fwrite(mem->offset, sizeof(int64_t), KI_NCLASSES, nf);
+                fwrite(mem->target, sizeof(COUNTER_TYPE), tgt_sz, nf);
+                fwrite(mem->offset, sizeof(SCORE_TYPE), KI_NCLASSES, nf);
                 fclose(nf);
             }
         }
 
         /* ── Write member scores for --debug-member-stats ── */
         if (_ms_fp) {
-            int64_t _ms_sc[KI_NCLASSES];
+            SCORE_TYPE _ms_sc[KI_NCLASSES];
             size_t _ms_total = (size_t)(total_train + total_eval);
             for (size_t _ms_s = 0; _ms_s < _ms_total; _ms_s++) {
                 int _ms_is_eval = (_ms_s >= (size_t)total_train);
@@ -2914,7 +2936,7 @@ int main(int argc, char *argv[]) {
                 const uint32_t *_ms_gb = _ms_is_eval ? mem->gb_buf_te : mem->gb_buf;
                 scores_otto_from_gb((int)_ms_ns, mem->H_local, _ms_gb,
                                    mem->target, mem->offset, _ms_sc);
-                fwrite(_ms_sc, sizeof(int64_t), KI_NCLASSES, _ms_fp);
+                fwrite(_ms_sc, sizeof(COUNTER_TYPE), KI_NCLASSES, _ms_fp);
             }
             /* Collect metadata: write member name as string (color=encN xf=name) */
             char _ms_m[64] = "";
@@ -2985,7 +3007,7 @@ int main(int argc, char *argv[]) {
             for (int s = 0; s < total_train; s++) {
                 int pred = -1;
                 for (int k = 0; k < KI_NCLASSES; k++)
-                    if (acc_votes_tr[s][k] != 0 && (pred < 0 || acc_votes_tr[s][k] > acc_votes_tr[s][pred]))
+                    if ((acc_votes_tr[s][k] > 0 || acc_votes_tr[s][k] < 0) && (pred < 0 || acc_votes_tr[s][k] > acc_votes_tr[s][pred]))
                         pred = k;
                 pred_tr[s] = (uint8_t)(pred >= 0 ? pred : 0);
             }
@@ -2994,7 +3016,7 @@ int main(int argc, char *argv[]) {
             for (int s = 0; s < total_eval; s++) {
                 int pred = -1;
                 for (int k = 0; k < KI_NCLASSES; k++)
-                    if (acc_votes_te[s][k] != 0 && (pred < 0 || acc_votes_te[s][k] > acc_votes_te[s][pred]))
+                    if ((acc_votes_te[s][k] > 0 || acc_votes_te[s][k] < 0) && (pred < 0 || acc_votes_te[s][k] > acc_votes_te[s][pred]))
                         pred = k;
                 pred_eval[s] = (uint8_t)(pred >= 0 ? pred : 0);
             }
@@ -3037,17 +3059,17 @@ int main(int argc, char *argv[]) {
                     if (!_tf) continue;
                     uint32_t *_gb_tr = (uint32_t *)malloc(gb_tr_sz * sizeof(uint32_t));
                     uint32_t *_gb_te = (uint32_t *)malloc(gb_te_sz * sizeof(uint32_t));
-                    int32_t *_tgt = (int32_t *)malloc(tgt_sz * sizeof(int32_t));
-                    int64_t *_off = (int64_t *)malloc(KI_NCLASSES * sizeof(int64_t));
+                    COUNTER_TYPE *_tgt = (COUNTER_TYPE *)malloc(tgt_sz * sizeof(COUNTER_TYPE));
+                    SCORE_TYPE *_off = (SCORE_TYPE *)malloc(KI_NCLASSES * sizeof(SCORE_TYPE));
                     if (_gb_tr && _gb_te && _tgt && _off) {
                         fread(_gb_tr, sizeof(uint32_t), gb_tr_sz, _tf);
                         fread(_gb_te, sizeof(uint32_t), gb_te_sz, _tf);
-                        fread(_tgt, sizeof(int32_t), tgt_sz, _tf);
-                        fread(_off, sizeof(int64_t), KI_NCLASSES, _tf);
+                        fread(_tgt, sizeof(COUNTER_TYPE), tgt_sz, _tf);
+                        fread(_off, sizeof(SCORE_TYPE), KI_NCLASSES, _tf);
                         fwrite(_gb_tr, sizeof(uint32_t), gb_tr_sz, nf);
                         fwrite(_gb_te, sizeof(uint32_t), gb_te_sz, nf);
-                        fwrite(_tgt, sizeof(int32_t), tgt_sz, nf);
-                        fwrite(_off, sizeof(int64_t), KI_NCLASSES, nf);
+                        fwrite(_tgt, sizeof(COUNTER_TYPE), tgt_sz, nf);
+                        fwrite(_off, sizeof(SCORE_TYPE), KI_NCLASSES, nf);
                     }
                     free(_gb_tr); free(_gb_te); free(_tgt); free(_off);
                     fclose(_tf);

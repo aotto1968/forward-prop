@@ -98,20 +98,8 @@ static inline uint32_t majority_tree1_rowwise(const uint32_t *vals, int n,
  * @param half    threshold = total_pixel / 2
  * @return        KI_BIT_POS-bit result (in bits 0..KI_BIT_POS-1)
  */
-#if KI_BIT_WIDTH == 8
-#  define KI_PX_PER_CONT 4
-#  define KI_BIT_POS     8
-#  define KI_PIXEL_GROUPS 4
-#elif KI_BIT_WIDTH == 16
-#  define KI_PX_PER_CONT 2
-#  define KI_BIT_POS     16
-#  define KI_PIXEL_GROUPS 2
-#elif KI_BIT_WIDTH == 32
-#  define KI_PX_PER_CONT 1
-#  define KI_BIT_POS     32
-#  define KI_PIXEL_GROUPS 1
-#else
-#  error "KI_BIT_WIDTH must be 8, 16, or 32"
+#ifndef KI_PX_PER_CONT
+#  error "KI_PX_PER_CONT not defined — include ki-common.h before maj1.h"
 #endif
 
 static inline uint32_t majority_tree1_pixel(const uint32_t *vals, int n_cont, int half) {

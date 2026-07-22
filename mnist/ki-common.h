@@ -162,10 +162,63 @@ static inline int ki_color_parse(const char *tok) {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
+ * MODE_FLOAT32 — Single computation-mode switch (before ki-local.h)
+ * ═══════════════════════════════════════════════════════════════════════
+ * Define -DMODE_FLOAT32 to enable IEEE 754 float counters/scores/types.
+ * Derived defines (COUNTER_TYPE, COUNTER_TYPE_IS_FLOAT, SCORE_TYPE) are
+ * all set centrally from this one switch.
+ *
+ * Default (no -DMODE_FLOAT32): int32_t counters, int64_t scores.
+ *
+ * NOTE: Individual -D overrides (COUNTER_TYPE, SCORE_TYPE) still work.
+ */
+#ifdef MODE_FLOAT32
+#  ifndef COUNTER_TYPE
+#    define COUNTER_TYPE float
+#  endif
+#  ifndef COUNTER_TYPE_IS_FLOAT
+#    define COUNTER_TYPE_IS_FLOAT 1
+#  endif
+#  ifndef SCORE_TYPE
+#    define SCORE_TYPE float
+#  endif
+#endif
+
+/* ═══════════════════════════════════════════════════════════════════════
  * ki-local.h — dataset-specific constants + data loader
  * (MNIST in mnist-1/, CIFAR-10 in cifar-1/)
  * ═══════════════════════════════════════════════════════════════════════ */
 #include "ki-local.h"
+
+/* ── Bit-width dependent types & constants (defined after ki-local.h sets KI_BIT_WIDTH) ── */
+#if KI_BIT_WIDTH == 4
+#  define KI_PX_PER_CONT 8
+#  define KI_BIT_POS     4
+#  define KI_PIXEL_GROUPS 8
+#  define PIXEL_TYPE     uint8_t
+#elif KI_BIT_WIDTH == 8
+#  define KI_PX_PER_CONT 4
+#  define KI_BIT_POS     8
+#  define KI_PIXEL_GROUPS 4
+#  define PIXEL_TYPE     uint8_t
+#elif KI_BIT_WIDTH == 12
+#  define KI_PX_PER_CONT 2
+#  define KI_BIT_POS     12
+#  define KI_PIXEL_GROUPS 2
+#  define PIXEL_TYPE     uint16_t
+#elif KI_BIT_WIDTH == 16
+#  define KI_PX_PER_CONT 2
+#  define KI_BIT_POS     16
+#  define KI_PIXEL_GROUPS 2
+#  define PIXEL_TYPE     uint16_t
+#elif KI_BIT_WIDTH == 32
+#  define KI_PX_PER_CONT 1
+#  define KI_BIT_POS     32
+#  define KI_PIXEL_GROUPS 1
+#  define PIXEL_TYPE     uint32_t
+#else
+#  error "KI_BIT_WIDTH must be 4, 8, 12, 16, or 32"
+#endif
 
 /* ── Encoding alias lookup (dataset-specific, defined in ki-local.h) ──
  * Each dataset provides its own ki_encoding_alias_lookup() via KI_COMMON_ALIAS_LOOKUP
@@ -259,6 +312,8 @@ typedef struct {
     float  gap_k;           			/* --gap-k K: exp(-K×gap) step damping when train/eval gap widens (default: 0.0=off) */
     int    err_rollback;    			/* --err-rollback: rollback targets when err increases (default: 0) */
     int    maj_mode;         			/* --maj 3|true: majority mode (3=tree, true=exact per-bit) */
+    int    maj_step;          			/* --maj-step N: pixel step between majority triples (default: KI_PX_PER_CONT) */
+    int    debug_maj;         			/* --debug-maj auto|container|pixel: force majority path (default: auto) */
     int    rows_mode;         			/* --rows-mode flat|rows: 0=flat, 1=per-row members */
     int    no_precompute;   			/* --no-precompute: skip h0/gb caches, compute on-the-fly per batch (default: 0) */
     int    ensembleN;       			/* --ensembleN N: independent W0 copies (default: 1) */
@@ -295,6 +350,9 @@ typedef struct {
     char   filter_str[128];    			/* --filter "0,1,airplan,cat": raw string */
     int    filter_mask;        			/* computed bitmask from filter_str (0 = no filter) */
     int    xforms;             			/* bitmask of active transforms (--xform, default: 1<<KI_XFORM_ID) */
+#define KI_XFORM_LIST_MAX 128
+    int    xform_list[KI_XFORM_LIST_MAX];/* xform IDs as entered (preserves duplicates) */
+    int    xform_list_count;            /* number of entries in xform_list */
 } ki_Args;
  
 /* ── Majority mode: 1=container flat, 1r=container row, 1p=pixel flat, 1rp=pixel+row, 3=tree (default), 7=7-tree ── */
@@ -350,6 +408,7 @@ static const struct _comp_entry _comp_table[] = {
     {"--member-threshold",              "num",   NULL},
     {"--err-rollback",                  "none",  NULL},
     {"--maj",                           "token", "1 1r 1p 1rp 3 7"},
+    {"--maj-step",                      "num",   NULL},
     {"--rows-mode",                     "token", "flat rows"},
     {"--no-precompute",                 "none",  NULL},
     {"--warmup",                        "num",   NULL},
@@ -359,7 +418,7 @@ static const struct _comp_entry _comp_table[] = {
     {"--seed-member",                   "token", "once const incr"},
     {"--channels",                      "token", "all packed full flat auge diff rgb grey h s c edge bin lbp dog var dir range lbp-rg dist mnist r g b"},
     {"--encoding",                      "token", "all performance performance-maj1 performance-1 latest latest-2 raw lin7 lin8 down up mid log exp sig sqrt cbrt gamma tri inv-exp"},
-    {"--encoding-sizeN",                "token", "8 16 24 32"},
+    {"--encoding-sizeN",                "token", "8 12 16 24 32"},
     {"--export-merge-scores",           "dir",   NULL},
     {"--export-scores",                 "file",  NULL},
     {"--export-neurons",                "file",  NULL},
@@ -374,6 +433,7 @@ static const struct _comp_entry _comp_table[] = {
     {"--quick",                         "none",  NULL},
     {"--qq",                            "none",  NULL},
     {"--debug",                         "none",  NULL},
+    {"--debug-maj",                     "token", "auto container pixel"},
     {"--debug-h0",                      "none",  NULL},
     {"--debug-class-voting",            "none",  NULL},
     {"--debug-class-voting-all",        "none",  NULL},
@@ -382,7 +442,7 @@ static const struct _comp_entry _comp_table[] = {
     {"--debug-epoch",                       "none",  NULL},
     {"--debug-member",                      "none",  NULL},
     {"--debug-member-stats",                "file",  NULL},
-    {"--xform",              "token", "all shift augmentation performance id hflip vflip dflip1 dflip2 rot90 rot180 rot270 sft-u1 sft-u2 sft-u3 sft-d1 sft-d2 sft-d3 sft-l1 sft-l2 sft-l3 sft-r1 sft-r2 sft-r3"},
+    {"--xform",              "token", "all shift augmentation performance id hflip vflip dflip1 dflip2 rot90 rot180 rot270 sft-u1 sft-u2 sft-u3 sft-d1 sft-d2 sft-d3 sft-l1 sft-l2 sft-l3 sft-r1 sft-r2 sft-r3 shuffle shuffle1 shuffle2 shuffle3 shuffle4 shuffle5 shuffle6 shuffle7 shuffle8 shuffle9 shuffle10"},
     {"--filter",                        "token", NULL},
     {"--shuffle",                       "none",  NULL},
     {"--help",                          "none",  NULL},
@@ -433,6 +493,8 @@ static inline void ki_parse_args(int argc, char *argv[]) {
             printf("       1rp = pixel-genau row-wise (per row pixel, then cross-row)\n");
             printf("       3   = 3-tree Baum (default)\n");
             printf("       7   = 7-tree (5/7 threshold)\n");
+            printf("  --maj-step N      Pixel step between majority triples (default: %d, auto when 0)\n", KI_PX_PER_CONT_W);
+            printf("                    N=0: auto (KI_PX_PER_CONT). Fast path when N %% KI_PX_PER_CONT == 0\n");
             printf("  --rows-mode flat|rows  Split image into per-row members (default: flat)\n");
             printf("  --no-precompute   Skip h0/gb caches, compute on-the-fly per batch (saves RAM, slower)  (default: off)\n");
             printf("  --warmup N        Linear warmup epochs                                          (default: %d, 0=off)\n", aa.warmup_epochs);
@@ -470,6 +532,7 @@ static inline void ki_parse_args(int argc, char *argv[]) {
             printf("  --quick           5000 train / 2000 eval\n");
             printf("  --qq              5000 train / 2000 eval / 3 epochs\n");
             printf("  --debug           Verbose output                                                (default: off)\n");
+            printf("  --debug-maj auto|container|pixel  Force majority path (debug)                   (default: auto)\n");
             printf("  --debug-h0        Per-neuron debug                                              (default: off)\n");
             printf("  --debug-class-voting?-all?  Member × Class accuracy table (end only)            (default: off)\n");
             printf("  --debug-confusion-matrix?-all?  Confusion matrix table (end only)               (default: off)\n");
@@ -707,10 +770,22 @@ static inline void ki_parse_args(int argc, char *argv[]) {
                 aa.maj_mode = KI_MAJ_3;
             } else if (strcmp(val, "7") == 0) {
                 aa.maj_mode = KI_MAJ_7;
+            } else if (strcmp(val, "0") == 0) {
+                aa.maj_mode = KI_MAJ_1;  /* alias for fast testing */
             } else {
                 fprintf(stderr, "[ERROR] --maj: expected '1','1r','1p','1rp','3','7', got '%s'\n", val);
                 exit(1);
             }
+        } else if (strcmp(argv[i], "--maj-step") == 0 && i + 1 < argc) {
+            int val = atoi(argv[++i]);
+            if (val < 0) { fprintf(stderr, "[ERROR] --maj-step: expected non-negative integer\n"); exit(1); }
+            aa.maj_step = val;
+        } else if (strcmp(argv[i], "--debug-maj") == 0 && i + 1 < argc) {
+            const char *val = argv[++i];
+            if (strcmp(val, "auto") == 0) aa.debug_maj = 0;
+            else if (strcmp(val, "container") == 0) aa.debug_maj = 1;
+            else if (strcmp(val, "pixel") == 0) aa.debug_maj = 2;
+            else { fprintf(stderr, "[ERROR] --debug-maj: expected 'auto','container','pixel'\n"); exit(1); }
         } else if (strcmp(argv[i], "--rows-mode") == 0 && i + 1 < argc) {
             const char *val = argv[++i];
             if (strcmp(val, "rows") == 0) aa.rows_mode = 1;
@@ -816,15 +891,27 @@ static inline void ki_parse_args(int argc, char *argv[]) {
             char xbuf[128];
             strncpy(xbuf, val, sizeof(xbuf) - 1);
             xbuf[sizeof(xbuf) - 1] = '\0';
+            aa.xform_list_count = 0;
+            /* Helper: add xform ID to list (if space) */
+#define KI_XFORM_LIST_ADD(xf) do { \
+                if (aa.xform_list_count < KI_XFORM_LIST_MAX) \
+                    aa.xform_list[aa.xform_list_count++] = (xf); \
+            } while(0)
             for (char *tok = strtok(xbuf, ","); tok; tok = strtok(NULL, ",")) {
                 while (*tok == ' ' || *tok == '\t') tok++;
                 if (ki_strcasecmp(tok, "all") == 0 || ki_strcasecmp(tok, "alle") == 0) {
-                    aa.xforms = (1u << KI_XFORM_COUNT) - 1u;  /* all 20 transforms */
+                    aa.xforms = (1u << KI_XFORM_COUNT) - 1u;
+                    for (int _xf = 0; _xf < KI_XFORM_COUNT; _xf++)
+                        KI_XFORM_LIST_ADD(_xf);
                 } else if (ki_strcasecmp(tok, "performance") == 0) {
                     aa.xforms |= (1 << KI_XFORM_ID) | (1 << KI_XFORM_HFLIP)
                                | (1 << KI_XFORM_VFLIP) | (1 << KI_XFORM_ROT90);
+                    KI_XFORM_LIST_ADD(KI_XFORM_ID); KI_XFORM_LIST_ADD(KI_XFORM_HFLIP);
+                    KI_XFORM_LIST_ADD(KI_XFORM_VFLIP); KI_XFORM_LIST_ADD(KI_XFORM_ROT90);
                 } else if (ki_strcasecmp(tok, "augmentation") == 0) {
-                    aa.xforms = (1 << KI_XFORM_COUNT) - 1;  /* all 20 transforms */
+                    aa.xforms = (1u << KI_XFORM_COUNT) - 1u;
+                    for (int _xf = 0; _xf < KI_XFORM_COUNT; _xf++)
+                        KI_XFORM_LIST_ADD(_xf);
                 } else if (ki_strcasecmp(tok, "shift") == 0) {
                     aa.xforms |= (1 << KI_XFORM_SFT_U1) | (1 << KI_XFORM_SFT_U2)
                                | (1 << KI_XFORM_SFT_U3) | (1 << KI_XFORM_SFT_D1)
@@ -832,50 +919,69 @@ static inline void ki_parse_args(int argc, char *argv[]) {
                                | (1 << KI_XFORM_SFT_L1) | (1 << KI_XFORM_SFT_L2)
                                | (1 << KI_XFORM_SFT_L3) | (1 << KI_XFORM_SFT_R1)
                                | (1 << KI_XFORM_SFT_R2) | (1 << KI_XFORM_SFT_R3);
+                    KI_XFORM_LIST_ADD(KI_XFORM_SFT_U1); KI_XFORM_LIST_ADD(KI_XFORM_SFT_U2);
+                    KI_XFORM_LIST_ADD(KI_XFORM_SFT_U3); KI_XFORM_LIST_ADD(KI_XFORM_SFT_D1);
+                    KI_XFORM_LIST_ADD(KI_XFORM_SFT_D2); KI_XFORM_LIST_ADD(KI_XFORM_SFT_D3);
+                    KI_XFORM_LIST_ADD(KI_XFORM_SFT_L1); KI_XFORM_LIST_ADD(KI_XFORM_SFT_L2);
+                    KI_XFORM_LIST_ADD(KI_XFORM_SFT_L3); KI_XFORM_LIST_ADD(KI_XFORM_SFT_R1);
+                    KI_XFORM_LIST_ADD(KI_XFORM_SFT_R2); KI_XFORM_LIST_ADD(KI_XFORM_SFT_R3);
                 } else if (ki_strcasecmp(tok, "id") == 0) {
-                    aa.xforms |= (1 << KI_XFORM_ID);
+                    aa.xforms |= (1 << KI_XFORM_ID); KI_XFORM_LIST_ADD(KI_XFORM_ID);
                 } else if (ki_strcasecmp(tok, "hflip") == 0) {
-                    aa.xforms |= (1 << KI_XFORM_HFLIP);
+                    aa.xforms |= (1 << KI_XFORM_HFLIP); KI_XFORM_LIST_ADD(KI_XFORM_HFLIP);
                 } else if (ki_strcasecmp(tok, "vflip") == 0) {
-                    aa.xforms |= (1 << KI_XFORM_VFLIP);
+                    aa.xforms |= (1 << KI_XFORM_VFLIP); KI_XFORM_LIST_ADD(KI_XFORM_VFLIP);
                 } else if (ki_strcasecmp(tok, "dflip1") == 0) {
-                    aa.xforms |= (1 << KI_XFORM_DFLIP1);
+                    aa.xforms |= (1 << KI_XFORM_DFLIP1); KI_XFORM_LIST_ADD(KI_XFORM_DFLIP1);
                 } else if (ki_strcasecmp(tok, "dflip2") == 0) {
-                    aa.xforms |= (1 << KI_XFORM_DFLIP2);
+                    aa.xforms |= (1 << KI_XFORM_DFLIP2); KI_XFORM_LIST_ADD(KI_XFORM_DFLIP2);
                 } else if (ki_strcasecmp(tok, "rot90") == 0) {
-                    aa.xforms |= (1 << KI_XFORM_ROT90);
+                    aa.xforms |= (1 << KI_XFORM_ROT90); KI_XFORM_LIST_ADD(KI_XFORM_ROT90);
                 } else if (ki_strcasecmp(tok, "rot180") == 0) {
-                    aa.xforms |= (1 << KI_XFORM_ROT180);
+                    aa.xforms |= (1 << KI_XFORM_ROT180); KI_XFORM_LIST_ADD(KI_XFORM_ROT180);
                 } else if (ki_strcasecmp(tok, "rot270") == 0) {
-                    aa.xforms |= (1 << KI_XFORM_ROT270);
+                    aa.xforms |= (1 << KI_XFORM_ROT270); KI_XFORM_LIST_ADD(KI_XFORM_ROT270);
                 } else if (ki_strcasecmp(tok, "sft-u1") == 0) {
-                    aa.xforms |= (1 << KI_XFORM_SFT_U1);
+                    aa.xforms |= (1 << KI_XFORM_SFT_U1); KI_XFORM_LIST_ADD(KI_XFORM_SFT_U1);
                 } else if (ki_strcasecmp(tok, "sft-u2") == 0) {
-                    aa.xforms |= (1 << KI_XFORM_SFT_U2);
+                    aa.xforms |= (1 << KI_XFORM_SFT_U2); KI_XFORM_LIST_ADD(KI_XFORM_SFT_U2);
                 } else if (ki_strcasecmp(tok, "sft-u3") == 0) {
-                    aa.xforms |= (1 << KI_XFORM_SFT_U3);
+                    aa.xforms |= (1 << KI_XFORM_SFT_U3); KI_XFORM_LIST_ADD(KI_XFORM_SFT_U3);
                 } else if (ki_strcasecmp(tok, "sft-d1") == 0) {
-                    aa.xforms |= (1 << KI_XFORM_SFT_D1);
+                    aa.xforms |= (1 << KI_XFORM_SFT_D1); KI_XFORM_LIST_ADD(KI_XFORM_SFT_D1);
                 } else if (ki_strcasecmp(tok, "sft-d2") == 0) {
-                    aa.xforms |= (1 << KI_XFORM_SFT_D2);
+                    aa.xforms |= (1 << KI_XFORM_SFT_D2); KI_XFORM_LIST_ADD(KI_XFORM_SFT_D2);
                 } else if (ki_strcasecmp(tok, "sft-d3") == 0) {
-                    aa.xforms |= (1 << KI_XFORM_SFT_D3);
+                    aa.xforms |= (1 << KI_XFORM_SFT_D3); KI_XFORM_LIST_ADD(KI_XFORM_SFT_D3);
                 } else if (ki_strcasecmp(tok, "sft-l1") == 0) {
-                    aa.xforms |= (1 << KI_XFORM_SFT_L1);
+                    aa.xforms |= (1 << KI_XFORM_SFT_L1); KI_XFORM_LIST_ADD(KI_XFORM_SFT_L1);
                 } else if (ki_strcasecmp(tok, "sft-l2") == 0) {
-                    aa.xforms |= (1 << KI_XFORM_SFT_L2);
+                    aa.xforms |= (1 << KI_XFORM_SFT_L2); KI_XFORM_LIST_ADD(KI_XFORM_SFT_L2);
                 } else if (ki_strcasecmp(tok, "sft-l3") == 0) {
-                    aa.xforms |= (1 << KI_XFORM_SFT_L3);
+                    aa.xforms |= (1 << KI_XFORM_SFT_L3); KI_XFORM_LIST_ADD(KI_XFORM_SFT_L3);
                 } else if (ki_strcasecmp(tok, "sft-r1") == 0) {
-                    aa.xforms |= (1 << KI_XFORM_SFT_R1);
+                    aa.xforms |= (1 << KI_XFORM_SFT_R1); KI_XFORM_LIST_ADD(KI_XFORM_SFT_R1);
                 } else if (ki_strcasecmp(tok, "sft-r2") == 0) {
-                    aa.xforms |= (1 << KI_XFORM_SFT_R2);
+                    aa.xforms |= (1 << KI_XFORM_SFT_R2); KI_XFORM_LIST_ADD(KI_XFORM_SFT_R2);
                 } else if (ki_strcasecmp(tok, "sft-r3") == 0) {
-                    aa.xforms |= (1 << KI_XFORM_SFT_R3);
-                } else {
+                    aa.xforms |= (1 << KI_XFORM_SFT_R3); KI_XFORM_LIST_ADD(KI_XFORM_SFT_R3);
+                } else if (ki_strcasecmp(tok, "shuffle") == 0) {
+                    aa.xforms |= (1 << KI_XFORM_SHUFFLE); KI_XFORM_LIST_ADD(KI_XFORM_SHUFFLE);
+                } else if (ki_strcasecmp(tok, "shuffle1") == 0)  { aa.xforms |= (1 << KI_XFORM_SHUFFLE1); KI_XFORM_LIST_ADD(KI_XFORM_SHUFFLE1); }
+                else if (ki_strcasecmp(tok, "shuffle2") == 0)  { aa.xforms |= (1 << KI_XFORM_SHUFFLE2); KI_XFORM_LIST_ADD(KI_XFORM_SHUFFLE2); }
+                else if (ki_strcasecmp(tok, "shuffle3") == 0)  { aa.xforms |= (1 << KI_XFORM_SHUFFLE3); KI_XFORM_LIST_ADD(KI_XFORM_SHUFFLE3); }
+                else if (ki_strcasecmp(tok, "shuffle4") == 0)  { aa.xforms |= (1 << KI_XFORM_SHUFFLE4); KI_XFORM_LIST_ADD(KI_XFORM_SHUFFLE4); }
+                else if (ki_strcasecmp(tok, "shuffle5") == 0)  { aa.xforms |= (1 << KI_XFORM_SHUFFLE5); KI_XFORM_LIST_ADD(KI_XFORM_SHUFFLE5); }
+                else if (ki_strcasecmp(tok, "shuffle6") == 0)  { aa.xforms |= (1 << KI_XFORM_SHUFFLE6); KI_XFORM_LIST_ADD(KI_XFORM_SHUFFLE6); }
+                else if (ki_strcasecmp(tok, "shuffle7") == 0)  { aa.xforms |= (1 << KI_XFORM_SHUFFLE7); KI_XFORM_LIST_ADD(KI_XFORM_SHUFFLE7); }
+                else if (ki_strcasecmp(tok, "shuffle8") == 0)  { aa.xforms |= (1 << KI_XFORM_SHUFFLE8); KI_XFORM_LIST_ADD(KI_XFORM_SHUFFLE8); }
+                else if (ki_strcasecmp(tok, "shuffle9") == 0)  { aa.xforms |= (1 << KI_XFORM_SHUFFLE9); KI_XFORM_LIST_ADD(KI_XFORM_SHUFFLE9); }
+                else if (ki_strcasecmp(tok, "shuffle10") == 0) { aa.xforms |= (1 << KI_XFORM_SHUFFLE10); KI_XFORM_LIST_ADD(KI_XFORM_SHUFFLE10); }
+                else {
                     fprintf(stderr, "[ERROR] --xform: unknown '%s'. "
                             "Valid: all, shift, augmentation, performance, id, hflip, vflip, dflip1, dflip2, "
-                            "rot90, rot180, rot270, sft-u1/2/3, sft-d1/2/3, sft-l1/2/3, sft-r1/2/3\n", tok);
+                            "rot90, rot180, rot270, sft-u1/2/3, sft-d1/2/3, sft-l1/2/3, sft-r1/2/3, "
+                            "shuffle, shuffle1..10\n", tok);
                     exit(1);
                 }
             }
@@ -1324,12 +1430,29 @@ static inline float ki_lr_schedule(int epoch, int total_epochs, int warmup,
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
- * OT_PRECISION — Skalierungshilfe: in × F + 0.5-Rounding
+ * COUNTER_TYPE — Datenformat für Target/OFFSET/Korrektur-Step
  * ═══════════════════════════════════════════════════════════════════════
- * F = (1<<OT_PRECISION).  All logit values are scaled by F
- * in int32/int64 gespeichert.  ot_precision() rundet kaufmaennisch.
+ * int32_t: fixed-point skaliert mit OT_F (aktuelles, int32-Komp.)
+ * float:   IEEE 754 32-Bit, direkt, keine Skalierung (halbiert offset)
+ * Definiert in ki-local.h (pro Dataset überschreibbar).
  */
-#define OT_F (1 << OT_PRECISION)
+#ifndef COUNTER_TYPE_IS_FLOAT
+#define COUNTER_TYPE_IS_FLOAT 0
+#endif
+
+/* Score accumulator type: int64_t for int32 mode (overflow-safe), float for float mode.
+ * Default to int64_t. Override via -DSCORE_TYPE=float for float mode. */
+#ifndef SCORE_TYPE
+#define SCORE_TYPE int64_t
+#endif
+
+/* ═══════════════════════════════════════════════════════════════════════
+ * OT_PRECISION / OT_F — Skalierungsfaktor für fixed-point Mode
+ * ═══════════════════════════════════════════════════════════════════════
+ * int32_t Mode: F = (1<<OT_PRECISION), logit values scaled by F.
+ * float Mode:   F = 1 (keine Skalierung).
+ */
+#define OT_F (1 << OT_PRECISION)  /* always 1024 — scaling for gap, independent of COUNTER_TYPE */
 static inline double ot_precision(double in) {
     return in * (double)OT_F + (in >= 0 ? 0.5 : -0.5);
 }
@@ -1418,6 +1541,20 @@ static const char *enc_str(void) {
     if (pos == 0) { _enc_buf[pos++] = '?'; }
     _enc_buf[pos] = '\0';
     return _enc_buf;
+}
+
+/* ── Majority mode string ────────────────────────────────────── */
+__attribute__((unused))
+static const char *maj_str(void) {
+    switch (aa.maj_mode) {
+        case KI_MAJ_1:   return "1";
+        case KI_MAJ_1R:  return "1r";
+        case KI_MAJ_1P:  return "1p";
+        case KI_MAJ_1RP: return "1rp";
+        case KI_MAJ_3:   return "3";
+        case KI_MAJ_7:   return "7";
+        default:         return "?";
+    }
 }
 
 /* ── Target-init string (for --help and SETUP Header) ───────── */

@@ -48,7 +48,7 @@ ki_Args aa = {
 #define BITVOTE_TOTAL_BITS (KI_NC_TOTAL * 32)  /* Container × 32 Bit */
 
 typedef struct {
-    int32_t *target;     /* [total_bits × KI_NCLASSES] — weights for each bit */
+    COUNTER_TYPE *target;     /* [total_bits × KI_NCLASSES] — weights for each bit */
     int64_t  offset[KI_NCLASSES];  /* Klassen-Bias (Logit-Prior) */
     int      total_bits;
     float    trn_acc;    /* --member-threshold: training accuracy (0..100) */

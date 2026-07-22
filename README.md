@@ -106,6 +106,41 @@ feature abstraction than exact pixel-level counting (`maj=1p`), which is 3× slo
 and adds nothing. The nonlinearity comes from the **majority threshold**, not from
 pixel accuracy.
 
+### `--maj-step N` — Only `N == KI_PX_PER_CONT` Works
+
+The `--maj-step` flag controls the pixel distance between the three members
+of each majority triple. **Only the default `--maj-step 4` (= KI_PX_PER_CONT
+at 8-bit) produces valid results.** Any other value creates fundamental
+problems:
+
+| Step | Relation to ppc (=4) | Problem |
+|------|---------------------|---------|
+| **4** | `== ppc` | **Container-aligned** — each triple draws 1 pixel per container, `uint32_t` bit layout = pixel position 0-3. Fast path `majority_tree3` used. **Default. Works. ✓** |
+| **1-3** | `< ppc` | Triple (i, i+S, i+2S) fits within 3 containers (12px). Path 1 (container-grouping) works correctly, but **rearranges which bits compose each position** → different match results. W0 encoding expects ppc-aligned layout. |
+| **5+** | `> ppc` | Triple (i, i+S, i+2S) **spans more than 3 containers**. No container-aligned slot assignment possible → Path 2 (flat packing) used. **~2-3pp accuracy loss** vs step=4. |
+
+**Root cause:** The `uint32_t` match vector has a fixed bit-layout
+(`slot 0 = bits 0-7`, `slot 1 = bits 8-15`, etc.) that corresponds to
+pixel position within each container. The W0 random projection and H0
+encoding are trained for this layout. Any step other than ppc **shifts
+which pixels land in which slot**, destroying the alignment that the
+encoding logic depends on.
+
+For step > ppc, the triple even crosses container boundaries — pixel
+positions from different containers/slots end up in the same triple,
+and the result bit cannot be assigned to any single slot. Flat packing
+(assigning results sequentially to the next free slot) is the only
+correct approach, but produces a bit layout that the H0 encoding
+cannot exploit effectively.
+
+**Implementation details:**
+- `--debug-maj container` — forces `majority_tree3` (original, fast)
+- `--debug-maj pixel` — forces `majority_tree3_pixel_step` (step-aware)
+- `--debug-maj auto` (default) — fast path for step=ppc, pixel_step otherwise
+
+Both paths are validated to produce **identical results** for step=ppc
+(train=39.9%, eval=38.0%, err=30038 at H=64 ep=1).
+
 ### Otto Score vs Bit-Voting Baseline: +7pp at 3.6× Time
 
 CIFAR-10, H=768, 10 epochs, performance encoding, 12 members:
@@ -203,6 +238,8 @@ Each trainer doubles as inference engine via `--import`. Zero code drift.
 | `--gap-k F`                | Exp(-K×gap) step damping when train/eval gap widens  | 0.0 (off)       |
 | `--multi-correct`          | Punish all wrong classes, not just argmax            | off             |
 | `--batchN N`               | Mini-batch size                                      | 64              |
+| `--maj-step N`             | Pixel step between majority triples (0=auto=KI_PX_PER_CONT) | 0          |
+| `--debug-maj auto\|container\|pixel` | Force majority path (debug)                  | auto            |
 | `--debug-class-voting`     | Per-member per-class accuracy table                  | off             |
 | `--debug-confusion-matrix` | Confusion matrix table                               | off             |
 | `--filter CLASSES`         | Class subset (numeric or name, comma-sep)            | none            |

@@ -33,7 +33,7 @@ static __attribute__((unused)) uint32_t *load_input(const uint8_t *X_raw,
     for (int i = 0; i < n_enc && i < KI_ENC_MAX; i++) {
         int w = (int)aa.enc_array[i].width;
         if (w < 1) w = KI_ENC_WIDTH_DEFAULT;
-        enc_nc[i] = KI_NC * w / 8;
+        enc_nc[i] = KI_NC * w / KI_BIT_WIDTH;
         enc_off[i] = (int)stride;
         stride += (size_t)enc_nc[i];
     }
@@ -93,7 +93,7 @@ static __attribute__((unused)) uint32_t *load_input(const uint8_t *X_raw,
         if (w < 1) w = KI_ENC_WIDTH_DEFAULT;
         if (et < 0) et = KI_ENC_LIN7;
         enc_w[i] = w; enc_pack[i] = 32 / w; enc_shift[i] = w;
-        enc_nc[i] = KI_NC * w / 8; enc_type[i] = et;
+        enc_nc[i] = KI_NC * w / KI_BIT_WIDTH; enc_type[i] = et;
         block_off[i] = (int)stride;
         stride += (size_t)enc_nc[i];
     }

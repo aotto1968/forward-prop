@@ -64,7 +64,18 @@ enum ki_xform {
     KI_XFORM_SFT_R1  = 17,  /* Shift right 1 px */
     KI_XFORM_SFT_R2  = 18,  /* Shift right 2 px */
     KI_XFORM_SFT_R3  = 19,  /* Shift right 3 px */
-    KI_XFORM_COUNT   = 20
+    KI_XFORM_SHUFFLE = 20,  /* Random pixel permutation (pairwise swaps, fixed seed 42) */
+    KI_XFORM_SHUFFLE1 = 21, /* Shuffle with seed 1 */
+    KI_XFORM_SHUFFLE2 = 22, /* Shuffle with seed 2 */
+    KI_XFORM_SHUFFLE3 = 23, /* Shuffle with seed 3 */
+    KI_XFORM_SHUFFLE4 = 24, /* Shuffle with seed 4 */
+    KI_XFORM_SHUFFLE5 = 25, /* Shuffle with seed 5 */
+    KI_XFORM_SHUFFLE6 = 26, /* Shuffle with seed 6 */
+    KI_XFORM_SHUFFLE7 = 27, /* Shuffle with seed 7 */
+    KI_XFORM_SHUFFLE8 = 28, /* Shuffle with seed 8 */
+    KI_XFORM_SHUFFLE9 = 29, /* Shuffle with seed 9 */
+    KI_XFORM_SHUFFLE10= 30, /* Shuffle with seed 10 */
+    KI_XFORM_COUNT   = 31
 };
 
 /* ── Xform short name for display ──────────────────────────────── */
@@ -90,10 +101,56 @@ static inline const char *ki_xform_name(int xf) {
         [KI_XFORM_SFT_R1] = "sft-r1",
         [KI_XFORM_SFT_R2] = "sft-r2",
         [KI_XFORM_SFT_R3] = "sft-r3",
+        [KI_XFORM_SHUFFLE] = "shuffle",
+        [KI_XFORM_SHUFFLE1] = "shuffle1",
+        [KI_XFORM_SHUFFLE2] = "shuffle2",
+        [KI_XFORM_SHUFFLE3] = "shuffle3",
+        [KI_XFORM_SHUFFLE4] = "shuffle4",
+        [KI_XFORM_SHUFFLE5] = "shuffle5",
+        [KI_XFORM_SHUFFLE6] = "shuffle6",
+        [KI_XFORM_SHUFFLE7] = "shuffle7",
+        [KI_XFORM_SHUFFLE8] = "shuffle8",
+        [KI_XFORM_SHUFFLE9] = "shuffle9",
+        [KI_XFORM_SHUFFLE10] = "shuffle10",
     };
     if (xf >= 0 && xf < KI_XFORM_COUNT) return names[xf];
     return "?";
 }
+
+/* ── Dataset-specific shuffle apply (defined in ki-local.h) ── */
+extern void ki_xform_shuffle_apply(uint8_t *restrict out,
+                                    const uint8_t *restrict in,
+                                    int n, int ch);
+extern void ki_xform_shuffle1_apply(uint8_t *restrict out,
+                                     const uint8_t *restrict in,
+                                     int n, int ch);
+extern void ki_xform_shuffle2_apply(uint8_t *restrict out,
+                                     const uint8_t *restrict in,
+                                     int n, int ch);
+extern void ki_xform_shuffle3_apply(uint8_t *restrict out,
+                                     const uint8_t *restrict in,
+                                     int n, int ch);
+extern void ki_xform_shuffle4_apply(uint8_t *restrict out,
+                                     const uint8_t *restrict in,
+                                     int n, int ch);
+extern void ki_xform_shuffle5_apply(uint8_t *restrict out,
+                                     const uint8_t *restrict in,
+                                     int n, int ch);
+extern void ki_xform_shuffle6_apply(uint8_t *restrict out,
+                                     const uint8_t *restrict in,
+                                     int n, int ch);
+extern void ki_xform_shuffle7_apply(uint8_t *restrict out,
+                                     const uint8_t *restrict in,
+                                     int n, int ch);
+extern void ki_xform_shuffle8_apply(uint8_t *restrict out,
+                                     const uint8_t *restrict in,
+                                     int n, int ch);
+extern void ki_xform_shuffle9_apply(uint8_t *restrict out,
+                                     const uint8_t *restrict in,
+                                     int n, int ch);
+extern void ki_xform_shuffle10_apply(uint8_t *restrict out,
+                                      const uint8_t *restrict in,
+                                      int n, int ch);
 
 /* ── Apply image transform to raw uint8 pixel buffer ──────────────
  * out:   output buffer (may alias in if xform=ID)
@@ -193,6 +250,17 @@ static inline void ki_xform_raw(uint8_t *restrict out,
             }
             break;
         }
+        case KI_XFORM_SHUFFLE:  ki_xform_shuffle_apply(out, in, stride, ch);  break;
+        case KI_XFORM_SHUFFLE1: ki_xform_shuffle1_apply(out, in, stride, ch); break;
+        case KI_XFORM_SHUFFLE2: ki_xform_shuffle2_apply(out, in, stride, ch); break;
+        case KI_XFORM_SHUFFLE3: ki_xform_shuffle3_apply(out, in, stride, ch); break;
+        case KI_XFORM_SHUFFLE4: ki_xform_shuffle4_apply(out, in, stride, ch); break;
+        case KI_XFORM_SHUFFLE5: ki_xform_shuffle5_apply(out, in, stride, ch); break;
+        case KI_XFORM_SHUFFLE6: ki_xform_shuffle6_apply(out, in, stride, ch); break;
+        case KI_XFORM_SHUFFLE7: ki_xform_shuffle7_apply(out, in, stride, ch); break;
+        case KI_XFORM_SHUFFLE8: ki_xform_shuffle8_apply(out, in, stride, ch); break;
+        case KI_XFORM_SHUFFLE9: ki_xform_shuffle9_apply(out, in, stride, ch); break;
+        case KI_XFORM_SHUFFLE10:ki_xform_shuffle10_apply(out, in, stride, ch); break;
         }
     }
 }
@@ -459,13 +527,13 @@ static inline uint8_t ki_apply_enc(uint8_t pv, int enc) {
  * Initialized via BSS = 0, hence needed. */
 
 #define _KI_ENC_NENC  14
-#define _KI_ENC_NWI   3
+#define _KI_ENC_NWI   5
 
 static uint32_t _enc_lut_tab[_KI_ENC_NENC][_KI_ENC_NWI][256];
 static int      _enc_lut_rdy[_KI_ENC_NENC][_KI_ENC_NWI];
 
 static inline int _enc_lut_wi(int w) {
-    return w == 8 ? 0 : (w == 16 ? 1 : 2);
+    return w == 4 ? 0 : (w == 8 ? 1 : (w == 12 ? 2 : (w == 16 ? 3 : 4)));
 }
 
 /* ── Eine (enc, width)-Tabelle initialisieren ───────────────── */

@@ -47,22 +47,22 @@
  * ki_batch_correct — Shared Training Loop (Original Otto Logic)
  * ═══════════════════════════════════════════════════════════════════════
  *
- * target:     int32[H × KI_NCLASSES × V] — learnable weights
+ * target:     COUNTER_TYPE[H × KI_NCLASSES × V] — learnable weights
  * H:          number of uint32 per sample (neurons for Otto, containers for Bitvote)
  * gb_all:     uint32 data per sample [N × H]
  * y:          labels
  * N:          number of samples
- * step:       base step size
+ * step:       base step size (COUNTER_TYPE: int32_t scaled or float)
  * tgt_sz:     size of target array (H × KI_NCLASSES × V)
  * filter_mask: class filter (0 = no filter)
  * stride:     distance between samples in gb_all (default: H)
  * no_gap:     1 = skip gap scaling (Bitvoting), 0 = original Otto behavior
  */
-static inline int ki_batch_correct(int32_t *target, int H,
-                                    const int64_t *class_offset,
+static inline int ki_batch_correct(COUNTER_TYPE *target, int H,
+                                    const SCORE_TYPE *class_offset,
                                     const uint32_t *gb_all,
                                     const uint8_t *y,
-                                    int N, int step, size_t tgt_sz,
+                                    int N, COUNTER_TYPE step, size_t tgt_sz,
                                     int filter_mask,
                                     int stride, int no_gap) {
     if (stride < 1) stride = H;
@@ -71,16 +71,16 @@ static inline int ki_batch_correct(int32_t *target, int H,
     int batch = aa.batchN > 0 ? aa.batchN : N;
     int corrections = 0;
 
-    /* Thread-local accumulators (int32_t like original, NO OT_Entry!) */
-    int32_t **dc = (int32_t **)malloc((size_t)n_threads * sizeof(int32_t *));
+    /* Thread-local accumulators */
+    COUNTER_TYPE **dc = (COUNTER_TYPE **)malloc((size_t)n_threads * sizeof(COUNTER_TYPE *));
     for (int t = 0; t < n_threads; t++)
-        dc[t] = (int32_t *)calloc(tgt_sz, sizeof(int32_t));
+        dc[t] = (COUNTER_TYPE *)calloc(tgt_sz, sizeof(COUNTER_TYPE));
 
     for (int b_start = 0; b_start < N; b_start += batch) {
         int b_end = b_start + batch;
         if (b_end > N) b_end = N;
         int batch_corr = 0;
-        int64_t sc[KI_NCLASSES];
+        SCORE_TYPE sc[KI_NCLASSES];
 
         #pragma omp parallel for reduction(+:batch_corr) firstprivate(sc) schedule(static)
         for (int s = b_start; s < b_end; s++) {
@@ -89,7 +89,7 @@ static inline int ki_batch_correct(int32_t *target, int H,
             int tid = omp_get_thread_num();
             int true_k = (int)y[s];
             const uint32_t *gb_s = gb_all + (size_t)s * (size_t)stride;
-            for (int k = 0; k < KI_NCLASSES; k++) sc[k] = class_offset[k];
+            for (int k = 0; k < KI_NCLASSES; k++) sc[k] = (SCORE_TYPE)class_offset[k];
 
             for (int h = 0; h < H; h++)
                 KT_SCORE(gb_s[h], h, H, 32, target, sc);
@@ -99,7 +99,7 @@ static inline int ki_batch_correct(int32_t *target, int H,
                 if (sc[k] > sc[pred]) pred = k;
 
             if (pred != true_k) {
-                int64_t gap = sc[pred] - sc[true_k];
+                SCORE_TYPE gap = sc[pred] - sc[true_k];
                 if (no_gap) {
                     batch_corr++;
                     for (int h = 0; h < H; h++) {
@@ -112,10 +112,14 @@ static inline int ki_batch_correct(int32_t *target, int H,
                         }
                     }
                 } else if (gap > 0) {
-                    int step_i = (gap < (int64_t)OT_F)
-                        ? (int)(((int64_t)step * gap) >> OT_PRECISION)
-                        : step;
-                    if (step_i < 1) step_i = 1;
+                    COUNTER_TYPE step_i = _Generic((COUNTER_TYPE)0,
+                        float: (COUNTER_TYPE)((float)gap < (float)OT_F
+                            ? (float)step * (float)gap / (float)OT_F
+                            : (float)step),
+                        default: (COUNTER_TYPE)((int64_t)gap < (int64_t)OT_F
+                            ? (((int64_t)step * (int64_t)gap) >> OT_PRECISION)
+                            : (int64_t)step));
+                    if (step_i < (COUNTER_TYPE)1) step_i = (COUNTER_TYPE)1;
                     batch_corr++;
                     for (int h = 0; h < H; h++) {
                         uint32_t _b = gb_s[h];
@@ -130,14 +134,16 @@ static inline int ki_batch_correct(int32_t *target, int H,
             }
         }
 
-        /* Apply: serial like original (only check != 0) */
+        /* Apply: merge thread caches into global target */
         for (int t = 0; t < n_threads; t++) {
-            int32_t *ct = dc[t];
+            COUNTER_TYPE *ct = dc[t];
             for (size_t i = 0; i < tgt_sz; i++) {
-                int d = ct[i];
-                if (d != 0) target[i] += d;
+                COUNTER_TYPE d = ct[i];
+                /* INTENTIONAL: >/< statt != um -Wfloat-equal zu vermeiden.
+                 * Semantisch identisch zu != 0 für beide Typen. */
+                if (d > (COUNTER_TYPE)0 || d < (COUNTER_TYPE)0) target[i] += d;
             }
-            memset(ct, 0, tgt_sz * sizeof(int32_t));
+            memset(ct, 0, tgt_sz * sizeof(COUNTER_TYPE));
         }
         corrections += batch_corr;
     }

@@ -288,7 +288,7 @@ ki_Args aa = {
     .debug_maj          = 0,      /* 0=auto, 1=container, 2=pixel */
     .rows_mode          = 0,      /* 0=flat, 1=per-row members */
     .member_threshold   = 0,      /* 0=disabled, else min trn%% to participate */
-    .xforms             = (1 << KI_XFORM_ID),  /* default: identity only */
+    .xforms             = (1ull << KI_XFORM_ID),  /* default: identity only */
 };
 
 /* ═══════════════════════════════════════════════════════════════════════
@@ -876,8 +876,10 @@ static void print_setup(int H, int epochs, int trainN, int evalN,
     size_t w1_bit = (size_t)KI_NCLASSES * (size_t)H_local * (size_t)V * sizeof(COUNTER_TYPE) * 8;
     int n_xf_active = 0;
     for (int _x = 0; _x < KI_XFORM_COUNT; _x++)
-        if (aa.xforms & (1 << _x)) n_xf_active++;
+        if (aa.xforms & (1ull << _x)) n_xf_active++;
     if (n_xf_active < 1) n_xf_active = 1;
+    /* Show XFORM display if any non-ID xform is active */
+    int show_xform = (aa.xforms & ~(1ull << KI_XFORM_ID)) != 0;
     int total_slots = ensembleN * n_xf_active * eff_colors * splitHN;    /* VN no longer multiplies members */
     size_t tgt_total = (size_t)H_local * KI_NCLASSES * (size_t)V * (size_t)total_slots;
     printf("══════════════════════════════════════════════════════════════════════\n");
@@ -907,7 +909,7 @@ static void print_setup(int H, int epochs, int trainN, int evalN,
     printf("  W1:          C1[%3d] × H0[%3d] ×  V[%3d] x int32 = %9zu bit  (%5.1f KB)  per member, target+offset\n",
            KI_NCLASSES, H_local, V, w1_bit, (double)w1_bit / 8 / 1024);
     printf("  ───────────────────────────────────────────────────────────\n");
-    if (n_xf_active > 1) {
+    if (show_xform) {
         printf("  TOTAL:       (W0+W1) x (EN[%d]×XF[%d]×CO[%d]×HN[%d]=%d) = %9zu bit  (%5.1f KB)\n",
                ensembleN, n_xf_active, eff_colors, splitHN, total_slots,
                (w0_bit + w1_bit) * (size_t)total_slots,
@@ -957,7 +959,7 @@ static void print_setup(int H, int epochs, int trainN, int evalN,
     if (aa.export_merge_scores[0])
         printf("  Save-scores: %s\n", aa.export_merge_scores);
     /* ── Show xforms if more than identity ── */
-    if (n_xf_active > 1) {
+    if (show_xform) {
         printf("\n  ───────────────────────────────────────────────────────────\n");
         printf("  Xform:       %s  (%d× ensemble multiplier)\n", xform_str(), n_xf_active);
     }
@@ -980,7 +982,8 @@ static void print_member_structure(int ensembleN, int splitVN, int splitHN,
     int total = ensembleN * n_xforms_eff * eff_colors * splitHN * rows_factor;
     (void)splitVN;
     printf("\n══╡ MEMBER ╞══════════════════════════════════════════════════\n");
-    if (n_xforms_eff > 1)
+    int _show_xf = (aa.xforms & ~(1ull << KI_XFORM_ID)) != 0;
+    if (_show_xf || n_xforms_eff > 1)
         printf("  Grid: ENSEMBLE[%d] × XFORM[%d] × COLOR[%d] × HN[%d] × ROW[%d] = %d members\n",
                ensembleN, n_xforms_eff, eff_colors, splitHN, rows_factor, total);
     else
@@ -2294,7 +2297,8 @@ int main(int argc, char *argv[]) {
         int step = (int)(aa.lr * (float)OT_F + 0.5f);
         int n_xf_active = 0;
         for (int _x = 0; _x < KI_XFORM_COUNT; _x++)
-            if (aa.xforms & (1 << _x)) n_xf_active++;
+        if (aa.xforms & (1ull << _x)) n_xf_active++;
+        int _show_xf = (aa.xforms & ~(1ull << KI_XFORM_ID)) != 0;
         printf("══╡ TRAINING ╞══  lr=%.4f  step=%d  mode=%s  F=%d",
              (double)aa.lr, step, mode_str(), OT_F);
         printf("  tgt-init=%s", target_init_str());
@@ -2305,7 +2309,7 @@ int main(int argc, char *argv[]) {
             printf("  gap-k=%.1f", (double)aa.gap_k);
         if (aa.member_threshold > 0)
             printf("  mth=%d", aa.member_threshold);
-        if (n_xf_active > 1)
+        if (_show_xf)
             printf("  xform=%s", xform_str());
         printf("\n");
         fflush(stdout);

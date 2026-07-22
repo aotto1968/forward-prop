@@ -119,19 +119,19 @@ fashion-mlp-otto-vis-errors.exe: $(VIS_SRC)
 # Tests — reuse cached model from model-* if available
 # ═══════════════════════════════════════════════════════════
 test-otto: fashion-mlp-bin32-otto-trn-xnor.exe
-	@test -d $(MODEL_DIR)/fashion-otto-h512-e10 || $(MAKE) model-otto
+	@test -f $(MODEL_DIR)/fashion-otto-h512-e10/model.otto || $(MAKE) model-otto
 	@echo -e "\n=== Otto Score Fashion (H=512, 10 ep, latest) ==="
 	@./fashion-mlp-bin32-otto-trn-xnor.exe \
 	  --import $(MODEL_DIR)/fashion-otto-h512-e10 --evalN 10000 --encoding latest 2>&1 | grep '^REPORT'
 
 test-hebbian: fashion-mlp-bin32-hebbian-trn-xnor.exe
-	@test -d $(MODEL_DIR)/fashion-hebbian-h512-e10 || $(MAKE) model-hebbian
+	@test -f $(MODEL_DIR)/fashion-hebbian-h512-e10/weights-0.meta || $(MAKE) model-hebbian
 	@echo -e "\n=== Bin32 Hebbian Fashion (H=512, 10 ep, latest) ==="
 	@./fashion-mlp-bin32-hebbian-trn-xnor.exe \
 	  --import $(MODEL_DIR)/fashion-hebbian-h512-e10 --evalN 10000 --encoding latest 2>&1 | grep '^REPORT'
 
 test-adam: fashion-mlp-flt32-adam-trn.exe
-	@test -d $(MODEL_DIR)/fashion-adam-h512-e10 || $(MAKE) model-adam
+	@test -f $(MODEL_DIR)/fashion-adam-h512-e10/weights-0.meta || $(MAKE) model-adam
 	@echo -e "\n=== Float32 AdamW Fashion (H=512, 10 ep) ==="
 	@./fashion-mlp-flt32-adam-trn.exe \
 	  --import $(MODEL_DIR)/fashion-adam-h512-e10 --evalN 10000 2>&1 | grep '^REPORT'

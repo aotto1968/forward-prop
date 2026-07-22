@@ -231,7 +231,7 @@ Each trainer doubles as inference engine via `--import`. Zero code drift.
 | `--export DIR`             | Model export directory                               | none            |
 | `--import DIR`             | Load model for inference                             | none            |
 | `--predictions FILE`       | Export per-sample predictions (for vis-errors tool)  | none            |
-| `--export-merge-scores DIR`        | Save per-member scores to archive files (ensemble)   | none            |
+| `--export-merge-scores DIR`| Save per-member scores to archive files (ensemble)   | none            |
 | `--dry-run`                | Print architecture and exit (metadata only, instant) | off             |
 | `--seed N`                 | Random seed                                          | 42              |
 | `--seed-member MODE`       | Member seed strategy (once, const, incr)             | once            |

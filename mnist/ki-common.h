@@ -27,6 +27,8 @@
 #include <zlib.h>
 #include <omp.h>
 
+#define printC(_nme) printf("%s[%d] : " #_nme "=%s\n",__func__,__LINE__,_nme)
+
 /* ═══════════════════════════════════════════════════════════════════════
  * w0_random.h — splitmix64 PRNG
  * ═══════════════════════════════════════════════════════════════════════ */
@@ -349,7 +351,7 @@ typedef struct {
     char   member_scores_path[512]; 	/* --debug-member-stats PATH: scores file (default: member-scores.bin) */
     char   filter_str[128];    			/* --filter "0,1,airplan,cat": raw string */
     int    filter_mask;        			/* computed bitmask from filter_str (0 = no filter) */
-    int    xforms;             			/* bitmask of active transforms (--xform, default: 1<<KI_XFORM_ID) */
+    uint64_t xforms;             		/* bitmask of active transforms (--xform, default: 1<<KI_XFORM_ID, 64-bit for 34+ xforms) */
 #define KI_XFORM_LIST_MAX 128
     int    xform_list[KI_XFORM_LIST_MAX];/* xform IDs as entered (preserves duplicates) */
     int    xform_list_count;            /* number of entries in xform_list */
@@ -442,7 +444,7 @@ static const struct _comp_entry _comp_table[] = {
     {"--debug-epoch",                       "none",  NULL},
     {"--debug-member",                      "none",  NULL},
     {"--debug-member-stats",                "file",  NULL},
-    {"--xform",              "token", "all shift augmentation performance id hflip vflip dflip1 dflip2 rot90 rot180 rot270 sft-u1 sft-u2 sft-u3 sft-d1 sft-d2 sft-d3 sft-l1 sft-l2 sft-l3 sft-r1 sft-r2 sft-r3 shuffle shuffle1 shuffle2 shuffle3 shuffle4 shuffle5 shuffle6 shuffle7 shuffle8 shuffle9 shuffle10"},
+    {"--xform",              "token", "all shift augmentation performance id hflip vflip dflip1 dflip2 rot90 rot180 rot270 rot45 spiral colswap-3-4 colswap-2-4 colswap-1-4 sft-u1 sft-u2 sft-u3 sft-d1 sft-d2 sft-d3 sft-l1 sft-l2 sft-l3 sft-r1 sft-r2 sft-r3 shuffle shuffle1 shuffle2 shuffle3 shuffle4 shuffle5 shuffle6 shuffle7 shuffle8 shuffle9 shuffle10"},
     {"--filter",                        "token", NULL},
     {"--shuffle",                       "none",  NULL},
     {"--help",                          "none",  NULL},
@@ -646,22 +648,29 @@ static inline void ki_parse_args(int argc, char *argv[]) {
             printf("    rot90    : rotate 90° clockwise\n");
             printf("    rot180   : rotate 180° (= hflip+vflip combined)\n");
             printf("    rot270   : rotate 270° clockwise (= rot90⁻¹)\n");
+            printf("    rot45    : rotate 45° clockwise (nearest-neighbor, borders filled with 0)\n");
+            printf("    spiral   : spiral distortion (bilinear, strongest at center, chromatic per channel)\n");
+            printf("    colswap-3-4 : swap col 3+4k ↔ 4+4k (majority triple (0,4,8) → (0,3,7))\n");
+            printf("    colswap-2-4 : swap col 2+4k ↔ 4+4k (majority triple (0,4,8) → (0,2,6))\n");
+            printf("    colswap-1-4 : swap col 1+4k ↔ 4+4k (majority triple (0,4,8) → (0,1,5))\n");
             printf("  Pixel shifts (12) — fill vacated pixels with 0:\n");
             printf("    sft-u1/2/3  : shift up by 1/2/3 px\n");
             printf("    sft-d1/2/3  : shift down by 1/2/3 px\n");
             printf("    sft-l1/2/3  : shift left by 1/2/3 px\n");
             printf("    sft-r1/2/3  : shift right by 1/2/3 px\n");
             printf("  Aliases:\n");
-            printf("    all          : all 20 transforms (D4 flips/rotations + shifts)\n");
-            printf("    shift        : all 12 pixel shifts (= 20 - 8 D4)\n");
-            printf("    performance  : id,hflip,vflip,rot90 (4×, faster experiments)\n");
-            printf("    augmentation : alias for 'all'\n");
+            printf("    all          : all-basic,all-shift,all-shuffle\n");
+            printf("    performance  : id,hflip,rot45,rot90,spiral (5×, faster experiments)\n");
+            printf("    augmentation : all-basic,all-shift\n");
+            printf("    all-basic    : id,hflip,vflip,dflip1,dflip2,rot90,rot180,rot270,rot45,spiral\n");
+            printf("    all-shift    : all 12 pixel shifts (= 20 - 8 D4)\n");
+            printf("    all-shuffle  : shuffle+shuffle1-shuffle10\n");
             printf("  Multiple transforms create independent members with own W0+Target.\n");
             printf("  Each transform is applied BEFORE channel computation.\n");
             printf("  Example: --xform id,hflip       → 2× member multiplier\n");
-            printf("           --xform all            → 20× member multiplier\n");
+            printf("           --xform all            → 30+ member multiplier\n");
             printf("           --xform shift          → 12× member multiplier\n");
-            printf("           --xform performance    → 4× member multiplier\n");
+            printf("           --xform performance    → 5× member multiplier\n");
             exit(1);   /* INTENTIONAL: non-zero so run-research.sh suppresses logging */
         } else if (strcmp(argv[i], "--completion") == 0) {
             if (i + 1 < argc && argv[i+1][0] == '-' && argv[i+1][1] == '-') {
@@ -888,101 +897,73 @@ static inline void ki_parse_args(int argc, char *argv[]) {
         } else if (strcmp(argv[i], "--xform") == 0 && i + 1 < argc) {
             const char *val = argv[++i];
             aa.xforms = 0;
+            aa.xform_list_count = 0;
             char xbuf[128];
             strncpy(xbuf, val, sizeof(xbuf) - 1);
             xbuf[sizeof(xbuf) - 1] = '\0';
-            aa.xform_list_count = 0;
-            /* Helper: add xform ID to list (if space) */
-#define KI_XFORM_LIST_ADD(xf) do { \
-                if (aa.xform_list_count < KI_XFORM_LIST_MAX) \
-                    aa.xform_list[aa.xform_list_count++] = (xf); \
-            } while(0)
             for (char *tok = strtok(xbuf, ","); tok; tok = strtok(NULL, ",")) {
                 while (*tok == ' ' || *tok == '\t') tok++;
-                if (ki_strcasecmp(tok, "all") == 0 || ki_strcasecmp(tok, "alle") == 0) {
-                    aa.xforms = (1u << KI_XFORM_COUNT) - 1u;
-                    for (int _xf = 0; _xf < KI_XFORM_COUNT; _xf++)
-                        KI_XFORM_LIST_ADD(_xf);
-                } else if (ki_strcasecmp(tok, "performance") == 0) {
-                    aa.xforms |= (1 << KI_XFORM_ID) | (1 << KI_XFORM_HFLIP)
-                               | (1 << KI_XFORM_VFLIP) | (1 << KI_XFORM_ROT90);
-                    KI_XFORM_LIST_ADD(KI_XFORM_ID); KI_XFORM_LIST_ADD(KI_XFORM_HFLIP);
-                    KI_XFORM_LIST_ADD(KI_XFORM_VFLIP); KI_XFORM_LIST_ADD(KI_XFORM_ROT90);
-                } else if (ki_strcasecmp(tok, "augmentation") == 0) {
-                    aa.xforms = (1u << KI_XFORM_COUNT) - 1u;
-                    for (int _xf = 0; _xf < KI_XFORM_COUNT; _xf++)
-                        KI_XFORM_LIST_ADD(_xf);
-                } else if (ki_strcasecmp(tok, "shift") == 0) {
-                    aa.xforms |= (1 << KI_XFORM_SFT_U1) | (1 << KI_XFORM_SFT_U2)
-                               | (1 << KI_XFORM_SFT_U3) | (1 << KI_XFORM_SFT_D1)
-                               | (1 << KI_XFORM_SFT_D2) | (1 << KI_XFORM_SFT_D3)
-                               | (1 << KI_XFORM_SFT_L1) | (1 << KI_XFORM_SFT_L2)
-                               | (1 << KI_XFORM_SFT_L3) | (1 << KI_XFORM_SFT_R1)
-                               | (1 << KI_XFORM_SFT_R2) | (1 << KI_XFORM_SFT_R3);
-                    KI_XFORM_LIST_ADD(KI_XFORM_SFT_U1); KI_XFORM_LIST_ADD(KI_XFORM_SFT_U2);
-                    KI_XFORM_LIST_ADD(KI_XFORM_SFT_U3); KI_XFORM_LIST_ADD(KI_XFORM_SFT_D1);
-                    KI_XFORM_LIST_ADD(KI_XFORM_SFT_D2); KI_XFORM_LIST_ADD(KI_XFORM_SFT_D3);
-                    KI_XFORM_LIST_ADD(KI_XFORM_SFT_L1); KI_XFORM_LIST_ADD(KI_XFORM_SFT_L2);
-                    KI_XFORM_LIST_ADD(KI_XFORM_SFT_L3); KI_XFORM_LIST_ADD(KI_XFORM_SFT_R1);
-                    KI_XFORM_LIST_ADD(KI_XFORM_SFT_R2); KI_XFORM_LIST_ADD(KI_XFORM_SFT_R3);
-                } else if (ki_strcasecmp(tok, "id") == 0) {
-                    aa.xforms |= (1 << KI_XFORM_ID); KI_XFORM_LIST_ADD(KI_XFORM_ID);
-                } else if (ki_strcasecmp(tok, "hflip") == 0) {
-                    aa.xforms |= (1 << KI_XFORM_HFLIP); KI_XFORM_LIST_ADD(KI_XFORM_HFLIP);
-                } else if (ki_strcasecmp(tok, "vflip") == 0) {
-                    aa.xforms |= (1 << KI_XFORM_VFLIP); KI_XFORM_LIST_ADD(KI_XFORM_VFLIP);
-                } else if (ki_strcasecmp(tok, "dflip1") == 0) {
-                    aa.xforms |= (1 << KI_XFORM_DFLIP1); KI_XFORM_LIST_ADD(KI_XFORM_DFLIP1);
-                } else if (ki_strcasecmp(tok, "dflip2") == 0) {
-                    aa.xforms |= (1 << KI_XFORM_DFLIP2); KI_XFORM_LIST_ADD(KI_XFORM_DFLIP2);
-                } else if (ki_strcasecmp(tok, "rot90") == 0) {
-                    aa.xforms |= (1 << KI_XFORM_ROT90); KI_XFORM_LIST_ADD(KI_XFORM_ROT90);
-                } else if (ki_strcasecmp(tok, "rot180") == 0) {
-                    aa.xforms |= (1 << KI_XFORM_ROT180); KI_XFORM_LIST_ADD(KI_XFORM_ROT180);
-                } else if (ki_strcasecmp(tok, "rot270") == 0) {
-                    aa.xforms |= (1 << KI_XFORM_ROT270); KI_XFORM_LIST_ADD(KI_XFORM_ROT270);
-                } else if (ki_strcasecmp(tok, "sft-u1") == 0) {
-                    aa.xforms |= (1 << KI_XFORM_SFT_U1); KI_XFORM_LIST_ADD(KI_XFORM_SFT_U1);
-                } else if (ki_strcasecmp(tok, "sft-u2") == 0) {
-                    aa.xforms |= (1 << KI_XFORM_SFT_U2); KI_XFORM_LIST_ADD(KI_XFORM_SFT_U2);
-                } else if (ki_strcasecmp(tok, "sft-u3") == 0) {
-                    aa.xforms |= (1 << KI_XFORM_SFT_U3); KI_XFORM_LIST_ADD(KI_XFORM_SFT_U3);
-                } else if (ki_strcasecmp(tok, "sft-d1") == 0) {
-                    aa.xforms |= (1 << KI_XFORM_SFT_D1); KI_XFORM_LIST_ADD(KI_XFORM_SFT_D1);
-                } else if (ki_strcasecmp(tok, "sft-d2") == 0) {
-                    aa.xforms |= (1 << KI_XFORM_SFT_D2); KI_XFORM_LIST_ADD(KI_XFORM_SFT_D2);
-                } else if (ki_strcasecmp(tok, "sft-d3") == 0) {
-                    aa.xforms |= (1 << KI_XFORM_SFT_D3); KI_XFORM_LIST_ADD(KI_XFORM_SFT_D3);
-                } else if (ki_strcasecmp(tok, "sft-l1") == 0) {
-                    aa.xforms |= (1 << KI_XFORM_SFT_L1); KI_XFORM_LIST_ADD(KI_XFORM_SFT_L1);
-                } else if (ki_strcasecmp(tok, "sft-l2") == 0) {
-                    aa.xforms |= (1 << KI_XFORM_SFT_L2); KI_XFORM_LIST_ADD(KI_XFORM_SFT_L2);
-                } else if (ki_strcasecmp(tok, "sft-l3") == 0) {
-                    aa.xforms |= (1 << KI_XFORM_SFT_L3); KI_XFORM_LIST_ADD(KI_XFORM_SFT_L3);
-                } else if (ki_strcasecmp(tok, "sft-r1") == 0) {
-                    aa.xforms |= (1 << KI_XFORM_SFT_R1); KI_XFORM_LIST_ADD(KI_XFORM_SFT_R1);
-                } else if (ki_strcasecmp(tok, "sft-r2") == 0) {
-                    aa.xforms |= (1 << KI_XFORM_SFT_R2); KI_XFORM_LIST_ADD(KI_XFORM_SFT_R2);
-                } else if (ki_strcasecmp(tok, "sft-r3") == 0) {
-                    aa.xforms |= (1 << KI_XFORM_SFT_R3); KI_XFORM_LIST_ADD(KI_XFORM_SFT_R3);
-                } else if (ki_strcasecmp(tok, "shuffle") == 0) {
-                    aa.xforms |= (1 << KI_XFORM_SHUFFLE); KI_XFORM_LIST_ADD(KI_XFORM_SHUFFLE);
-                } else if (ki_strcasecmp(tok, "shuffle1") == 0)  { aa.xforms |= (1 << KI_XFORM_SHUFFLE1); KI_XFORM_LIST_ADD(KI_XFORM_SHUFFLE1); }
-                else if (ki_strcasecmp(tok, "shuffle2") == 0)  { aa.xforms |= (1 << KI_XFORM_SHUFFLE2); KI_XFORM_LIST_ADD(KI_XFORM_SHUFFLE2); }
-                else if (ki_strcasecmp(tok, "shuffle3") == 0)  { aa.xforms |= (1 << KI_XFORM_SHUFFLE3); KI_XFORM_LIST_ADD(KI_XFORM_SHUFFLE3); }
-                else if (ki_strcasecmp(tok, "shuffle4") == 0)  { aa.xforms |= (1 << KI_XFORM_SHUFFLE4); KI_XFORM_LIST_ADD(KI_XFORM_SHUFFLE4); }
-                else if (ki_strcasecmp(tok, "shuffle5") == 0)  { aa.xforms |= (1 << KI_XFORM_SHUFFLE5); KI_XFORM_LIST_ADD(KI_XFORM_SHUFFLE5); }
-                else if (ki_strcasecmp(tok, "shuffle6") == 0)  { aa.xforms |= (1 << KI_XFORM_SHUFFLE6); KI_XFORM_LIST_ADD(KI_XFORM_SHUFFLE6); }
-                else if (ki_strcasecmp(tok, "shuffle7") == 0)  { aa.xforms |= (1 << KI_XFORM_SHUFFLE7); KI_XFORM_LIST_ADD(KI_XFORM_SHUFFLE7); }
-                else if (ki_strcasecmp(tok, "shuffle8") == 0)  { aa.xforms |= (1 << KI_XFORM_SHUFFLE8); KI_XFORM_LIST_ADD(KI_XFORM_SHUFFLE8); }
-                else if (ki_strcasecmp(tok, "shuffle9") == 0)  { aa.xforms |= (1 << KI_XFORM_SHUFFLE9); KI_XFORM_LIST_ADD(KI_XFORM_SHUFFLE9); }
-                else if (ki_strcasecmp(tok, "shuffle10") == 0) { aa.xforms |= (1 << KI_XFORM_SHUFFLE10); KI_XFORM_LIST_ADD(KI_XFORM_SHUFFLE10); }
-                else {
-                    fprintf(stderr, "[ERROR] --xform: unknown '%s'. "
-                            "Valid: all, shift, augmentation, performance, id, hflip, vflip, dflip1, dflip2, "
-                            "rot90, rot180, rot270, sft-u1/2/3, sft-d1/2/3, sft-l1/2/3, sft-r1/2/3, "
-                            "shuffle, shuffle1..10\n", tok);
-                    exit(1);
+                /* Try alias expansion first */
+                if (ki_xform_alias_expand(tok) != NULL) {
+                    char xalias[1024];
+                    strncpy(xalias, tok, sizeof(xalias) - 1);
+                    xalias[sizeof(xalias) - 1] = '\0';
+                    /* Iterative 5-pass expansion: Phase 1 (full) + Phase 2 (per-token) */
+                    for (int _iter = 0; _iter < 5; _iter++) {
+                        /* Phase 1: full string match */
+                        const char *_full = ki_xform_alias_expand(xalias);
+                        if (_full) {
+                            strncpy(xalias, _full, sizeof(xalias) - 1);
+                            xalias[sizeof(xalias) - 1] = '\0';
+                            continue;
+                        }
+                        /* Phase 2: per-token expansion */
+                        char _tmp[1024], _new[1024] = "";
+                        strncpy(_tmp, xalias, sizeof(_tmp) - 1);
+                        _tmp[sizeof(_tmp) - 1] = '\0';
+                        int _any = 0;
+                        char *_save2 = NULL;
+                        for (char *_t = strtok_r(_tmp, ",", &_save2); _t; _t = strtok_r(NULL, ",", &_save2)) {
+                            while (*_t == ' ' || *_t == '\t') _t++;
+                            const char *_pe = ki_xform_alias_expand(_t);
+                            if (_pe) {
+                                if (_new[0]) strncat(_new, ",", sizeof(_new) - 1);
+                                strncat(_new, _pe, sizeof(_new) - strlen(_new) - 1);
+                                _any = 1;
+                            } else {
+                                if (_new[0]) strncat(_new, ",", sizeof(_new) - 1);
+                                strncat(_new, _t, sizeof(_new) - strlen(_new) - 1);
+                            }
+                        }
+                        if (!_any) break;
+                        strncpy(xalias, _new, sizeof(xalias) - 1);
+                        xalias[sizeof(xalias) - 1] = '\0';
+                    }
+                    /* Parse final expanded string token by token */
+                    char *_save3 = NULL;
+                    for (char *_t = strtok_r(xalias, ",", &_save3); _t; _t = strtok_r(NULL, ",", &_save3)) {
+                        while (*_t == ' ' || *_t == '\t') _t++;
+                        int _x = ki_xform_parse(_t);
+                        if (_x >= 0) {
+                            aa.xforms |= (1ull << _x);
+                            if (aa.xform_list_count < KI_XFORM_LIST_MAX)
+                                aa.xform_list[aa.xform_list_count++] = _x;
+                        }
+                    }
+                } else {
+                    int xf = ki_xform_parse(tok);
+                    if (xf >= 0) {
+                        aa.xforms |= (1ull << xf);
+                        if (aa.xform_list_count < KI_XFORM_LIST_MAX)
+                            aa.xform_list[aa.xform_list_count++] = xf;
+                    } else {
+                        fprintf(stderr, "[ERROR] --xform: unknown transform '%s'. "
+                                "Valid: all, shift, augmentation, performance, id, hflip, vflip, dflip1, dflip2, "
+                                "rot90, rot180, rot270, rot45, spiral, colswap-3-4, colswap-2-4, colswap-1-4, "
+                                "sft-u1/2/3, sft-d1/2/3, sft-l1/2/3, sft-r1/2/3, "
+                                "shuffle, shuffle1..10\n", tok);
+                        exit(1);
+                    }
                 }
             }
             if (aa.xforms == 0) {
@@ -1579,10 +1560,10 @@ static const char *target_init_str(void) {
  * Uses static buffer, analog to color_str(). */
 __attribute__((unused))
 static const char *xform_str(void) {
-    static char _xform_buf[192];
+    static char _xform_buf[1024];
     int pos = 0;
     for (int x = 0; x < KI_XFORM_COUNT; x++) {
-        if (!(aa.xforms & (1 << x))) continue;
+        if (!(aa.xforms & (1ull << x))) continue;
         if (pos > 0) _xform_buf[pos++] = ',';
         const char *n = ki_xform_name(x);
         while (*n && pos < (int)sizeof(_xform_buf) - 2) _xform_buf[pos++] = *n++;

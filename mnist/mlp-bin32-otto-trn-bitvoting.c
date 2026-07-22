@@ -33,7 +33,7 @@ ki_Args aa = {
     .warmup_epochs      = 0,
     .step_power         = KI_DEFAULT_STEP_POWER,
     .step_mode          = KI_DEFAULT_STEP_MODE,
-    .xforms             = (1 << KI_XFORM_ID),
+    .xforms             = (1ull << KI_XFORM_ID),
     .ensembleN          = 1,
     .seed_splitmix      = 1,
     .enc_size           = KI_ENC_WIDTH_DEFAULT,
@@ -245,7 +245,7 @@ int main(int argc, char *argv[]) {
     int n_enc = aa.enc_count > 0 ? aa.enc_count : 1;
     int xf_id_list[KI_XFORM_COUNT], n_xforms = 0;
     for (int xf = 0; xf < KI_XFORM_COUNT; xf++)
-        if (aa.xforms & (1 << xf)) xf_id_list[n_xforms++] = xf;
+        if (aa.xforms & (1ull << xf)) xf_id_list[n_xforms++] = xf;
     if (n_xforms < 1) { xf_id_list[0] = KI_XFORM_ID; n_xforms = 1; }
 
     /* Container-Offset und -Stride pro Encoding (wie in load_input) */

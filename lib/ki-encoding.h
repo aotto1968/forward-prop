@@ -75,7 +75,12 @@ enum ki_xform {
     KI_XFORM_SHUFFLE8 = 28, /* Shuffle with seed 8 */
     KI_XFORM_SHUFFLE9 = 29, /* Shuffle with seed 9 */
     KI_XFORM_SHUFFLE10= 30, /* Shuffle with seed 10 */
-    KI_XFORM_COUNT   = 31
+    KI_XFORM_ROT45    = 31, /* Rotate 45° clockwise (nearest-neighbor, fill with 0) */
+    KI_XFORM_SPIRAL   = 32, /* Spiral distortion (bilinear, strongest at center, chromatic per channel) */
+    KI_XFORM_COLSWAP34  = 33, /* colswap-3-4: swap col 3+4k ↔ 4+4k per row (forces triple (0,3,7) instead of (0,4,8)) */
+    KI_XFORM_COLSWAP24  = 34, /* colswap-2-4: swap col 2+4k ↔ 4+4k */
+    KI_XFORM_COLSWAP14  = 35, /* colswap-1-4: swap col 1+4k ↔ 4+4k */
+    KI_XFORM_COUNT   = 36
 };
 
 /* ── Xform short name for display ──────────────────────────────── */
@@ -111,7 +116,12 @@ static inline const char *ki_xform_name(int xf) {
         [KI_XFORM_SHUFFLE7] = "shuffle7",
         [KI_XFORM_SHUFFLE8] = "shuffle8",
         [KI_XFORM_SHUFFLE9] = "shuffle9",
-        [KI_XFORM_SHUFFLE10] = "shuffle10",
+            [KI_XFORM_SHUFFLE10] = "shuffle10",
+                [KI_XFORM_ROT45] = "rot45",
+                [KI_XFORM_SPIRAL] = "spiral",
+                [KI_XFORM_COLSWAP34] = "colswap-3-4",
+                [KI_XFORM_COLSWAP24] = "colswap-2-4",
+                [KI_XFORM_COLSWAP14] = "colswap-1-4",
     };
     if (xf >= 0 && xf < KI_XFORM_COUNT) return names[xf];
     return "?";
@@ -261,6 +271,112 @@ static inline void ki_xform_raw(uint8_t *restrict out,
         case KI_XFORM_SHUFFLE8: ki_xform_shuffle8_apply(out, in, stride, ch); break;
         case KI_XFORM_SHUFFLE9: ki_xform_shuffle9_apply(out, in, stride, ch); break;
         case KI_XFORM_SHUFFLE10:ki_xform_shuffle10_apply(out, in, stride, ch); break;
+        case KI_XFORM_ROT45: {
+            /* Rotate 45° clockwise around center, nearest-neighbor, fill borders with 0 */
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+            float rad = 45.0f * (float)M_PI / 180.0f;
+            float _c = cosf(rad), _s = sinf(rad);
+            float cx = (float)(w - 1) * 0.5f, cy = (float)(h - 1) * 0.5f;
+            for (int y = 0; y < h; y++) {
+                for (int x = 0; x < w; x++) {
+                    float fx = (float)x, fy = (float)y;
+                    float sx = _c * (fx - cx) + _s * (fy - cy) + cx;
+                    float sy = -_s * (fx - cx) + _c * (fy - cy) + cy;
+                    int isx = (int)(sx + 0.5f), isy = (int)(sy + 0.5f);
+                    if (isx >= 0 && isx < w && isy >= 0 && isy < h)
+                        dst[(size_t)y * (size_t)w + (size_t)x] = src[(size_t)isy * (size_t)w + (size_t)isx];
+                    else
+                        dst[(size_t)y * (size_t)w + (size_t)x] = 0;
+                }
+            }
+            break;
+        }
+        case KI_XFORM_SPIRAL: {
+            /* Spiral distortion: strongest rotation at center, chromatic offset per plane.
+             * Bilinear interpolation, borders filled with 128.
+             * Called once per plane by outer pl loop → use src, dst (current plane). */
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+            float cx = (float)w * 0.5f - 0.5f;
+            float cy = (float)h * 0.5f - 0.5f;
+            float max_r = fminf((float)w, (float)h) * 0.5f;
+            /* Chromatic offset per plane (only for multi-channel) */
+            float chroma_x = (ch >= 3) ? (float)(pl - 1) * 0.3f : 0.0f;
+            float chroma_y = (ch >= 3) ? (float)(pl - 1) * -0.3f : 0.0f;
+            for (int y = 0; y < h; y++) {
+                for (int x = 0; x < w; x++) {
+                    float fx = (float)x, fy = (float)y;
+                    float dx = fx - cx;
+                    float dy = fy - cy;
+                    float r = sqrtf(dx*dx + dy*dy);
+                    float theta = atan2f(dy, dx);
+                    /* Strongest rotation at center, decay toward edges */
+                    float angle = 8.0f * expf(-r / (max_r * 0.7f));
+                    float new_theta = theta + angle;
+                    float sx = cx + r * cosf(new_theta) + chroma_x;
+                    float sy = cy + r * sinf(new_theta) + chroma_y;
+                    /* Bilinear interpolation */
+                    float a, b, c, d;  /* for the 4 corners */
+                    a = 128.0f; b = 128.0f; c = 128.0f; d = 128.0f;
+                    int ix = (int)sx, iy = (int)sy;
+                    if (ix >= 0 && ix < w-1 && iy >= 0 && iy < h-1) {
+                        float flx = sx - (float)ix, fly = sy - (float)iy;
+                        a = (float)src[(size_t)iy * (size_t)w + (size_t)ix];
+                        b = (float)src[(size_t)iy * (size_t)w + (size_t)ix + 1];
+                        c = (float)src[(size_t)(iy+1) * (size_t)w + (size_t)ix];
+                        d = (float)src[(size_t)(iy+1) * (size_t)w + (size_t)ix + 1];
+                        float v = (1.0f-flx)*(1.0f-fly)*a + flx*(1.0f-fly)*b
+                                + (1.0f-flx)*fly*c + flx*fly*d;
+                        int iv = (int)(v + 0.5f);
+                        if (iv < 0) iv = 0;
+                        if (iv > 255) iv = 255;
+                        dst[(size_t)y * (size_t)w + (size_t)x] = (uint8_t)iv;
+                    } else {
+                        dst[(size_t)y * (size_t)w + (size_t)x] = 128;
+                    }
+                }
+            }
+            break;
+        }
+        case KI_XFORM_COLSWAP34: {
+            /* Swap col 3+4k ↔ 4+4k: majority (0,4,8) → (0,3,7) */
+            for (int y = 0; y < h; y++) {
+                int ro = y * w;
+                for (int x = 0; x < w; x++) {
+                    int mod = x % 4;
+                    int sx = (mod == 3) ? x + 1 : (mod == 0 && x > 0) ? x - 1 : x;
+                    dst[ro + x] = src[ro + sx];
+                }
+            }
+            break;
+        }
+        case KI_XFORM_COLSWAP24: {
+            /* Swap col 2+4k ↔ 4+4k: majority (0,4,8) → (0,2,6) */
+            for (int y = 0; y < h; y++) {
+                int ro = y * w;
+                for (int x = 0; x < w; x++) {
+                    int mod = x % 4;
+                    int sx = (mod == 2) ? x + 2 : (mod == 0 && x > 0) ? x - 2 : x;
+                    dst[ro + x] = src[ro + sx];
+                }
+            }
+            break;
+        }
+        case KI_XFORM_COLSWAP14: {
+            /* Swap col 1+4k ↔ 4+4k: majority (0,4,8) → (0,1,5) */
+            for (int y = 0; y < h; y++) {
+                int ro = y * w;
+                for (int x = 0; x < w; x++) {
+                    int mod = x % 4;
+                    int sx = (mod == 1) ? x + 3 : (mod == 0 && x > 0) ? x - 3 : x;
+                    dst[ro + x] = src[ro + sx];
+                }
+            }
+            break;
+        }
         }
     }
 }
@@ -403,6 +519,86 @@ static inline int ki_enc_parse(const char *tok, int *out_width) {
     if (ki_strcasecmp(tok, "tri")  == 0 || ki_strcasecmp(tok, "triangle") == 0) return KI_ENC_TRIANGLE;
     if (ki_strcasecmp(tok, "inv-exp") == 0 || ki_strcasecmp(tok, "invexp") == 0) return KI_ENC_INV_EXP;
     return -1;
+}
+
+/* ── Xform parser: single token → xform enum value ────────────
+ * Handles only individual xform names. Aliases like "all", "performance",
+ * "shift" are expanded by ki_xform_alias_expand() before calling this.
+ * Returns -1 for unknown tokens.
+ */
+static inline int ki_xform_parse(const char *tok) {
+    if (ki_strcasecmp(tok, "id")         == 0) return KI_XFORM_ID;
+    if (ki_strcasecmp(tok, "hflip")      == 0) return KI_XFORM_HFLIP;
+    if (ki_strcasecmp(tok, "vflip")      == 0) return KI_XFORM_VFLIP;
+    if (ki_strcasecmp(tok, "dflip1")     == 0) return KI_XFORM_DFLIP1;
+    if (ki_strcasecmp(tok, "dflip2")     == 0) return KI_XFORM_DFLIP2;
+    if (ki_strcasecmp(tok, "rot90")      == 0) return KI_XFORM_ROT90;
+    if (ki_strcasecmp(tok, "rot180")     == 0) return KI_XFORM_ROT180;
+    if (ki_strcasecmp(tok, "rot270")     == 0) return KI_XFORM_ROT270;
+    if (ki_strcasecmp(tok, "sft-u1")     == 0) return KI_XFORM_SFT_U1;
+    if (ki_strcasecmp(tok, "sft-u2")     == 0) return KI_XFORM_SFT_U2;
+    if (ki_strcasecmp(tok, "sft-u3")     == 0) return KI_XFORM_SFT_U3;
+    if (ki_strcasecmp(tok, "sft-d1")     == 0) return KI_XFORM_SFT_D1;
+    if (ki_strcasecmp(tok, "sft-d2")     == 0) return KI_XFORM_SFT_D2;
+    if (ki_strcasecmp(tok, "sft-d3")     == 0) return KI_XFORM_SFT_D3;
+    if (ki_strcasecmp(tok, "sft-l1")     == 0) return KI_XFORM_SFT_L1;
+    if (ki_strcasecmp(tok, "sft-l2")     == 0) return KI_XFORM_SFT_L2;
+    if (ki_strcasecmp(tok, "sft-l3")     == 0) return KI_XFORM_SFT_L3;
+    if (ki_strcasecmp(tok, "sft-r1")     == 0) return KI_XFORM_SFT_R1;
+    if (ki_strcasecmp(tok, "sft-r2")     == 0) return KI_XFORM_SFT_R2;
+    if (ki_strcasecmp(tok, "sft-r3")     == 0) return KI_XFORM_SFT_R3;
+    if (ki_strcasecmp(tok, "shuffle")    == 0) return KI_XFORM_SHUFFLE;
+    if (ki_strcasecmp(tok, "shuffle1")   == 0) return KI_XFORM_SHUFFLE1;
+    if (ki_strcasecmp(tok, "shuffle2")   == 0) return KI_XFORM_SHUFFLE2;
+    if (ki_strcasecmp(tok, "shuffle3")   == 0) return KI_XFORM_SHUFFLE3;
+    if (ki_strcasecmp(tok, "shuffle4")   == 0) return KI_XFORM_SHUFFLE4;
+    if (ki_strcasecmp(tok, "shuffle5")   == 0) return KI_XFORM_SHUFFLE5;
+    if (ki_strcasecmp(tok, "shuffle6")   == 0) return KI_XFORM_SHUFFLE6;
+    if (ki_strcasecmp(tok, "shuffle7")   == 0) return KI_XFORM_SHUFFLE7;
+    if (ki_strcasecmp(tok, "shuffle8")   == 0) return KI_XFORM_SHUFFLE8;
+    if (ki_strcasecmp(tok, "shuffle9")   == 0) return KI_XFORM_SHUFFLE9;
+    if (ki_strcasecmp(tok, "shuffle10")  == 0) return KI_XFORM_SHUFFLE10;
+    if (ki_strcasecmp(tok, "rot45")      == 0) return KI_XFORM_ROT45;
+    if (ki_strcasecmp(tok, "spiral")     == 0) return KI_XFORM_SPIRAL;
+    if (ki_strcasecmp(tok, "colswap-3-4") == 0) return KI_XFORM_COLSWAP34;
+    if (ki_strcasecmp(tok, "colswap-2-4") == 0) return KI_XFORM_COLSWAP24;
+    if (ki_strcasecmp(tok, "colswap-1-4") == 0) return KI_XFORM_COLSWAP14;
+    return -1;
+}
+
+/* ── Xform alias lookup: token → comma-separated expansion string ──
+ * Like encoding aliases (ki_encoding_alias_lookup). Returns a string
+ * of xform tokens (die dann rekursiv über strtok+ki_xform_parse
+ * expandiert werden können) oder NULL wenn 'name' kein Alias ist.
+ *
+ * Die Expansion kann selbst wieder Aliase enthalten (z.B. "augmentation"→"all").
+ * Der Aufrufer iteriert bis zu 5× zur Auflösung, genau wie bei encoding-Aliases.
+ *
+ * Flexibel: einfach die Tabelle editieren — Tokens werden durch ki_xform_parse
+ * aufgelöst, müssen also gültige xform-Namen sein (keine IDs).
+ */
+static inline const char *ki_xform_alias_expand(const char *name) {
+    static const struct {
+        const char *name;
+        const char *expansion;
+    } _aliases[] = {
+        {"all-basic",     "id,hflip,vflip,dflip1,dflip2,rot90,rot180,rot270,rot45,spiral,colswap-3-4,colswap-2-4,colswap-1-4"},
+        {"all-shuffle",   "shuffle,shuffle1,shuffle2,shuffle3,shuffle4,shuffle5,"
+                          "shuffle6,shuffle7,shuffle8,shuffle9,shuffle10"},
+        {"all-shift",     "sft-u1,sft-u2,sft-u3,sft-d1,sft-d2,sft-d3,"
+                          "sft-l1,sft-l2,sft-l3,sft-r1,sft-r2,sft-r3"},
+        {"all-shuffle",   "shuffle,shuffle1,shuffle2,shuffle3,shuffle4,shuffle5"},
+        {"performance",   "id,hflip,rot90,rot45,spiral"},
+        {"performance-2", "id,hflip,vflip,dflip1,dflip2,rot90,rot45,spiral"},
+        {"augmentation",  "all-basic,all-shift"},
+        {"all",           "all-basic,all-shift,all-shuffle"},
+    };
+    for (size_t i = 0; i < sizeof(_aliases)/sizeof(_aliases[0]); i++) {
+        if (ki_strcasecmp(name, _aliases[i].name) == 0) {
+            return _aliases[i].expansion;
+        }
+    }
+    return NULL;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════

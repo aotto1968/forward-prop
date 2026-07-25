@@ -178,13 +178,13 @@ static uint32_t *load_input_cached(const uint8_t *X_raw, int n_samples,
             uint32_t *X = (uint32_t *)ki_xmalloc(total * sizeof(uint32_t));
             if (fread(X, sizeof(uint32_t), total, cf) == total) {
                 fclose(cf);
-                printf("  Input-cache: %s\n", cache_path);
+                if (aa.debug_gb) printf("  Input-cache: %s\n", cache_path);
                 return X;
             }
             free(X);
         }
         fclose(cf);
-        printf("  [CACHE] Invalid hash/config, recomputing\n");
+        if (aa.debug_gb) printf("  [CACHE] Invalid hash/config, recomputing\n");
     }
 
     /* Cache miss: load_input and save */
@@ -206,7 +206,7 @@ static uint32_t *load_input_cached(const uint8_t *X_raw, int n_samples,
             size_t total = (size_t)n_samples * stride;
             fwrite(X, sizeof(uint32_t), total, sf);
             fclose(sf);
-            printf("  Input-cache: %s  (saved)\n", cache_path);
+            if (aa.debug_gb) printf("  Input-cache: %s  (saved)\n", cache_path);
         }
     }
     return X;
@@ -233,7 +233,7 @@ static uint32_t *load_input_cached_xform(int xform_id,
             uint32_t *X = (uint32_t *)ki_xmalloc(total * sizeof(uint32_t));
             if (fread(X, sizeof(uint32_t), total, cf) == total) {
                 fclose(cf);
-                printf("  Input-cache: %s\n", cpath);
+                if (aa.debug_gb) printf("  Input-cache: %s\n", cpath);
                 return X;
             }
             free(X);
@@ -254,7 +254,7 @@ static uint32_t *load_input_cached_xform(int xform_id,
         size_t total = (size_t)n_samples * stride;
         fwrite(X, sizeof(uint32_t), total, sf);
         fclose(sf);
-        printf("  Input-cache: %s  (saved)\n", cpath);
+        if (aa.debug_gb) printf("  Input-cache: %s  (saved)\n", cpath);
     }
     return X;
 }

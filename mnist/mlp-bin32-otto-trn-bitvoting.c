@@ -221,7 +221,6 @@ int main(int argc, char *argv[]) {
     ki_Dataset data;
     memset(&data, 0, sizeof(data));
     if (ki_dataset_read(&data) != 0) return 1;
-    if (aa.dry_run) { ki_dataset_free(&data); return 1; }
 
     int total_all = data.num_images;
     int total_train = (aa.trainN > 0) ? aa.trainN : data.n_train;
@@ -241,76 +240,99 @@ int main(int argc, char *argv[]) {
         enc_lut_init_enc(def_enc, KI_ENC_WIDTH_DEFAULT);
     }
 
-    /* ── Determine encodings + xforms ── */
+    /* ── Determine encodings + xforms (before dry_run for display) ── */
     int n_enc = aa.enc_count > 0 ? aa.enc_count : 1;
-    int xf_id_list[KI_XFORM_COUNT], n_xforms = 0;
+    int xf_id_list[KI_XFORM_LIST_MAX], n_xforms = 0;
     for (int xf = 0; xf < KI_XFORM_COUNT; xf++)
+        if (aa.xforms & (1ull << xf)) xf_id_list[n_xforms++] = xf;
+    for (int xf = KI_XFORM_COUNT; xf < 64; xf++)
         if (aa.xforms & (1ull << xf)) xf_id_list[n_xforms++] = xf;
     if (n_xforms < 1) { xf_id_list[0] = KI_XFORM_ID; n_xforms = 1; }
 
-    /* Container-Offset und -Stride pro Encoding (wie in load_input) */
-    int enc_off[KI_ENC_MAX], enc_nc[KI_ENC_MAX], enc_stride_total = 0;
+    int enc_nc[KI_ENC_MAX], enc_stride_total = 0;
     for (int ei = 0; ei < n_enc && ei < KI_ENC_MAX; ei++) {
         int w = (ei < aa.enc_count) ? (int)aa.enc_array[ei].width : KI_ENC_WIDTH_DEFAULT;
         if (w < 1) w = KI_ENC_WIDTH_DEFAULT;
         enc_nc[ei] = KI_NC * w / 8;
-        enc_off[ei] = enc_stride_total;
         enc_stride_total += enc_nc[ei];
     }
 
     int n_members = n_enc * n_xforms;
 
-    /* ── Load input buffers (one per xform, cached) — BEFORE header print ── */
+        /* ── Input buffers: load BEFORE header (cache log appears before the graphic) ── */
     size_t cache_stride = (size_t)enc_stride_total;
-    uint32_t *X_xform[KI_XFORM_COUNT];
-    for (int xi = 0; xi < n_xforms; xi++) {
-        int xf = xf_id_list[xi];
-        if (xf == KI_XFORM_ID) {
-            X_xform[xi] = load_input_cached(data.X_raw, total_all, cache_stride);
-        } else {
-            uint8_t *xf_raw = (uint8_t *)malloc((size_t)total_all * (size_t)KI_PX);
-            for (int s = 0; s < total_all; s++) {
-                const uint8_t *src = data.X_raw + (size_t)s * (size_t)KI_PX;
-                uint8_t *dst = xf_raw + (size_t)s * (size_t)KI_PX;
-                ki_xform_raw(dst, src, data.cols, data.rows, KI_COLORS, xf);
+    int enc_off[KI_ENC_MAX];
+    {   int _off = 0;
+        for (int ei = 0; ei < n_enc && ei < KI_ENC_MAX; ei++) {
+            enc_off[ei] = _off;
+            _off += enc_nc[ei];
+        }
+    }
+    uint32_t *X_xform[KI_XFORM_LIST_MAX];  /* indexed by xi (0..n_xforms-1) */
+    if (!aa.dry_run) {
+        int img_sz = data.cols * data.rows * KI_COLORS;
+        for (int xi = 0; xi < n_xforms && xi < KI_XFORM_LIST_MAX; xi++) {
+            int xf = xf_id_list[xi];
+            if (xf == KI_XFORM_ID) {
+                X_xform[xi] = load_input_cached(data.X_raw, total_all, cache_stride);
+            } else {
+                uint8_t *xf_raw = (uint8_t *)malloc((size_t)img_sz * (size_t)total_all);
+                ki_xform_apply_buf(xf_raw, data.X_raw, data.cols, data.rows, KI_COLORS,
+                                   total_all, xf, img_sz);
+                X_xform[xi] = load_input_cached_xform(xf, xf_raw, total_all, cache_stride);
+                free(xf_raw);
             }
-            X_xform[xi] = load_input_cached_xform(xf, xf_raw, total_all, cache_stride);
-            free(xf_raw);
         }
     }
 
     /* ── Setup display ── */
     printf("══════════════════════════════════════════════════════════════════════\n");
     printf("══╡ BIT-VOTING ╞══  %s\n", KI_DATASET_NAME);
-    int _raw_cont = KI_PX * KI_ENC_WIDTH_DEFAULT / 32;
-    printf("  Input:       %d px → %d containers × 32 bits  (stride: %d)\n",
-           KI_PX, _raw_cont, enc_stride_total);
-    printf("  Classes:     %d\n", KI_NCLASSES);
-    printf("  Members:     %d (%d enc × %d xform)\n", n_members, n_enc, n_xforms);
-    printf("  Samples:     %d train / %d eval\n", total_train, total_eval);
-    printf("  Training:    Perceptron-Update (+correct, -predicted)\n");
-    printf("  Epochs:      %d  step=%d  lr=%.4f\n", epochs, step_init, (double)aa.lr);
-    if (n_xforms > 1) {
-        printf("  Xforms:      ");
-        for (int xi = 0; xi < n_xforms; xi++) {
-            if (xi > 0) printf(", ");
-            printf("%s", ki_xform_name(xf_id_list[xi]));
+
+    /* ── Input blocks (format wie Otto) ── */
+    {   char _blk[256] = "";
+        for (int ei = 0; ei < n_enc && ei < KI_ENC_MAX; ei++) {
+            if (ei > 0) { size_t _l = strlen(_blk); if (_l < sizeof(_blk) - 2) { _blk[_l] = ','; _blk[_l+1]='\0'; }}
+            size_t _l = strlen(_blk);
+            int _col = aa.enc_array[ei].color;
+            snprintf(_blk + _l, sizeof(_blk) - _l, "%s",
+                     _col >= 0 ? ki_color_name(_col) : "?");
         }
-        printf("\n");
+        int _nc0 = n_enc > 0 ? enc_nc[0] : 0;
+        printf("  Input:       %d px → %d/%d blocks (packed:%s) × %d = %d total  (channels)\n",
+               KI_PX, n_enc, COLOR_NB, _blk, _nc0, enc_stride_total);
     }
-    if (n_enc > 1 || aa.enc_count > 0) {
-        printf("  Encodings:   ");
-        for (int ei = 0; ei < n_enc; ei++) {
-            if (ei > 0) printf(", ");
-            int t = (ei < aa.enc_count) ? (int)aa.enc_array[ei].type : KI_ENC_RAW;
-            int w = (ei < aa.enc_count) ? (int)aa.enc_array[ei].width : KI_ENC_WIDTH_DEFAULT;
-            if (w < 1) w = KI_ENC_WIDTH_DEFAULT;
-            const char *en = ki_enc_name_short(t);
-            printf("%s%d(%d cont)", en, w, enc_nc[ei]);
+    printf("  ───────────────────────────────────────────────────────────\n");
+    printf("  Members:     %d (%d enc × %d xform)\n", n_members, n_enc, n_xforms);
+    printf("  OMP:         %d threads\n", aa.threadN);
+    printf("  Train/Eval:  %d / %d samples  batch=%d\n", total_train, total_eval, aa.batchN);
+    printf("  Training:    Perceptron-Update (+correct, -predicted)\n");
+    printf("  ───────────────────────────────────────────────────────────\n");
+    printf("  Seed:        seed=%u  %s  seed-member: %s\n",
+           aa.seed,
+           aa.seed_splitmix ? "splitmix64" : "default",
+           ensemble_seed_str());
+    printf("  ───────────────────────────────────────────────────────────\n");
+    if (n_xforms > 1) {
+        printf("  Xform:       ");
+        for (int xi = 0; xi < n_xforms; xi++) {
+            int _x = xf_id_list[xi];
+            if (xi > 0) printf(",");
+            printf("%s", ki_xform_is_pipe(_x) ? ki_xform_pipe_name(_x) : ki_xform_name(_x));
         }
-        printf("\n");
+        printf("  (%d× ensemble multiplier)\n", n_xforms);
     }
     printf("\n");
+
+    printf("══╡ MEMBER ╞══════════════════════════════════════════════════\n");
+    printf("  Grid: XFORM[%d] × COLOR[%d] = %d members\n",
+           n_xforms, n_enc, n_members);
+    printf("  Per member: Target[K=%d × I=%d]\n",
+           KI_NCLASSES, enc_stride_total > 0 ? enc_nc[0] * 32 : 0);
+    ki_print_encodings();
+    printf("\n");
+
+    if (aa.dry_run) { ki_dataset_free(&data); return 1; }
 
     /* ── Create members: one per (encoding, xform) ── */
     BitVoteMember **members = (BitVoteMember **)malloc(
@@ -361,7 +383,8 @@ int main(int argc, char *argv[]) {
             printf("  xform=");
             for (int xi = 0; xi < n_xforms; xi++) {
                 if (xi > 0) printf(",");
-                printf("%s", ki_xform_name(xf_id_list[xi]));
+                int _xid = xf_id_list[xi];
+                printf("%s", ki_xform_is_pipe(_xid) ? ki_xform_pipe_name(_xid) : ki_xform_name(_xid));
             }
         }
         printf("\n");

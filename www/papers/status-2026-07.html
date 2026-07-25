@@ -60,6 +60,21 @@
 <h1 style="font-size:2rem; color:var(--navy); margin-bottom:0.25rem;">Status Report — July 2026</h1>
 <p style="font-size:1.1rem; color:var(--mid-gray); margin-bottom:2rem;"><em>DRAM-native Classification via Bit-Logic Operations</em></p>
 
+<div style="background:linear-gradient(135deg, rgba(255,87,34,0.12), rgba(255,87,34,0.04)); border:2px solid #FF5722; border-radius:8px; padding:1rem 1.5rem; margin-bottom:2rem;">
+    <strong style="font-size:1rem;">📈 Update July 25, 2026 — <span style="color:#D84315;">maj=1 Default, --export-gb, Avg Filters, xform@Pipes, 65% Ceiling Broken</span></strong>
+    <ul style="margin:0.5rem 0 0 1.2rem; font-size:0.9rem;">
+        <li><strong>maj=1 is now Default</strong> — The old <code>--maj 3</code> tree was not a separate algorithm — it was <code>--maj 1</code> with effective threshold ~52.7% (135/256). <code>--maj 1</code> is DRAM-native (bit-logic only) and conceptually cleaner. <code>--maj-thresh -2</code> = auto per encoding lookup.</li>
+        <li><strong>65% Ceiling Broken</strong> — <code>--encoding-sizeN 0</code> (RAW encoding) reaches 99.6% train on Otto, but eval stagnates at 58%. <strong>BitVoting without W0</strong> reaches 96.8% train, eval still climbing at 47.4% — <strong>no ceiling visible</strong>. The 65% wall comes from the frozen W0, not from training dynamics.</li>
+        <li><strong>--export-gb</strong> — gb_buf caching to <code>data/gb/</code>. Memoization of expensive h0_neuron computation. Second run 35% faster (87s vs 136s). <code>--debug-gb</code> shows cache logs.</li>
+        <li><strong>Lazy Input Loading</strong> — xform input buffers are only loaded on gb-cache MISS. On cache HIT, no I/O for input buffers at all.</li>
+        <li><strong>Row-wise Running Average Filters</strong> — <code>--xform avg2</code>, <code>avg3</code>, <code>avg4</code>. Running average per row (wrap-right). Spreads information of one pixel across 4 neighbors.</li>
+        <li><strong>Xform Pipeline Chaining</strong> — <code>@</code> syntax: <code>rot90@avg4</code> = first rot90, then avg4 on the result. Any number of steps. <code>id@X = X</code> (identity is filtered).</li>
+        <li><strong>Xform Duplicates Preserved</strong> — <code>--xform id,rot45,rot90,id,rot45,rot90</code> creates 6 members with independent W0 seeds.</li>
+        <li><strong>run-research.sh --trace</strong> — <code>perf record -g</code> is automatically prepended. Enables profiling without manual perf invocation.</li>
+        <li><strong>BitVoting Baseline Extended</strong> — <code>--encoding-sizeN 0</code> confirms: without W0 bottleneck, accuracy scales linearly with member count.</li>
+    </ul>
+</div>
+
 <div style="background:linear-gradient(135deg, rgba(156,39,176,0.12), rgba(156,39,176,0.04)); border:2px solid #9C27B0; border-radius:8px; padding:1rem 1.5rem; margin-bottom:2rem;">
     <strong style="font-size:1rem;">📈 Update July 21, 2026 — <a href="mnist-number.html#shuffle" style="color:#7B1FA2;">Pixel Shuffle Xforms Published</a> — Relation Beats Position</strong>
     <ul style="margin:0.5rem 0 0 1.2rem; font-size:0.9rem;">

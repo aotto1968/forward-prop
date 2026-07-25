@@ -141,10 +141,26 @@ for _otto_bin in \
     cifar-mlp-bin32-otto-trn-xnor.exe \
     cifar-mlp-bin32-otto-trn-xor.exe \
     cifar-mlp-bin32-otto-trn-vn4.exe \
+    cifar-mlp-bin32-otto-trn-bitvoting.exe \
+    cifar-mlp-bin32-otto-trn-xnor-4.exe \
+    cifar-mlp-bin32-otto-trn-xnor-8.exe \
+    cifar-mlp-bin32-otto-trn-xnor-12.exe \
+    cifar-mlp-bin32-otto-trn-xnor-16.exe \
+    cifar-mlp-bin32-otto-trn-xnor-32.exe \
+    cifar-mlp-bin32-otto-trn-xnor-8-float.exe \
+    cifar-mlp-bin32-otto-trn-xnor-8.dbg \
+    cifar-mlp-bin32-otto-trn-xnor-8-float.dbg \
+    cifar-mlp-otto-xform-view.exe \
+    cifar-mlp-otto-xform-samples.exe \
     fashion-mlp-bin32-otto-trn-xnor.exe \
     fashion-mlp-bin32-otto-trn-xor.exe \
     xo; do
     complete -F _otto_trn_complete "$_otto_bin" 2>/dev/null || true
+done
+# Also register for any cifar-mlp-bin32-otto-trn-xnor-*.exe pattern
+# (future bit-width variants, debug builds)
+for _otto_bin in cifar-mlp-bin32-otto-trn-xnor-*.exe cifar-mlp-bin32-otto-trn-xnor-*.dbg; do
+    [[ -x "$_otto_bin" ]] && complete -F _otto_trn_complete "$_otto_bin" 2>/dev/null || true
 done
 unset _otto_bin
 

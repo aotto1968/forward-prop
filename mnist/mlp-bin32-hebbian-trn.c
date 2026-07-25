@@ -520,14 +520,7 @@ int main(int argc, char *argv[]) {
     printf("  Per member: W0[H=%d × I=%d], W1[K=%d × H=%d]\n",
            H, mem_nc[0] > 0 ? mem_nc[0] : (KI_COLORS > 1 ? KI_NC : NC),
            N_CLASSES, H);
-    /* Build arrays for ki_print_member_structure */
-    int _c[KI_ENC_MAX], _t[KI_ENC_MAX], _w[KI_ENC_MAX];
-    for (int i = 0; i < n_enc && i < KI_ENC_MAX; i++) {
-        _c[i] = (int)aa.enc_array[i].color;
-        _t[i] = (int)aa.enc_array[i].type;
-        _w[i] = (int)aa.enc_array[i].width > 0 ? (int)aa.enc_array[i].width : KI_ENC_WIDTH_DEFAULT;
-    }
-    ki_print_member_structure(_c, _t, _w, n_enc, aa.ensembleN);
+    ki_print_encodings();
     (void)mi;
 
     /* ── Train ─────────────────────────────────────────────────── */

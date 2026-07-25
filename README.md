@@ -1,7 +1,9 @@
 # Otto Score — DRAM-Native MLP Classifier
 
-**MNIST: 99.0% in 4s  |  CIFAR-10: 61.2% single-run / 61.66% ensemble  |  Fashion-MNIST: 90.2%** — Zero floating point, zero matmul in inference.
+**MNIST: 99.0% in 4s  |  CIFAR-10: 64.9% (maj=1, sizeN=32)  |  Fashion-MNIST: 90.2%** — Zero floating point, zero matmul in inference.
 Only `&|~` + int32 + popcount. Also includes float32 AdamW + multi-member Hebbian + **Bit-Voting linear baseline** (proves the 5pp W0 nonlinearity gap).
+
+> 📖 **Full status report:** [`www/papers/status-2026-07.html`](www/papers/status-2026-07.html) — Latest findings: `--export-gb` cache, `--maj 1` default, `avg2/3/4` filters, `@` pipe chaining, 65% ceiling analysis.
 
 ---
 
@@ -61,23 +63,23 @@ REPORT train=71.8% (60000) eval=71.0% (10000) ...
 
 ## 🎯 Test Targets
 
-| Command                       | What it tests                     |
-| ----------------------------- | --------------------------------- |
-| `make test-mnist`             | All 3 MNIST approaches            |
-| `make test-mnist-otto`        | Otto Score MNIST only             |
-| `make test-mnist-adam`        | Float32 AdamW MNIST only          |
-| `make test-mnist-hebbian`     | Bin32 Hebbian MNIST only          |
-| `make test-cifar`             | All 3 CIFAR-10 approaches         |
-| `make test-cifar-otto`        | Otto Score CIFAR-10 only          |
-| `make test-cifar-adam`        | Float32 AdamW CIFAR-10 only       |
-| `make test-cifar-hebbian`     | Bin32 Hebbian CIFAR-10 only       |
-| `make test-fashion`           | All 3 Fashion-MNIST approaches    |
-| `make test-fashion-otto`      | Otto Score Fashion-MNIST only     |
-| `make test-fashion-adam`      | Float32 AdamW Fashion-MNIST only  |
-| `make test-fashion-hebbian`   | Bin32 Hebbian Fashion-MNIST only  |
-| `make test-mnist-bitvote`    | Bit-Voting baseline MNIST only    |
-| `make test-cifar-bitvote`    | Bit-Voting baseline CIFAR-10 only |
-| `make test-fashion-bitvote`  | Bit-Voting baseline Fashion-MNIST only |
+| Command                     | What it tests                          |
+| --------------------------- | -------------------------------------- |
+| `make test-mnist`           | All 3 MNIST approaches                 |
+| `make test-mnist-otto`      | Otto Score MNIST only                  |
+| `make test-mnist-adam`      | Float32 AdamW MNIST only               |
+| `make test-mnist-hebbian`   | Bin32 Hebbian MNIST only               |
+| `make test-cifar`           | All 3 CIFAR-10 approaches              |
+| `make test-cifar-otto`      | Otto Score CIFAR-10 only               |
+| `make test-cifar-adam`      | Float32 AdamW CIFAR-10 only            |
+| `make test-cifar-hebbian`   | Bin32 Hebbian CIFAR-10 only            |
+| `make test-fashion`         | All 3 Fashion-MNIST approaches         |
+| `make test-fashion-otto`    | Otto Score Fashion-MNIST only          |
+| `make test-fashion-adam`    | Float32 AdamW Fashion-MNIST only       |
+| `make test-fashion-hebbian` | Bin32 Hebbian Fashion-MNIST only       |
+| `make test-mnist-bitvote`   | Bit-Voting baseline MNIST only         |
+| `make test-cifar-bitvote`   | Bit-Voting baseline CIFAR-10 only      |
+| `make test-fashion-bitvote` | Bit-Voting baseline Fashion-MNIST only |
 
 First run trains all 9 models. Subsequent runs use cached models (<1s total).
 
@@ -85,26 +87,18 @@ First run trains all 9 models. Subsequent runs use cached models (<1s total).
 
 ## 🔬 Key Findings
 
-### Majority Mode: `maj=3` > `maj=1` > `maj=1p`
+### Majority Mode: `maj=1` is Now Default
 
-The lossy 3-group tree majority (`--maj 3`, default) consistently outperforms
-both the flat container majority (`--maj 1`) and the pixel-accurate majority
-(`--maj 1p`) — **at lower runtime cost**.
+The old `--maj 3` tree was identified as `--maj 1` with an effective threshold
+of ~52.7% (135/256). See [Status Report July 2026](www/papers/status-2026-07.html).
 
-CIFAR-10, H=768, 10 epochs, performance encoding, 12 members:
+**`--maj 1`** is DRAM-native (pure bit-logic, no tree overhead) and conceptually
+cleaner. The threshold is controlled via `--maj-thresh`:
+- `-2` (default): auto per encoding (lookup table: 256→135, 512→269, 1024→540)
+- `-1`: n/2 (exact 50%)
+- `>=0`: exact value
 
-| Majority | Eval | Time | vs maj=3 |
-|----------|------|------|----------|
-| **maj=3** (3-group tree) | **61.3%** | **57s** | baseline |
-| maj=1 (container flat) | 60.2% | 66s | −1.1pp, +16% |
-| maj=1p (pixel-accurate) | 60.2% | **178s** | −1.1pp, **3× slower** |
-
-**Insight:** The W0 random projection scatters 24576 input bits across 768×32=24576
-H0-bits. The 3-group majority (`maj=3`) compresses every 3 bits into 1 output bit
-with a threshold (2 of 3 = 1). This **lossy nonlinear compression** creates better
-feature abstraction than exact pixel-level counting (`maj=1p`), which is 3× slower
-and adds nothing. The nonlinearity comes from the **majority threshold**, not from
-pixel accuracy.
+The old maj3 mechanism is considered legacy and is no longer the default.
 
 ### `--maj-step N` — Only `N == KI_PX_PER_CONT` Works
 
@@ -113,11 +107,11 @@ of each majority triple. **Only the default `--maj-step 4` (= KI_PX_PER_CONT
 at 8-bit) produces valid results.** Any other value creates fundamental
 problems:
 
-| Step | Relation to ppc (=4) | Problem |
-|------|---------------------|---------|
-| **4** | `== ppc` | **Container-aligned** — each triple draws 1 pixel per container, `uint32_t` bit layout = pixel position 0-3. Fast path `majority_tree3` used. **Default. Works. ✓** |
-| **1-3** | `< ppc` | Triple (i, i+S, i+2S) fits within 3 containers (12px). Path 1 (container-grouping) works correctly, but **rearranges which bits compose each position** → different match results. W0 encoding expects ppc-aligned layout. |
-| **5+** | `> ppc` | Triple (i, i+S, i+2S) **spans more than 3 containers**. No container-aligned slot assignment possible → Path 2 (flat packing) used. **~2-3pp accuracy loss** vs step=4. |
+| Step    | Relation to ppc (=4) | Problem                                                                                                                                                                                                                    |
+| ------- | -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **4**   | `== ppc`             | **Container-aligned** — each triple draws 1 pixel per container, `uint32_t` bit layout = pixel position 0-3. Fast path `majority_tree3` used. **Default. Works. ✓**                                                        |
+| **1-3** | `< ppc`              | Triple (i, i+S, i+2S) fits within 3 containers (12px). Path 1 (container-grouping) works correctly, but **rearranges which bits compose each position** → different match results. W0 encoding expects ppc-aligned layout. |
+| **5+**  | `> ppc`              | Triple (i, i+S, i+2S) **spans more than 3 containers**. No container-aligned slot assignment possible → Path 2 (flat packing) used. **~2-3pp accuracy loss** vs step=4.                                                    |
 
 **Root cause:** The `uint32_t` match vector has a fixed bit-layout
 (`slot 0 = bits 0-7`, `slot 1 = bits 8-15`, etc.) that corresponds to
@@ -141,14 +135,69 @@ cannot exploit effectively.
 Both paths are validated to produce **identical results** for step=ppc
 (train=39.9%, eval=38.0%, err=30038 at H=64 ep=1).
 
+### Row-Wise Running Average Filters (July 2026)
+
+Three new xform types for row-wise moving average (wrap-right):
+
+| Xform | Formula | Effect |
+|-------|---------|--------|
+| `avg2` | `p[i] = (p[i] + p[i+1]) / 2` | 2-tap blur |
+| `avg3` | `p[i] = (p[i] + p[i+1] + p[i+2]) / 3` | 3-tap |
+| `avg4` | `p[i] = (p[i] + p[i+1] + p[i+2] + p[i+3]) / 4` | 4-tap, strongest blur |
+
+Usage:
+```bash
+--xform avg4,rot45@avg4,rot90@avg4
+```
+
+**Insight:** Avg filters spread one pixel's information across 4 neighbors.
+Combined with the `@` pipe syntax, multiple transforms can be chained,
+e.g. `rot45@avg4` = rotate first, then blur.
+
+### Xform Pipeline Chaining `@` (July 2026)
+
+The `@` syntax enables sequential chaining of xforms:
+
+```bash
+# One member: rot90, then avg4 on the result
+--xform rot90@avg4
+
+# Three members: avg4, rot45+avg4, rot90+avg4
+--xform avg4,rot45@avg4,rot90@avg4
+
+# Any number of steps
+--xform rot45@avg2@avg4
+
+# id@X = X (identity is automatically filtered)
+--xform id@avg4  # → identical to --xform avg4
+```
+
+Each pipeline is **one member** (not multiple). `rot90@avg4 = 1×`, `avg4,rot45@avg4 = 2×`.
+
+### `--encoding-sizeN 0` — RAW Encoding (July 2026)
+
+With `--encoding-sizeN 0`, NO thermometer encoding is applied — the raw 8-bit pixel values
+go directly into the container (4 pixels per uint32). This corresponds to `KI_ENC_RAW` with `width=8`.
+
+```bash
+# Otto Score with RAW Encoding
+./cifar/cifar-mlp-bin32-otto-trn-xnor.exe --encoding-sizeN 0 ...
+
+# BitVoting with RAW Encoding (no W0 bottleneck)
+./cifar/cifar-mlp-bin32-otto-trn-bitvoting.exe --encoding-sizeN 0 ...
+```
+
+**Result:** Train reaches 99.6% (Otto) resp. 96.8% (BitVoting), but eval generalizes
+differently — BitVoting shows **no ceiling** (eval still climbing at 47.4%, 60 Members).
+
 ### Otto Score vs Bit-Voting Baseline: +7pp at 3.6× Time
 
 CIFAR-10, H=768, 10 epochs, performance encoding, 12 members:
 
-| Approach | Eval | Time | Key Difference |
-|----------|------|------|----------------|
-| **Otto Score** (W0 + majority) | **61.3%** | 57s | Nonlinear feature abstraction |
-| Bit-Voting (linear) | 54.3% | **16s** | Direct bit voting, no W0 |
+| Approach                       | Eval      | Time    | Key Difference                |
+| ------------------------------ | --------- | ------- | ----------------------------- |
+| **Otto Score** (W0 + majority) | **61.3%** | 57s     | Nonlinear feature abstraction |
+| Bit-Voting (linear)            | 54.3%     | **16s** | Direct bit voting, no W0      |
 
 Otto's +7pp come from the **dense W0 random projection** (24576 → 768×32 H0 bits)
 followed by majority-threshold — the same 24576 input bits distributed overcomplete
@@ -208,43 +257,45 @@ Each trainer doubles as inference engine via `--import`. Zero code drift.
 
 ## Build Targets
 
-| Command        | Builds                                            |
-| -------------- | ------------------------------------------------- |
-| `make` / `all` | All 9 binaries (Otto + Hebbian + Adam × XNOR/XOR, all datasets) |
-| `make otto`    | Otto Score only (mnist/ + cifar/ + fashion/)      |
-| `make hebbian` | Hebbian only (mnist/ + cifar/ + fashion/)         |
-| `make adam`    | Float32 AdamW only (mnist/ + cifar/ + fashion/)   |
-| `make models`  | Train all 9 models (cached)                       |
-| `make clean`   | Remove executables                                |
-| `make ensemble`| Build merge-ensemble only (mnist/ + cifar/)       |
-| `make bitvote` | Build Bit-Voting baseline (linear perceptron, no W0) |
+| Command         | Builds                                                          |
+| --------------- | --------------------------------------------------------------- |
+| `make` / `all`  | All 9 binaries (Otto + Hebbian + Adam × XNOR/XOR, all datasets) |
+| `make otto`     | Otto Score only (mnist/ + cifar/ + fashion/)                    |
+| `make hebbian`  | Hebbian only (mnist/ + cifar/ + fashion/)                       |
+| `make adam`     | Float32 AdamW only (mnist/ + cifar/ + fashion/)                 |
+| `make models`   | Train all 9 models (cached)                                     |
+| `make clean`    | Remove executables                                              |
+| `make ensemble` | Build merge-ensemble only (mnist/ + cifar/)                     |
+| `make bitvote`  | Build Bit-Voting baseline (linear perceptron, no W0)            |
 
 ## CLI Flags (unified across all trainers)
 
-| Flag                       | Description                                          | Default         |
-| -------------------------- | ---------------------------------------------------- | --------------- |
-| `--hiddenN N`              | Hidden neurons                                       | 64              |
-| `--epochsN N`              | Training epochs                                      | 1               |
-| `--splitVN N`              | Bit-Grouping: 1                                      | 1,2,3,4,8,16,32 |
-| `--encoding TYPE`          | Input encoding: exp, sig, up8, down8, raw, etc.; `latest` = dataset-specific alias (CIFAR: 11 members, MNIST/Fashion: exp8) | raw8            |
-| `--ensembleN N`            | Independent W0 copies                                | 1               |
-| `--export DIR`             | Model export directory                               | none            |
-| `--import DIR`             | Load model for inference                             | none            |
-| `--predictions FILE`       | Export per-sample predictions (for vis-errors tool)  | none            |
-| `--export-merge-scores DIR`| Save per-member scores to archive files (ensemble)   | none            |
-| `--dry-run`                | Print architecture and exit (metadata only, instant) | off             |
-| `--seed N`                 | Random seed                                          | 42              |
-| `--seed-member MODE`       | Member seed strategy (once, const, incr)             | once            |
-| `--gap-k F`                | Exp(-K×gap) step damping when train/eval gap widens  | 0.0 (off)       |
-| `--multi-correct`          | Punish all wrong classes, not just argmax            | off             |
-| `--batchN N`               | Mini-batch size                                      | 64              |
-| `--maj-step N`             | Pixel step between majority triples (0=auto=KI_PX_PER_CONT) | 0          |
-| `--debug-maj auto\|container\|pixel` | Force majority path (debug)                  | auto            |
-| `--debug-class-voting`     | Per-member per-class accuracy table                  | off             |
-| `--debug-confusion-matrix` | Confusion matrix table                               | off             |
-| `--filter CLASSES`         | Class subset (numeric or name, comma-sep)            | none            |
-| `--qq`                     | Quick mode: 5000 train / 2000 eval / 3 ep            | off             |
-| `--threadN N`              | OpenMP threads                                       | auto            |
+| Flag                               | Description                                                                                                                 | Default         |
+| ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------- | --------------- |
+| `--hiddenN N`                      | Hidden neurons                                                                                                              | 64              |
+| `--epochsN N`                      | Training epochs                                                                                                             | 1               |
+| `--splitVN N`                      | Bit-Grouping: 1                                                                                                             | 1,2,3,4,8,16,32 |
+| `--encoding TYPE`                  | Input encoding: exp, sig, up8, down8, raw, etc.; `latest` = dataset-specific alias (CIFAR: 11 members, MNIST/Fashion: exp8) | raw8            |
+| `--ensembleN N`                    | Independent W0 copies                                                                                                       | 1               |
+| `--export DIR`                     | Model export directory                                                                                                      | none            |
+| `--import DIR`                     | Load model for inference                                                                                                    | none            |
+| `--predictions FILE`               | Export per-sample predictions (for vis-errors tool)                                                                         | none            |
+| `--export-merge-scores DIR`        | Save per-member scores to archive files (ensemble)                                                                          | none            |
+| `--export-gb`                      | Cache gb_buf to data/gb/ (≥2nd run 35% faster)                                                                              | off             |
+| `--debug-gb`                       | Show gb-cache + input-cache messages                                                                                        | off             |
+| `--dry-run`                        | Print architecture and exit (metadata only, instant)                                                                        | off             |
+| `--seed N`                         | Random seed                                                                                                                 | 42              |
+| `--seed-member MODE`               | Member seed strategy (once, const, incr)                                                                                    | once            |
+| `--gap-k F`                        | Exp(-K×gap) step damping when train/eval gap widens                                                                         | 0.0 (off)       |
+| `--multi-correct`                  | Punish all wrong classes, not just argmax                                                                                   | off             |
+| `--batchN N`                       | Mini-batch size                                                                                                             | 64              |
+| `--maj-step N`                     | Pixel step between majority triples (0=auto=KI_PX_PER_CONT)                                                                 | 0               |
+| `--debug-maj auto,container,pixel` | Force majority path (debug)                                                                                                 | auto            |
+| `--debug-class-voting`             | Per-member per-class accuracy table                                                                                         | off             |
+| `--debug-confusion-matrix`         | Confusion matrix table                                                                                                      | off             |
+| `--filter CLASSES`                 | Class subset (numeric or name, comma-sep)                                                                                   | none            |
+| `--qq`                             | Quick mode: 5000 train / 2000 eval / 3 ep                                                                                   | off             |
+| `--threadN N`                      | OpenMP threads                                                                                                              | auto            |
 
 **`--splitVN` — Bit-Grouping (Otto Score only):**
 - `--splitVN 1` (default): every bit is its own feature, 50% retention. Optimal for clean data (MNIST).
@@ -252,13 +303,13 @@ Each trainer doubles as inference engine via `--import`. Zero code drift.
 - `--splitVN 3-32`: strict AND (all bits in the group must be 1). Only useful for very large H.
 
 Retention determines the VN choice:
-| VN    | Groups | Retention | Character                              |
-| ----- | ------ | --------- | -------------------------------------- |
-| 1     | 32     | 50.0%     | Soft — everything counts               |
-| **2** | **16** | **25.0%** | **CIFAR champion** — hard AND          |
-| 3     | 10     | 12.5%     | Needs 8× more H for same performance   |
-| 4     | 8      | 6.25%     | Starves at small H                     |
-| 8-32  | 4-1    | 0.4%-0%   | Only viable at H>16384+                |
+| VN    | Groups | Retention | Character                            |
+| ----- | ------ | --------- | ------------------------------------ |
+| 1     | 32     | 50.0%     | Soft — everything counts             |
+| **2** | **16** | **25.0%** | **CIFAR champion** — hard AND        |
+| 3     | 10     | 12.5%     | Needs 8× more H for same performance |
+| 4     | 8      | 6.25%     | Starves at small H                   |
+| 8-32  | 4-1    | 0.4%-0%   | Only viable at H>16384+              |
 
 Backward-compat aliases: `--out` = `--export`, `--model` = `--import`.
 
@@ -457,12 +508,12 @@ from `ki-local.h` (color RGB for CIFAR, grayscale for MNIST).
 
 ## Results Summary
 
-| Approach                | MNIST     | CIFAR-10   | Fashion-MNIST | Hardware Target  |
-| ----------------------- | --------- | ---------- | ------------- | ---------------- |
-| Otto Score (single)     | **99.0%** | **61.2%**  | **90.2%**     | DRAM (bit-logic) |
-| Otto Score (ensemble)   | 99.0%     | **61.66%** | 90.2%         | DRAM (bit-logic) |
-| Bin32 Hebbian (bitwise) | 84.4%     | 32.4%      | 69.4%         | DRAM (bit-logic) |
-| Float32 AdamW (matmul)  | 92.6%     | 41.2%      | 73.6%         | CPU/GPU          |
+| Approach                | MNIST     | CIFAR-10  | Fashion-MNIST | Hardware Target  |
+| ----------------------- | --------- | --------- | ------------- | ---------------- |
+| Otto Score (single)     | **99.0%** | **64.9%** | **90.2%**     | DRAM (bit-logic) |
+| Otto Score (ensemble)   | 99.0%     | **64.9%** | 90.2%         | DRAM (bit-logic) |
+| Bin32 Hebbian (bitwise) | 84.4%     | 32.4%     | 69.4%         | DRAM (bit-logic) |
+| Float32 AdamW (matmul)  | 92.6%     | 44.8%     | 82.1%         | CPU/GPU          |
 
 - **Otto Score**: MAJ3 + iterative Bayesian correction. Pure `&|~` + popcount.
   Better results via `--splitVN 2` (CIFAR) and ensemble (`--ensembleN 7`).
@@ -472,11 +523,13 @@ from `ki-local.h` (color RGB for CIFAR, grayscale for MNIST).
 
 ### Best Results (Latest)
 
-| Configuration                                             | Dataset  | Accuracy   | Time                            |
-| --------------------------------------------------------- | -------- | ---------- | ------------------------------- |
-| H=128, EN=7, ep=6, `--encoding latest`, evalN=100          | MNIST    | **99.0%**  | **4s**                          |
-| H=1024, EN=7, ep=7, `--splitVN 2`, `--encoding latest`    | CIFAR-10 | **61.2%**  | 273s (single run)               |
-| H=1024, 132 filtered members, VN=2, `--encoding latest`   | CIFAR-10 | **61.66%** | merge-ensemble (6166/10000)      |
+| Configuration                                                                  | Dataset  | Accuracy   | Time                    |
+| ------------------------------------------------------------------------------ | -------- | ---------- | ----------------------- |
+| H=128, EN=7, ep=6, `--encoding latest`, evalN=100                              | MNIST    | **99.0%**  | **4s**                  |
+| H=1024, ep=10, `--maj 1 --maj-thresh -2`, perf encoding, `--encoding-sizeN 32` | CIFAR-10 | **64.9%**  | 694s                    |
+| H=512, ep=10, `--maj 1`, perf encoding, `--encoding-sizeN 16`                  | CIFAR-10 | **64.7%**  | **296s** (sweet spot)   |
+| H=1024, EN=7, ep=7, `--splitVN 2`, `--encoding latest`                         | CIFAR-10 | **61.2%**  | 273s (legacy)           |
+| H=1024, 132 filtered members, VN=2, `--encoding latest`                        | CIFAR-10 | **61.66%** | merge-ensemble (legacy) |
 
 ### Ensemble Workflow (quick overview)
 
@@ -494,12 +547,26 @@ bash bin/run-ensemble.sh --repeat 20 ./cifar/cifar-mlp-bin32-otto-trn-xnor.exe \
 
 ### Implementation Details (2026-07)
 
+- **maj=1 Default**: The old `--maj 3` tree was `--maj 1` with effective threshold
+  ~52.7% (135/256). `--maj 1` is DRAM-native (bit-logic only) and conceptually cleaner.
+  Threshold via `--maj-thresh -2` (auto per encoding), `-1` (n/2), or fixed value.
+- **--export-gb**: gb_buf caching to `data/gb/`. Hash key covers dataset, W0[0..3],
+  dimensions, input pipeline (xform, channels, encoding). Second run 35% faster.
+  `--debug-gb` for cache logs.
+- **Lazy Input Loading**: xform input buffers (load_input_cached) are only loaded on
+  gb-cache MISS. On cache HIT, no I/O for input buffers.
+- **Xform Pipeline Chaining**: `@` syntax for sequential transforms.
+  `rot90@avg4` = first rot90, then avg4. Any number of steps.
+- **Row-Wise Average Filters**: `avg2`, `avg3`, `avg4` — running average per
+  row with wrap-right. Spreads pixel information across neighbors.
+- **--encoding-sizeN 0**: RAW encoding (no thermometer). 8-bit pixel values directly
+  into containers. 99.6% train on Otto, 96.8% on BitVoting.
+- **65% Ceiling Analysis**: The wall comes from the frozen W0, not from training.
+  BitVoting (without W0) shows no ceiling — eval scales linearly with member count.
 - **VN=2 Sweet Spot**: 25% retention via AND2 filter. Optimal for noisy data (CIFAR).
   For clean data (MNIST), VN=1 is better. VN=3+ (strict AND) only at very large H.
 - **gb-cache optimization**: VN group mask computed once from h0 and reused for all
   epochs + evaluation. **−71% training time** (H=1024, EN=7: 934s→273s).
-- **Ensemble overcomes ceiling**: Multiple seeds + merge-ensemble reach 61.62%
-  (H=1024, 17 seeds). Single-run ceiling: 61.0% (H=4094).
 - **h0_eval Cache**: `evaluate_member` uses gb_buf/gb_buf_te for both evaluations
   (train + test). No h0_neuron during training.
 - **Flat arrays removed**: `target_ens`/`offset_ens`/`best_ens`/`err_ens` eliminated.

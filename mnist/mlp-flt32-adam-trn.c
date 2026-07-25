@@ -401,18 +401,7 @@ int main(int argc, char *argv[]) {
            use_members ? "" : " (flat)");
     printf("  Per member: W0[H=%d × I=%d], W1[K=%d × H=%d]\n",
            H, (int)mem_nc[0], N_CLASSES, H);
-    /* Build arrays for ki_print_member_structure */
-    int c[ADAM_MAX_MEM], t[ADAM_MAX_MEM], w[ADAM_MAX_MEM];
-    for (int i = 0; i < n_mem && i < ADAM_MAX_MEM; i++) {
-        c[i] = block_order[i % base_n_mem];
-        t[i] = -1;
-        w[i] = -1;
-        if (aa.enc_count > 0 && (i % base_n_mem) < aa.enc_count) {
-            t[i] = (int)aa.enc_array[i % base_n_mem].type;
-            w[i] = (int)aa.enc_array[i % base_n_mem].width;
-        }
-    }
-    ki_print_member_structure(c, t, w, n_mem, aa.ensembleN);
+    ki_print_encodings();
 
     /* ── Create per-member W0 + W1 + AdamW ────────────────────── */
     srand((unsigned int)aa.seed);  /* for ki_shuffle_int */

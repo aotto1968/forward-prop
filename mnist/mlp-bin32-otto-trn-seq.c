@@ -283,7 +283,8 @@ ki_Args aa = {
     .target_init_mode = KI_TARGET_COUNT,
     .multi_correct      = 0,
     .seed_splitmix      = 1,
-    .maj_mode           = KI_MAJ_3,  /* --maj 3: tree approximation (faster + more accurate than 1) */
+    .maj_mode           = KI_MAJ_1,  /* --maj 1: exact per-bit majority (DRAM-native, replaces old maj3 default) */
+    .maj1_thresh        = -2,     /* --maj1-thresh: -2 = auto per encoding (n*135/256 for 8-bit) */
     .maj_step           = 0,      /* 0=auto (KI_PX_PER_CONT) */
     .debug_maj          = 0,      /* 0=auto, 1=container, 2=pixel */
     .rows_mode          = 0,      /* 0=flat, 1=per-row members */
@@ -387,30 +388,31 @@ static int active_chans[KI_ENC_MAX];    /* Mapping: seq_idx → Bit-Position (0.
  * in_offset: Start des Slices im Input-Array
  * nc_local:  number of Container for this member
  */
-static uint32_t h0_neuron(const uint32_t *in, const uint32_t *W0_row, int nc_local) {
+static uint32_t h0_neuron(const uint32_t *in, const uint32_t *W0_row, int nc_local, int half __attribute__((unused))) {
+    (void)half; /* suppress -Wunused-parameter (half used only in KI_MAJ_1/1R) */
     uint32_t match[4096] = {0}; /* max nc_local */
     switch (aa.maj_mode) {
         case KI_MAJ_1: {
             /* Container-level flat (original majority_tree1) */
             for (int c = 0; c < nc_local; c++)
                 match[c] = H0_MATCH(in, W0_row, c);
-            return majority_tree1(match, nc_local);
+            return majority_tree1(match, nc_local, half);
         }
         case KI_MAJ_1R: {
             /* Container-level row-wise (old rowwise) */
             for (int c = 0; c < nc_local; c++)
                 match[c] = H0_MATCH(in, W0_row, c);
             int cpr = KI_COLS / KI_PX_PER_CONT;
-            return majority_tree1_rowwise(match, nc_local, cpr);
+            return majority_tree1_rowwise(match, nc_local, cpr, half);
         }
         case KI_MAJ_1P: {
-            /* Pixel-accurate flat (current default) */
-            int half = nc_local * KI_PX_PER_CONT / 2;
+            /* Pixel-accurate flat */
+            int pix_half = nc_local * KI_PX_PER_CONT / 2;
             uint32_t r = 0;
             for (int g = 0; g < KI_PIXEL_GROUPS; g++) {
                 for (int c = 0; c < nc_local; c++)
                     match[c] = H0_MATCH(in, W0_row + g * nc_local, c);
-                r |= (majority_tree1_pixel(match, nc_local, half) << (g * KI_BIT_POS));
+                r |= (majority_tree1_pixel(match, nc_local, pix_half) << (g * KI_BIT_POS));
             }
             return r;
         }
@@ -430,7 +432,7 @@ static uint32_t h0_neuron(const uint32_t *in, const uint32_t *W0_row, int nc_loc
                         match[c] = H0_MATCH(in_row, W0_row_r, c);
                     row_results[r] = majority_tree1_pixel(match, cpr, half_row);
                 }
-                uint32_t cross = majority_tree1(row_results, rows);
+                uint32_t cross = majority_tree1(row_results, rows, rows / 2);
                 result |= (cross << (g * KI_BIT_POS));
             }
             return result;
@@ -496,7 +498,10 @@ static COUNTER_TYPE *ki_build_target(const uint32_t *X, const uint8_t *Y, int N,
             const uint32_t *in = X + (size_t)s * (size_t)stride + nc_off;
             for (int h = 0; h < H_local; h++) {
                 int _ws1 = aa.rows_mode && aa.maj_mode == KI_MAJ_1 ? NC_slice * 4 : NC_slice;
-                uint32_t h0 = h0_neuron(in, W0 + (size_t)h * _ws1, NC_slice);
+                int _half = (aa.maj1_thresh == -2) ? ki_default_half(NC_slice) :
+                            (aa.maj1_thresh <  0)  ? NC_slice / 2 :
+                            aa.maj1_thresh;
+                uint32_t h0 = h0_neuron(in, W0 + (size_t)h * _ws1, NC_slice, _half);
                 uint32_t gbits;
                 if (G == 1) {
                     gbits = h0;
@@ -697,6 +702,8 @@ static void logit_convert(COUNTER_TYPE *target, int H_local, const int class_cou
 }
 
 /* ── VN_SCORE_FROM_GB — Use precomputed gb mask (scores_otto_from_gb uses this) ── */
+#if 1
+/* Old version: __builtin_ctz-based (3-cycle TZCNT + data-dependent loop) */
 #define VN_SCORE_FROM_GB(gb, h, H, NG, TGT, SC) do { \
     uint32_t _b = (gb); \
     while (_b) { int _v = __builtin_ctz(_b); \
@@ -704,6 +711,44 @@ static void logit_convert(COUNTER_TYPE *target, int H_local, const int class_cou
             (SC)[_k] += (TGT)[TGT_IDX(_k, (h), _v, H, NG)]; \
         _b &= _b - 1; } \
 } while (0)
+#else
+/* Unrolled 32-bit test: no builtin, no data-dependent loop, always 32 iterations */
+#define VN_SCORE_FROM_GB(gb, h, H, NG, TGT, SC) do { \
+    uint32_t _b = (gb); \
+    if (_b & 0x00000001U) { for (int _k = 0; _k < KI_NCLASSES; _k++) (SC)[_k] += (TGT)[TGT_IDX(_k, (h),  0, H, NG)]; } \
+    if (_b & 0x00000002U) { for (int _k = 0; _k < KI_NCLASSES; _k++) (SC)[_k] += (TGT)[TGT_IDX(_k, (h),  1, H, NG)]; } \
+    if (_b & 0x00000004U) { for (int _k = 0; _k < KI_NCLASSES; _k++) (SC)[_k] += (TGT)[TGT_IDX(_k, (h),  2, H, NG)]; } \
+    if (_b & 0x00000008U) { for (int _k = 0; _k < KI_NCLASSES; _k++) (SC)[_k] += (TGT)[TGT_IDX(_k, (h),  3, H, NG)]; } \
+    if (_b & 0x00000010U) { for (int _k = 0; _k < KI_NCLASSES; _k++) (SC)[_k] += (TGT)[TGT_IDX(_k, (h),  4, H, NG)]; } \
+    if (_b & 0x00000020U) { for (int _k = 0; _k < KI_NCLASSES; _k++) (SC)[_k] += (TGT)[TGT_IDX(_k, (h),  5, H, NG)]; } \
+    if (_b & 0x00000040U) { for (int _k = 0; _k < KI_NCLASSES; _k++) (SC)[_k] += (TGT)[TGT_IDX(_k, (h),  6, H, NG)]; } \
+    if (_b & 0x00000080U) { for (int _k = 0; _k < KI_NCLASSES; _k++) (SC)[_k] += (TGT)[TGT_IDX(_k, (h),  7, H, NG)]; } \
+    if (_b & 0x00000100U) { for (int _k = 0; _k < KI_NCLASSES; _k++) (SC)[_k] += (TGT)[TGT_IDX(_k, (h),  8, H, NG)]; } \
+    if (_b & 0x00000200U) { for (int _k = 0; _k < KI_NCLASSES; _k++) (SC)[_k] += (TGT)[TGT_IDX(_k, (h),  9, H, NG)]; } \
+    if (_b & 0x00000400U) { for (int _k = 0; _k < KI_NCLASSES; _k++) (SC)[_k] += (TGT)[TGT_IDX(_k, (h), 10, H, NG)]; } \
+    if (_b & 0x00000800U) { for (int _k = 0; _k < KI_NCLASSES; _k++) (SC)[_k] += (TGT)[TGT_IDX(_k, (h), 11, H, NG)]; } \
+    if (_b & 0x00001000U) { for (int _k = 0; _k < KI_NCLASSES; _k++) (SC)[_k] += (TGT)[TGT_IDX(_k, (h), 12, H, NG)]; } \
+    if (_b & 0x00002000U) { for (int _k = 0; _k < KI_NCLASSES; _k++) (SC)[_k] += (TGT)[TGT_IDX(_k, (h), 13, H, NG)]; } \
+    if (_b & 0x00004000U) { for (int _k = 0; _k < KI_NCLASSES; _k++) (SC)[_k] += (TGT)[TGT_IDX(_k, (h), 14, H, NG)]; } \
+    if (_b & 0x00008000U) { for (int _k = 0; _k < KI_NCLASSES; _k++) (SC)[_k] += (TGT)[TGT_IDX(_k, (h), 15, H, NG)]; } \
+    if (_b & 0x00010000U) { for (int _k = 0; _k < KI_NCLASSES; _k++) (SC)[_k] += (TGT)[TGT_IDX(_k, (h), 16, H, NG)]; } \
+    if (_b & 0x00020000U) { for (int _k = 0; _k < KI_NCLASSES; _k++) (SC)[_k] += (TGT)[TGT_IDX(_k, (h), 17, H, NG)]; } \
+    if (_b & 0x00040000U) { for (int _k = 0; _k < KI_NCLASSES; _k++) (SC)[_k] += (TGT)[TGT_IDX(_k, (h), 18, H, NG)]; } \
+    if (_b & 0x00080000U) { for (int _k = 0; _k < KI_NCLASSES; _k++) (SC)[_k] += (TGT)[TGT_IDX(_k, (h), 19, H, NG)]; } \
+    if (_b & 0x00100000U) { for (int _k = 0; _k < KI_NCLASSES; _k++) (SC)[_k] += (TGT)[TGT_IDX(_k, (h), 20, H, NG)]; } \
+    if (_b & 0x00200000U) { for (int _k = 0; _k < KI_NCLASSES; _k++) (SC)[_k] += (TGT)[TGT_IDX(_k, (h), 21, H, NG)]; } \
+    if (_b & 0x00400000U) { for (int _k = 0; _k < KI_NCLASSES; _k++) (SC)[_k] += (TGT)[TGT_IDX(_k, (h), 22, H, NG)]; } \
+    if (_b & 0x00800000U) { for (int _k = 0; _k < KI_NCLASSES; _k++) (SC)[_k] += (TGT)[TGT_IDX(_k, (h), 23, H, NG)]; } \
+    if (_b & 0x01000000U) { for (int _k = 0; _k < KI_NCLASSES; _k++) (SC)[_k] += (TGT)[TGT_IDX(_k, (h), 24, H, NG)]; } \
+    if (_b & 0x02000000U) { for (int _k = 0; _k < KI_NCLASSES; _k++) (SC)[_k] += (TGT)[TGT_IDX(_k, (h), 25, H, NG)]; } \
+    if (_b & 0x04000000U) { for (int _k = 0; _k < KI_NCLASSES; _k++) (SC)[_k] += (TGT)[TGT_IDX(_k, (h), 26, H, NG)]; } \
+    if (_b & 0x08000000U) { for (int _k = 0; _k < KI_NCLASSES; _k++) (SC)[_k] += (TGT)[TGT_IDX(_k, (h), 27, H, NG)]; } \
+    if (_b & 0x10000000U) { for (int _k = 0; _k < KI_NCLASSES; _k++) (SC)[_k] += (TGT)[TGT_IDX(_k, (h), 28, H, NG)]; } \
+    if (_b & 0x20000000U) { for (int _k = 0; _k < KI_NCLASSES; _k++) (SC)[_k] += (TGT)[TGT_IDX(_k, (h), 29, H, NG)]; } \
+    if (_b & 0x40000000U) { for (int _k = 0; _k < KI_NCLASSES; _k++) (SC)[_k] += (TGT)[TGT_IDX(_k, (h), 30, H, NG)]; } \
+    if (_b & 0x80000000U) { for (int _k = 0; _k < KI_NCLASSES; _k++) (SC)[_k] += (TGT)[TGT_IDX(_k, (h), 31, H, NG)]; } \
+} while (0)
+#endif
 
 /* ki_batch_correct comes from ki-train.h (shared with bitvoting) */
 
@@ -751,8 +796,11 @@ static void scores_otto(const uint32_t *in, const uint32_t *W0,
         scores[k] = (SCORE_TYPE)class_offset[k];
 
     int _ws2 = aa.rows_mode && aa.maj_mode == KI_MAJ_1 ? NC_slice * 4 : NC_slice;
+    int _half = (aa.maj1_thresh == -2) ? ki_default_half(NC_slice) :
+                (aa.maj1_thresh <  0)  ? NC_slice / 2 :
+                aa.maj1_thresh;
     for (int h = 0; h < H_local; h++) {
-        uint32_t h0 = h0_neuron(in, W0 + (size_t)h * _ws2, NC_slice);
+        uint32_t h0 = h0_neuron(in, W0 + (size_t)h * _ws2, NC_slice, _half);
         /* VN-grouped: compile-time-optimierte Makros */
         switch (aa.splitVN) {
             case 1:  VN_SCORE_1(h0, h, H_local, target, scores); break;
@@ -874,11 +922,8 @@ static void print_setup(int H, int epochs, int trainN, int evalN,
     size_t hidden_bit = (size_t)H * bit_per_cont;
     size_t w0_bit = (size_t)H_local * (size_t)NC_slice * bit_per_cont;
     size_t w1_bit = (size_t)KI_NCLASSES * (size_t)H_local * (size_t)V * sizeof(COUNTER_TYPE) * 8;
-    int n_xf_active = 0;
-    for (int _x = 0; _x < KI_XFORM_COUNT; _x++)
-        if (aa.xforms & (1ull << _x)) n_xf_active++;
-    if (n_xf_active < 1) n_xf_active = 1;
-    /* Show XFORM display if any non-ID xform is active */
+    int n_xf_active = aa.xform_list_count > 0 ? aa.xform_list_count : 1;
+    /* Show XFORM display if any non-ID xform or pipe is active */
     int show_xform = (aa.xforms & ~(1ull << KI_XFORM_ID)) != 0;
     int total_slots = ensembleN * n_xf_active * eff_colors * splitHN;    /* VN no longer multiplies members */
     size_t tgt_total = (size_t)H_local * KI_NCLASSES * (size_t)V * (size_t)total_slots;
@@ -934,7 +979,18 @@ static void print_setup(int H, int epochs, int trainN, int evalN,
             case KI_MAJ_7:   maj_name = "7-tree"; break;
             default:         maj_name = "?"; break;
         }
-        printf("  Majority:    %s (%d)\n", maj_name, aa.maj_mode);
+        printf("  Majority:    %s (%d)", maj_name, aa.maj_mode);
+        if (aa.maj_mode == KI_MAJ_1 || aa.maj_mode == KI_MAJ_1R) {
+            int half_v;
+            if (aa.maj1_thresh == -2)
+                half_v = ki_default_half(NC_slice);
+            else if (aa.maj1_thresh < 0)
+                half_v = NC_slice / 2;
+            else
+                half_v = aa.maj1_thresh;
+            printf("  half=%d (thresh=%d, nc=%d)", half_v, aa.maj1_thresh, NC_slice);
+        }
+        printf("\n");
     }
     printf("  Train/Eval:  %d / %d samples  batch=%d\n", trainN, evalN, batchN);
     printf("  Score:       Σ_h Σ_b [ y×log(P_k) + (1-y)×log(1-P_k) ]\n");
@@ -991,25 +1047,7 @@ static void print_member_structure(int ensembleN, int splitVN, int splitHN,
                ensembleN, eff_colors, splitHN, rows_factor, total);
     printf("  Per member: W0[H=%d × I=%d], Target[K=%d × H=%d × V=%d]\n",
            H_local, NC_slice, KI_NCLASSES, H_local, 32 / splitVN);
-    int max_col = eff_colors;
-    /* Build arrays for ki_print_member_structure, lookup encoding */
-    int _c[64], _t[64], _w[64];
-    int _n = 0;
-    for (int ci = 0; ci < max_col && _n < 64; ci++) {
-        int col = active_chans[ci];
-        for (int hi = 0; hi < splitHN && _n < 64; hi++) {
-            _c[_n] = col;
-            _t[_n] = -1; _w[_n] = -1;
-            /* Multi-encoding: use enc_array index directly (not color match)
-             * so same-channel members with different encodings display correctly */
-            if (ci < aa.enc_count) {
-                _t[_n] = (int)aa.enc_array[ci].type;
-                _w[_n] = (int)aa.enc_array[ci].width;
-            }
-            _n++;
-        }
-    }
-    ki_print_member_structure(_c, _t, _w, _n, ensembleN);
+    ki_print_encodings();
     if (ensembleN > 1) {
         if (aa.ensemble_seed == ENS_SEED_CONST) {
             printf("  → ENSEMBLE x%d: all channel members share W0 (const)\n",
@@ -1048,6 +1086,7 @@ typedef struct ki_Member {
     /* Dimensionen (aus CLI, konstant) */
     int H_local;            /* Neurons (H, no vertical split) */
     int NC_slice;           /* Container (KI_NC / splitHN) */
+    int half;               /* Precomputed half for majority_tree1 (n*135/256 or exact) */
     int w0_step;            /* W0 stride per neuron (uint32), = NC_slice * pixel_groups */
     int slc_off;            /* Input-Offset for this member */
     int vi;                 /* Encoding-Index in enc_array (for stats/debug) */
@@ -1155,6 +1194,9 @@ static ki_Member *ki_member_create(int H_local, int NC_slice, int slc_off,
     if (!m) { fprintf(stderr, "[FATAL] ki_member_create OOM\n"); exit(1); }
     m->H_local  = H_local;
     m->NC_slice = NC_slice;
+    m->half     = (aa.maj1_thresh == -2) ? ki_default_half(NC_slice) :
+                   (aa.maj1_thresh <  0)  ? NC_slice / 2 :
+                   aa.maj1_thresh;
     m->w0_step  = NC_slice;  /* default: stride = containers (can be overridden for pixel-maj) */
     m->slc_off  = slc_off;
     m->W0       = W0;
@@ -1226,7 +1268,7 @@ static void ki_member_compute_gb_te(ki_Member *m, const uint32_t *X,
         for (int h = 0; h < m->H_local; h++) {
             size_t idx = (size_t)s * (size_t)m->H_local + (size_t)h;
             m->gb_buf_te[idx] = h0_to_gb(
-                h0_neuron(in, m->W0 + (size_t)h * (size_t)m->w0_step, m->NC_slice));
+                h0_neuron(in, m->W0 + (size_t)h * (size_t)m->w0_step, m->NC_slice, m->half));
         }
     }
 }
@@ -1241,7 +1283,7 @@ static void ki_member_compute_h0(ki_Member *m, const uint32_t *X, int N,
         const uint32_t *in = in_base + (size_t)s * (size_t)n_cont;
         for (int h = 0; h < m->H_local; h++) {
             size_t idx = (size_t)s * (size_t)m->H_local + (size_t)h;
-            uint32_t hv = h0_neuron(in, m->W0 + (size_t)h * (size_t)m->w0_step, m->NC_slice);
+            uint32_t hv = h0_neuron(in, m->W0 + (size_t)h * (size_t)m->w0_step, m->NC_slice, m->half);
             m->h0_buf[idx] = hv;
             m->gb_buf[idx] = h0_to_gb(hv);
         }
@@ -2092,8 +2134,8 @@ int main(int argc, char *argv[]) {
     /* ── Xform input buffers — per-xform containers for member training ──
      * Each active xform produces a separate encoded buffer from transformed
      * raw pixels.  Members pick their buffer via input_buf/input_buf_te. */
-    uint32_t *X_xform[KI_XFORM_COUNT] = {NULL};
-    uint32_t *X_xform_te[KI_XFORM_COUNT];  /* non-owning views into train/eval splits */
+    uint32_t *X_xform[KI_XFORM_BUF_MAX] = {NULL};
+    uint32_t *X_xform_te[KI_XFORM_BUF_MAX];  /* non-owning views into train/eval splits */
     memset(X_xform_te, 0, sizeof(X_xform_te));
     int n_xforms_eff = aa.xform_list_count;
     if (n_xforms_eff < 1) {
@@ -2102,29 +2144,16 @@ int main(int argc, char *argv[]) {
         aa.xform_list[0] = KI_XFORM_ID;
         aa.xform_list_count = 1;
     }
+    int img_sz = data.rows * data.cols * KI_COLORS;  /* bytes per image */
     if (!aa.dry_run) {
-        int img_size = data.rows * data.cols;        /* pixels per plane */
-        int channels = KI_COLORS;                     /* 3 for CIFAR, 1 for MNIST */
-        /* Load each UNIQUE xform once from the list (duplicates share data) */
-        for (int li = 0; li < n_xforms_eff; li++) {
-            int xf = aa.xform_list[li];
-            if (X_xform[xf]) continue;  /* already loaded */
-            if (xf == KI_XFORM_ID) {
-                X_xform[xf] = X_all;  /* identity reuses main buffer */
-            } else {
-                uint8_t *raw_xform = (uint8_t *)ki_xmalloc((size_t)total_all * (size_t)img_size * (size_t)channels);
-                for (int s = 0; s < total_all; s++) {
-                    ki_xform_raw(raw_xform + (size_t)s * (size_t)img_size * (size_t)channels,
-                                data.X_raw + (size_t)s * (size_t)KI_PX,
-                                data.cols, data.rows, channels, xf);
-                }
-                X_xform[xf] = load_input_cached_xform(xf, raw_xform, total_all, n_cont);
-                free(raw_xform);
-            }
-        }
+        /* Lazy xform loading: identity uses X_all; other xforms are loaded
+         * on first gb-cache MISS (see per-member loop below).
+         * X_xform[xf] remains NULL until lazily loaded. */
+        if (KI_XFORM_ID < KI_XFORM_BUF_MAX)
+            X_xform[KI_XFORM_ID] = X_all;  /* identity always available */
     }
     /* Build eval pointers for each xform (split train/eval within each buffer) */
-    for (int xf = 0; xf < KI_XFORM_COUNT; xf++)
+    for (int xf = 0; xf < KI_XFORM_BUF_MAX; xf++)
         X_xform_te[xf] = X_xform[xf] ? X_xform[xf] + (size_t)total_train * n_cont : NULL;
 
     /* ── Compute per-block nc and offsets from enc_array ── */
@@ -2213,7 +2242,7 @@ int main(int argc, char *argv[]) {
         free(pred_eval);
         for (int i = 0; i < n_mifc; i++) ki_member_destroy(mems[i]);
         free(mems); free(W0_ifc); free(tgt_ifc); free(off_ifc);
-        for (int _xf = 0; _xf < KI_XFORM_COUNT; _xf++) {
+        for (int _xf = 0; _xf < KI_XFORM_BUF_MAX; _xf++) {
             if (_xf == KI_XFORM_ID) continue;
             if (X_xform[_xf] && X_xform[_xf] != X_all) free(X_xform[_xf]);
         }
@@ -2295,22 +2324,17 @@ int main(int argc, char *argv[]) {
 
     {
         int step = (int)(aa.lr * (float)OT_F + 0.5f);
-        int n_xf_active = 0;
-        for (int _x = 0; _x < KI_XFORM_COUNT; _x++)
-        if (aa.xforms & (1ull << _x)) n_xf_active++;
-        int _show_xf = (aa.xforms & ~(1ull << KI_XFORM_ID)) != 0;
         printf("══╡ TRAINING ╞══  lr=%.4f  step=%d  mode=%s  F=%d",
              (double)aa.lr, step, mode_str(), OT_F);
         printf("  tgt-init=%s", target_init_str());
-        printf("  multi-correct=%s", aa.multi_correct ? "on" : "off");
+        if (aa.multi_correct)
+          printf("  multi-correct=on");
         if (aa.opt_target_norm)
             printf("  tgt-nrm=%d", aa.opt_target_norm ? 1 : 0);
         if (aa.gap_k > 0.0f)
             printf("  gap-k=%.1f", (double)aa.gap_k);
         if (aa.member_threshold > 0)
             printf("  mth=%d", aa.member_threshold);
-        if (_show_xf)
-            printf("  xform=%s", xform_str());
         printf("\n");
         fflush(stdout);
     }
@@ -2453,7 +2477,7 @@ int main(int argc, char *argv[]) {
                 for (int s = 0; s < total_train; s++) {
                     const uint32_t *in = X_tr + (size_t)s * (size_t)n_cont + mem->slc_off;
                     for (int h = 0; h < H_local; h++) {
-                        uint32_t h0 = h0_neuron(in, mem->W0 + (size_t)h * (size_t)mem->w0_step, mem->NC_slice);
+                        uint32_t h0 = h0_neuron(in, mem->W0 + (size_t)h * (size_t)mem->w0_step, mem->NC_slice, mem->half);
                         tg_gb[(size_t)s * (size_t)H_local + h] = h0_to_gb(h0);
                     }
                 }
@@ -2567,25 +2591,99 @@ int main(int argc, char *argv[]) {
 
         /* ── Compute gb for this member once ── */
         size_t gb_sz = (size_t)total_train * (size_t)H_local;
-        mem->gb_buf = (uint32_t *)malloc(gb_sz * sizeof(uint32_t));
-        #pragma omp parallel for schedule(static)
-        for (int s = 0; s < total_train; s++) {
-            const uint32_t *in = mem->input_buf + (size_t)s * (size_t)n_cont + mem->slc_off;
-            for (int h = 0; h < H_local; h++) {
-                uint32_t h0 = h0_neuron(in, mem->W0 + (size_t)h * (size_t)mem->w0_step, mem->NC_slice);
-                mem->gb_buf[(size_t)s * (size_t)H_local + h] = h0_to_gb(h0);
+        size_t te_sz = (size_t)total_eval * (size_t)H_local;
+
+        /* Try gb cache first */
+        int gb_loaded = 0;
+        uint32_t gb_key = gb_cache_hash(mem->W0, total_train, total_eval,
+                                         H_local, mem->NC_slice, n_cont,
+                                         mem->xform_id);
+        char gb_path[512];
+        snprintf(gb_path, sizeof(gb_path), "data/gb/%08x_%dx%dx%d.gb",
+                 gb_key, total_train, total_eval, H_local);
+        FILE *gb_f = fopen(gb_path, "rb");
+        if (gb_f) {
+            uint32_t magic, ver, chk_key, chk_Ntr, chk_Nev, chk_H;
+            if (fread(&magic, 4, 1, gb_f) == 1 && magic == 0x47425F50 &&
+                fread(&ver,   4, 1, gb_f) == 1 && ver == 1 &&
+                fread(&chk_key,4, 1, gb_f) == 1 && chk_key == gb_key &&
+                fread(&chk_Ntr,4, 1, gb_f) == 1 && (int)chk_Ntr == total_train &&
+                fread(&chk_Nev,4, 1, gb_f) == 1 && (int)chk_Nev == total_eval &&
+                fread(&chk_H,  4, 1, gb_f) == 1 && (int)chk_H == H_local) {
+                mem->gb_buf = (uint32_t *)malloc(gb_sz * sizeof(uint32_t));
+                if (fread(mem->gb_buf, sizeof(uint32_t), gb_sz, gb_f) == gb_sz) {
+                    mem->gb_buf_te = NULL;
+                    if (total_eval > 0) {
+                        mem->gb_buf_te = (uint32_t *)malloc(te_sz * sizeof(uint32_t));
+                        if (fread(mem->gb_buf_te, sizeof(uint32_t), te_sz, gb_f) == te_sz) {
+                            gb_loaded = 1;
+                            if (aa.debug_gb) printf("  gb-cache: %s  (%d+%d samples)\n", gb_path, total_train, total_eval);
+                        } else { free(mem->gb_buf_te); mem->gb_buf_te = NULL; }
+                    } else {
+                        gb_loaded = 1;
+                        if (aa.debug_gb) printf("  gb-cache: %s  (%d samples)\n", gb_path, total_train);
+                    }
+                }
+                if (!gb_loaded) { free(mem->gb_buf); mem->gb_buf = NULL; }
             }
+            fclose(gb_f);
         }
-        mem->gb_buf_te = NULL;
-        if (total_eval > 0) {
-            size_t te_sz = (size_t)total_eval * (size_t)H_local;
-            mem->gb_buf_te = (uint32_t *)malloc(te_sz * sizeof(uint32_t));
+
+        if (!gb_loaded) {
+            /* ── Lazy xform loading: load input buffer on first MISS ── */
+            if (!mem->input_buf && mem->xform_id != KI_XFORM_ID) {
+                int xf = mem->xform_id;
+                if (xf < KI_XFORM_BUF_MAX && !X_xform[xf]) {
+                    uint8_t *raw = (uint8_t *)ki_xmalloc((size_t)total_all * (size_t)img_sz);
+                    ki_xform_apply_buf(raw, data.X_raw, data.cols, data.rows, KI_COLORS,
+                                       total_all, xf, img_sz);
+                    X_xform[xf] = load_input_cached_xform(xf, raw, total_all, n_cont);
+                    free(raw);
+                    X_xform_te[xf] = X_xform[xf] + (size_t)total_train * n_cont;
+                }
+                mem->input_buf    = X_xform[xf];
+                mem->input_buf_te = X_xform_te[xf];
+            }
+            mem->gb_buf = (uint32_t *)malloc(gb_sz * sizeof(uint32_t));
             #pragma omp parallel for schedule(static)
-            for (int s = 0; s < total_eval; s++) {
-                const uint32_t *in = mem->input_buf_te + (size_t)s * (size_t)n_cont + mem->slc_off;
+            for (int s = 0; s < total_train; s++) {
+                const uint32_t *in = mem->input_buf + (size_t)s * (size_t)n_cont + mem->slc_off;
                 for (int h = 0; h < H_local; h++) {
-                    uint32_t h0 = h0_neuron(in, mem->W0 + (size_t)h * (size_t)mem->w0_step, mem->NC_slice);
-                    mem->gb_buf_te[(size_t)s * (size_t)H_local + h] = h0_to_gb(h0);
+                    uint32_t h0 = h0_neuron(in, mem->W0 + (size_t)h * (size_t)mem->w0_step, mem->NC_slice, mem->half);
+                    mem->gb_buf[(size_t)s * (size_t)H_local + h] = h0_to_gb(h0);
+                }
+            }
+            mem->gb_buf_te = NULL;
+            if (total_eval > 0) {
+                mem->gb_buf_te = (uint32_t *)malloc(te_sz * sizeof(uint32_t));
+                #pragma omp parallel for schedule(static)
+                for (int s = 0; s < total_eval; s++) {
+                    const uint32_t *in = mem->input_buf_te + (size_t)s * (size_t)n_cont + mem->slc_off;
+                    for (int h = 0; h < H_local; h++) {
+                        uint32_t h0 = h0_neuron(in, mem->W0 + (size_t)h * (size_t)mem->w0_step, mem->NC_slice, mem->half);
+                        mem->gb_buf_te[(size_t)s * (size_t)H_local + h] = h0_to_gb(h0);
+                    }
+                }
+            }
+
+            /* Save to cache if --export-gb */
+            if (aa.export_gb) {
+                mkdir("data/gb", 0755);
+                FILE *sf = fopen(gb_path, "wb");
+                if (sf) {
+                    uint32_t magic = 0x47425F50, ver = 1;
+                    uint32_t _Ntr = (uint32_t)total_train, _Nev = (uint32_t)total_eval, _H = (uint32_t)H_local;
+                    fwrite(&magic, 4, 1, sf);
+                    fwrite(&ver,   4, 1, sf);
+                    fwrite(&gb_key,4, 1, sf);
+                    fwrite(&_Ntr,  4, 1, sf);
+                    fwrite(&_Nev,  4, 1, sf);
+                    fwrite(&_H,    4, 1, sf);
+                    fwrite(mem->gb_buf, sizeof(uint32_t), gb_sz, sf);
+                    if (total_eval > 0 && mem->gb_buf_te)
+                        fwrite(mem->gb_buf_te, sizeof(uint32_t), te_sz, sf);
+                    fclose(sf);
+                    if (aa.debug_gb) printf("  gb-cache: %s  (saved)\n", gb_path);
                 }
             }
         }
@@ -2648,8 +2746,9 @@ int main(int argc, char *argv[]) {
             mem->ep++;
 
             /* ── Compute member gap (eval_err - train_err) for step damping ── */
+            int _evl_err = -1;
             if (aa.gap_k > 0.0f && total_eval > 0 && mem->gb_buf_te) {
-                int _evl_err = 0;
+                _evl_err = 0;
                 #pragma omp parallel for firstprivate(_gap_sc) reduction(+:_evl_err) schedule(static)
                 for (int s = 0; s < total_eval; s++) {
                     scores_otto_from_gb(s, mem->H_local, mem->gb_buf_te,
@@ -2694,12 +2793,16 @@ int main(int argc, char *argv[]) {
                         snprintf(_dep_info, sizeof(_dep_info), " %s%d", _dep_en, _dep_ew);
                     }
                 }
-                const char *_dep_xn = ki_xform_name(mem->xform_id);
-                printf("      [%3d/%d] trn=%5.1f%%  evl=%5.1f%%  err=%d  step=%d%s xf=%s\n",
+                int _xid_xf = mem->xform_id;
+                const char *_dep_xn = ki_xform_is_pipe(_xid_xf) ? ki_xform_pipe_name(_xid_xf) : ki_xform_name(_xid_xf);
+                int _half = (aa.maj1_thresh == -2) ? ki_default_half(mem->NC_slice) :
+                            (aa.maj1_thresh <  0)  ? mem->NC_slice / 2 :
+                            aa.maj1_thresh;
+                printf("      [%3d/%d] trn=%5.1f%%  evl=%5.1f%%  err=%d  step=%d  half=%d%s xf=%s\n",
                        mem->ep, epochs,
                        (float)_dep_trn * 100.0f / (float)total_train,
                        (float)(total_eval - _dep_evl) * 100.0f / (float)(total_eval > 0 ? total_eval : 1),
-                       err, mem->step, _dep_info, _dep_xn);
+                       err, mem->step, _half, _dep_info, _dep_xn);
                 fflush(stdout);
             }
 
@@ -2840,16 +2943,25 @@ int main(int argc, char *argv[]) {
             if (_report_int > 0 && ((mb + 1) % _report_int == 0 || _last_mb)) {
                 /* Build member info (xform, channel, encoding) for debug output */
                 char _info[128] = "";
+                int _half_member = 0;
                 if (aa.debug_member || debug_epoch || (_report_int == 1 && active_members > 1)) {
                     int _vi = mem->vi;
                     const char *_cn = ki_color_name(mem->color_bit);
-                    const char *_xn = ki_xform_name(mem->xform_id);
+                    int _xtmp = mem->xform_id;
+                    const char *_xn = ki_xform_is_pipe(_xtmp) ? ki_xform_pipe_name(_xtmp) : ki_xform_name(_xtmp);
+                    /* Compute effective half for this member's NC_slice */
+                    if (aa.maj1_thresh == -2)
+                        _half_member = ki_default_half(mem->NC_slice);
+                    else if (aa.maj1_thresh < 0)
+                        _half_member = mem->NC_slice / 2;
+                    else
+                        _half_member = aa.maj1_thresh;
                     if (_vi >= 0 && _vi < aa.enc_count) {
                         const char *_en = ki_enc_name_short(aa.enc_array[_vi].type);
                         int _ew = aa.enc_array[_vi].width;
-                        snprintf(_info, sizeof(_info), "  %s=%s%d xf=%s", _cn, _en, _ew, _xn);
+                        snprintf(_info, sizeof(_info), "  half=%d  %s=%s%d xf=%s", _half_member, _cn, _en, _ew, _xn);
                     } else {
-                        snprintf(_info, sizeof(_info), "  ch=%s xf=%s", _cn, _xn);
+                        snprintf(_info, sizeof(_info), "  half=%d  ch=%s xf=%s", _half_member, _cn, _xn);
                     }
                 }
                 int _filtered = (aa.member_threshold > 0 && mem->trn_acc < (float)aa.member_threshold);
@@ -2949,11 +3061,13 @@ int main(int argc, char *argv[]) {
                 const char *_cn = ki_color_name(aa.enc_array[_ms_vi].color);
                 const char *_en = ki_enc_name_short(aa.enc_array[_ms_vi].type);
                 int _ew = aa.enc_array[_ms_vi].width;
-                const char *_xn = ki_xform_name(mem->xform_id);
+                int _xt = mem->xform_id;
+                const char *_xn = ki_xform_is_pipe(_xt) ? ki_xform_pipe_name(_xt) : ki_xform_name(_xt);
                 snprintf(_ms_m, sizeof(_ms_m), "%s=%s%d-%s", _cn, _en, _ew, _xn);
             } else {
+                int _xt = mem->xform_id;
                 snprintf(_ms_m, sizeof(_ms_m), "%s=%s-%s",
-                    ki_color_name(mem->color_bit), "?", ki_xform_name(mem->xform_id));
+                    ki_color_name(mem->color_bit), "?", ki_xform_is_pipe(_xt) ? ki_xform_pipe_name(_xt) : ki_xform_name(_xt));
             }
             size_t _ms_namelen = strlen(_ms_m) + 1;
             uint8_t *_new = realloc(_ms_meta, (size_t)_ms_meta_n * 64 + _ms_namelen);
@@ -3157,7 +3271,7 @@ int main(int argc, char *argv[]) {
 
     if (own_eval_data) { free(X_perm); free(y_perm); }
     /* Free X_xform buffers (identity reuses X_all, already freed above) */
-    for (int _xf = 0; _xf < KI_XFORM_COUNT; _xf++) {
+    for (int _xf = 0; _xf < KI_XFORM_BUF_MAX; _xf++) {
         if (_xf == KI_XFORM_ID) continue;  /* freed via X_all */
         if (X_xform[_xf] && X_xform[_xf] != X_all)
             free(X_xform[_xf]);

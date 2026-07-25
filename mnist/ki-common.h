@@ -301,6 +301,7 @@ typedef struct {
     char   export_merge_scores[256];   		/* --export-merge-scores DIR: save per-member scores to archive files */
     char   export_scores[256]; 			/* --export-scores FILE: save per-sample scores (10×int64+uint8) */
     char   export_neurons[256]; 		/* --export-neurons FILE: save gb_buf+Target+Offset for Adam-on-neurons */
+    int    export_gb;           		/* --export-gb: persist gb_buf to data/gb/ cache */
     float  lr;              			/* Step size (--lr, default: 0.05) */
     float  lr_min;          			/* Min LR fraction (--lr-min, default: 0.1) */
     int    lr_step;         			/* round(aa.lr * (1<<OT_PRECISION)) */
@@ -314,6 +315,7 @@ typedef struct {
     float  gap_k;           			/* --gap-k K: exp(-K×gap) step damping when train/eval gap widens (default: 0.0=off) */
     int    err_rollback;    			/* --err-rollback: rollback targets when err increases (default: 0) */
     int    maj_mode;         			/* --maj 3|true: majority mode (3=tree, true=exact per-bit) */
+    int    maj1_thresh;      			/* --maj1-thresh N: -2=auto(n*135/256), -1=n/2, >=0 exact (default: -2) */
     int    maj_step;          			/* --maj-step N: pixel step between majority triples (default: KI_PX_PER_CONT) */
     int    debug_maj;         			/* --debug-maj auto|container|pixel: force majority path (default: auto) */
     int    rows_mode;         			/* --rows-mode flat|rows: 0=flat, 1=per-row members */
@@ -348,6 +350,7 @@ typedef struct {
     int    debug_confusion_all; 		/* --debug-confusion-matrix-all: every epoch */
     int    debug_member;        		/* --debug-member: verbose member-by-member output (seq only) */
     int    debug_member_stats;  		/* --debug-member-stats: per-member quality table at end */
+    int    debug_gb;           		/* --debug-gb: show gb-cache load/save messages */
     char   member_scores_path[512]; 	/* --debug-member-stats PATH: scores file (default: member-scores.bin) */
     char   filter_str[128];    			/* --filter "0,1,airplan,cat": raw string */
     int    filter_mask;        			/* computed bitmask from filter_str (0 = no filter) */
@@ -368,6 +371,23 @@ enum ki_MajMode {
 };
 /* ── Global args (defined in each main .c file) ────────────── */
 extern ki_Args aa;
+
+/* ── Unified encoding display (reads aa.enc_array directly) ───────── */
+static inline void ki_print_encodings(void) {
+    printf("  Structure: ");
+    int n = aa.enc_count;
+    if (n <= 0) { printf("(none)\n"); return; }
+    for (int i = 0; i < n && i < KI_ENC_MAX; i++) {
+        if (i > 0) printf(", ");
+        printf("M%d(", i);
+        if (aa.enc_array[i].color >= 0)
+            printf("%s", ki_color_name(aa.enc_array[i].color));
+        printf("=%s%d)", ki_enc_name_short(aa.enc_array[i].type),
+               (int)aa.enc_array[i].width);
+    }
+    if (aa.ensembleN > 1) printf("  × EN=%d", aa.ensembleN);
+    printf("\n");
+}
 
 /* ── Ensemble seeding strategy ──────────────────────────────── */
 typedef enum {
@@ -410,6 +430,7 @@ static const struct _comp_entry _comp_table[] = {
     {"--member-threshold",              "num",   NULL},
     {"--err-rollback",                  "none",  NULL},
     {"--maj",                           "token", "1 1r 1p 1rp 3 7"},
+    {"--maj1-thresh",                   "num",   NULL},
     {"--maj-step",                      "num",   NULL},
     {"--rows-mode",                     "token", "flat rows"},
     {"--no-precompute",                 "none",  NULL},
@@ -420,11 +441,12 @@ static const struct _comp_entry _comp_table[] = {
     {"--seed-member",                   "token", "once const incr"},
     {"--channels",                      "token", "all packed full flat auge diff rgb grey h s c edge bin lbp dog var dir range lbp-rg dist mnist r g b"},
     {"--encoding",                      "token", "all performance performance-maj1 performance-1 latest latest-2 raw lin7 lin8 down up mid log exp sig sqrt cbrt gamma tri inv-exp"},
-    {"--encoding-sizeN",                "token", "8 12 16 24 32"},
+    {"--encoding-sizeN",                "token", "0 8 12 16 24 32"},
     {"--export-merge-scores",           "dir",   NULL},
     {"--export-scores",                 "file",  NULL},
     {"--export-neurons",                "file",  NULL},
     {"--export",                        "dir",   NULL},
+    {"--export-gb",                     "none",  NULL},
     {"--import",                        "dir",   NULL},
     {"--predictions",                   "file",  NULL},
     {"--no-multi-correct",              "none",  NULL},
@@ -444,6 +466,7 @@ static const struct _comp_entry _comp_table[] = {
     {"--debug-epoch",                       "none",  NULL},
     {"--debug-member",                      "none",  NULL},
     {"--debug-member-stats",                "file",  NULL},
+    {"--debug-gb",                          "none",  NULL},
     {"--xform",              "token", "all shift augmentation performance id hflip vflip dflip1 dflip2 rot90 rot180 rot270 rot45 spiral colswap-3-4 colswap-2-4 colswap-1-4 sft-u1 sft-u2 sft-u3 sft-d1 sft-d2 sft-d3 sft-l1 sft-l2 sft-l3 sft-r1 sft-r2 sft-r3 shuffle shuffle1 shuffle2 shuffle3 shuffle4 shuffle5 shuffle6 shuffle7 shuffle8 shuffle9 shuffle10"},
     {"--filter",                        "token", NULL},
     {"--shuffle",                       "none",  NULL},
@@ -455,6 +478,140 @@ static const struct _comp_entry _comp_table[] = {
     {"--help-xform",                    "none",  NULL},
     {NULL, NULL, NULL}
 };
+
+/* ── Xform list insertion (preserves duplicates) ───────────────── */
+static inline void ki_xform_list_add(int xf) {
+    if (aa.xform_list_count < KI_XFORM_LIST_MAX)
+        aa.xform_list[aa.xform_list_count++] = xf;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+ * XFORM PIPELINE CHAINING — "@" syntax: rot90@avg4 → apply rot90, then avg4
+ * ═══════════════════════════════════════════════════════════════════════
+ * Pipelines are stored as virtual xform IDs >= KI_XFORM_COUNT.
+ * The bitmask aa.xforms uses bits up to KI_XFORM_COUNT + pipe_count - 1.
+ * KI_XFORM_BUF_MAX: max slots for xform/pipe data buffers (must cover pipes). */
+#define KI_XFORM_PIPE_MAX_STEPS 8
+#define KI_XFORM_PIPE_MAX 16
+#define KI_XFORM_BUF_MAX 64
+
+static int _xf_pipe_steps[KI_XFORM_PIPE_MAX][KI_XFORM_PIPE_MAX_STEPS];
+static int _xf_pipe_nsteps[KI_XFORM_PIPE_MAX];
+static int _xf_pipe_count = 0;
+
+/* Register a pipeline from an array of xform IDs. Returns virtual xform ID. */
+static inline int ki_xform_pipe_create(const int *steps, int n) {
+    if (_xf_pipe_count >= KI_XFORM_PIPE_MAX || n < 2 || n > KI_XFORM_PIPE_MAX_STEPS)
+        return -1;
+    int id = KI_XFORM_COUNT + _xf_pipe_count;
+    for (int i = 0; i < n; i++) _xf_pipe_steps[_xf_pipe_count][i] = steps[i];
+    _xf_pipe_nsteps[_xf_pipe_count] = n;
+    _xf_pipe_count++;
+    return id;
+}
+static inline int  ki_xform_is_pipe(int xf) { return xf >= KI_XFORM_COUNT; }
+static inline int  ki_xform_pipe_idx(int xf) { return xf - KI_XFORM_COUNT; }
+static inline int  ki_xform_pipe_nsteps(int xf) {
+    int idx = xf - KI_XFORM_COUNT;
+    return (idx >= 0 && idx < _xf_pipe_count) ? _xf_pipe_nsteps[idx] : 0;
+}
+static inline const int *ki_xform_pipe_steps(int xf) {
+    int idx = xf - KI_XFORM_COUNT;
+    return (idx >= 0 && idx < _xf_pipe_count) ? _xf_pipe_steps[idx] : NULL;
+}
+/* Build display name like "rot90@avg4" into a static buffer */
+static inline const char *ki_xform_pipe_name(int xf) {
+    static char _buf[64];
+    int idx = xf - KI_XFORM_COUNT;
+    if (idx < 0 || idx >= _xf_pipe_count) return "pipe?";
+    int pos = 0;
+    for (int i = 0; i < _xf_pipe_nsteps[idx] && pos < 60; i++) {
+        if (i > 0) _buf[pos++] = '@';
+        const char *n = ki_xform_name(_xf_pipe_steps[idx][i]);
+        while (*n && pos < 60) _buf[pos++] = *n++;
+    }
+    _buf[pos] = '\0';
+    return _buf;
+}
+
+/* ── Apply xform (or pipe) to a raw image buffer ────────────────────
+ * Applies xform_id to n_samples images (in → out, each img_sz bytes).
+ * Handles regular xforms and @-chained pipes.
+ * For pipes, allocates internal temp buffers (caller provides out only). */
+static inline void ki_xform_apply_buf(uint8_t *restrict out,
+                                       const uint8_t *restrict in,
+                                       int w, int h, int ch,
+                                       int n_samples, int xform_id,
+                                       int img_sz) {
+    if (!ki_xform_is_pipe(xform_id)) {
+        for (int s = 0; s < n_samples; s++)
+            ki_xform_raw(out + (size_t)s * (size_t)img_sz,
+                         in  + (size_t)s * (size_t)img_sz,
+                         w, h, ch, xform_id);
+    } else {
+        int n_steps = ki_xform_pipe_nsteps(xform_id);
+        const int *steps = ki_xform_pipe_steps(xform_id);
+        size_t total_sz = (size_t)n_samples * (size_t)img_sz;
+        uint8_t *t0 = (uint8_t *)malloc(total_sz);
+        uint8_t *t1 = (uint8_t *)malloc(total_sz);
+        /* Step 0: in → t0 */
+        for (int s = 0; s < n_samples; s++)
+            ki_xform_raw(t0 + (size_t)s * (size_t)img_sz,
+                         in  + (size_t)s * (size_t)img_sz,
+                         w, h, ch, steps[0]);
+        /* Steps 1..n-2: toggle t0↔t1 */
+        int cur = 0;
+        for (int i = 1; i < n_steps - 1; i++) {
+            uint8_t *src = cur ? t1 : t0;
+            uint8_t *dst = cur ? t0 : t1;
+            for (int s = 0; s < n_samples; s++)
+                ki_xform_raw(dst + (size_t)s * (size_t)img_sz,
+                             src + (size_t)s * (size_t)img_sz,
+                             w, h, ch, steps[i]);
+            cur = !cur;
+        }
+        /* Step n-1: active → out */
+        {   uint8_t *src = cur ? t1 : t0;
+            for (int s = 0; s < n_samples; s++)
+                ki_xform_raw(out + (size_t)s * (size_t)img_sz,
+                             src + (size_t)s * (size_t)img_sz,
+                             w, h, ch, steps[n_steps - 1]);
+        }
+        free(t0); free(t1);
+    }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+ * GB CACHE HASH — key for gb_buf caching (data/gb/)
+ * ═══════════════════════════════════════════════════════════════════════
+ * All parameters that affect gb_buf (W0, input pipeline, dimensions).
+ * W0[0..3] = PRNG proxy (first 4 weights). */
+static inline uint32_t gb_cache_hash(const uint32_t *w0_first4,
+                                      int total_train, int total_eval,
+                                      int H_local, int NC_slice,
+                                      size_t n_cont, int xform_id) {
+    uint32_t h = (uint32_t)KI_DATASET_ID;
+    for (int i = 0; i < 4; i++) h = h * 31 + w0_first4[i];
+    h = h * 31 + (uint32_t)total_train;
+    h = h * 31 + (uint32_t)total_eval;
+    h = h * 31 + (uint32_t)H_local;
+    h = h * 31 + (uint32_t)NC_slice;
+    h = h * 31 + (uint32_t)n_cont;
+    h = h * 31 + (uint32_t)aa.splitVN;
+    h = h * 31 + (uint32_t)aa.splitHN;
+    h = h * 31 + (uint32_t)xform_id;
+    h = h * 31 + (uint32_t)aa.channel;
+    h = h * 31 + (uint32_t)aa.enc_size;
+    h = h * 31 + (uint32_t)KI_BIT_WIDTH;
+    h = h * 31 + (uint32_t)KI_PX;
+    h = h * 31 + (uint32_t)KI_COLORS;
+    for (int i = 0; i < aa.enc_count && i < KI_ENC_MAX; i++) {
+        h = h * 31 + (uint32_t)(uint8_t)aa.enc_array[i].type;
+        h = h * 31 + (uint32_t)(uint8_t)aa.enc_array[i].width;
+        h = h * 31 + (uint32_t)(uint8_t)aa.enc_array[i].color;
+    }
+    return h;
+}
 
 /* ── Parse CLI ─────────────────────────────────────────────────── */
 static inline void ki_parse_args(int argc, char *argv[]) {
@@ -488,13 +645,18 @@ static inline void ki_parse_args(int argc, char *argv[]) {
             printf("  --gap-k F         Exp(-K × gap) step damping when overfitting gap widens        (default: %.1f)\n", (double)aa.gap_k);
             printf("                    gap = train_err%% - eval_err%%  |  step *= exp(-K × gap)\n");
             printf("  --err-rollback    Rollback targets when training err increases                  (default: off)\n");
-            printf("  --maj 1|1r|1p|1rp|3|7  Majority mode:\n");
+            printf("  --maj 1|1r|1p|1rp|3|7  Majority mode (default: 1):\n");
             printf("       1   = container-level flat (original per-bit)\n");
             printf("       1r  = container-level row-wise (per row, then cross-row)\n");
             printf("       1p  = pixel-genau flat (default for --maj 1)\n");
             printf("       1rp = pixel-genau row-wise (per row pixel, then cross-row)\n");
-            printf("       3   = 3-tree Baum (default)\n");
+            printf("       3   = 3-tree Baum (legacy)\n");
             printf("       7   = 7-tree (5/7 threshold)\n");
+            printf("  --maj1-thresh N   Exact half threshold for maj=1 (default: %d)\n", aa.maj1_thresh);
+            printf("                    -2 = auto per encoding (n*135/256 ≈52.7%% for 8-bit)\n");
+            printf("                    -1 = n/2 (standard majority)\n");
+            printf("                     0 = every bit passes\n");
+            printf("                    >0 = exact count value\n");
             printf("  --maj-step N      Pixel step between majority triples (default: %d, auto when 0)\n", KI_PX_PER_CONT_W);
             printf("                    N=0: auto (KI_PX_PER_CONT). Fast path when N %% KI_PX_PER_CONT == 0\n");
             printf("  --rows-mode flat|rows  Split image into per-row members (default: flat)\n");
@@ -514,13 +676,14 @@ static inline void ki_parse_args(int argc, char *argv[]) {
             printf("                    See --help-channels for details\n");
             printf("  --encoding [all|%s]  (default: latest)\n", ki_enc_names_all());
             printf("                    See --help-encoding for details\n");
-            printf("  --encoding-sizeN 8/16/24/32      Deprecated — see KI_BIT_WIDTH in ki-local.h  (default: %d)\n", KI_BIT_WIDTH);
+            printf("  --encoding-sizeN 0/8/16/24/32     0=RAW passthrough (no encoding), 8..32=thermometer width  (default: %d)\n", KI_BIT_WIDTH);
             printf("  --xform id,hflip,..,sft-d3,sft-r3      Image transform ensemble                 (default: id)\n");
             printf("                    Aliases: all (20 transforms), shift (12 shifts), performance (4×)\n");
             printf("                    See --help-xform for details\n");
             printf("  --export-merge-scores DIR  Save per-member scores to archive files for merge    (default: none)\n");
             printf("  --export-scores FILE  Save per-sample ensemble scores (10×int64+uint8)          (default: none)\n");
             printf("  --export-neurons FILE  Save gb_buf+Target+Offset per member (v3) for Adam..     (default: none)\n");
+            printf("  --export-gb           Cache gb_buf to data/gb/ and auto-load on restart          (default: off)\n");
             printf("  --export DIR      Export directory                                              (default: none)\n");
             printf("  --import DIR      Load model for inference                                      (default: none)\n");
             printf("  --predictions FILE                                                              (default: none)\n");
@@ -540,6 +703,7 @@ static inline void ki_parse_args(int argc, char *argv[]) {
             printf("  --debug-confusion-matrix?-all?  Confusion matrix table (end only)               (default: off)\n");
             printf("  --debug-member    Verbose member-by-member output with channel/encoding/xform     (default: off)\n");
             printf("  --debug-member-stats [FILE]  Per-member quality table (ensemble gain, diversity)     (default: off)\n");
+            printf("  --debug-gb        Show gb-cache load/save messages                               (default: off)\n");
             printf("  --filter #,#,... or name,name,...  Restrict to specific classes only            (default: none)\n");
             printf("                    See --help-filter for class names\n");
             printf("  --shuffle         Shuffle data before train/eval split                          (default: off)\n");
@@ -579,7 +743,7 @@ static inline void ki_parse_args(int argc, char *argv[]) {
             printf("  8-bit  : 4 px/cont, 8 Stufen (default, exp=0.3)\n");
             printf("  16-bit : 2 px/cont, 16 Stufen (exp=0.5, 2x Breite)\n");
             printf("  32-bit : 1 px/cont, 32 Stufen (exp=0.7, 4x Breite)\n");
-            printf("  --encoding-sizeN N (8/16/24/32)  Deprecated — use KI_BIT_WIDTH in ki-local.h  (default: %d)\n", KI_BIT_WIDTH);
+            printf("  --encoding-sizeN 0/8/16/24/32     0=RAW passthrough (no encoding), 8..32=thermometer width  (default: %d)\n", KI_BIT_WIDTH);
             printf("    Without explicit width suffix (e.g. \"exp\" instead of \"exp16\"), the\n");
             printf("    global --encoding-sizeN is used. Combine with --splitHN 2 for 2× AND2\n");
             printf("    filter resolution: more bits → finer distribution → more signal.\n");
@@ -653,6 +817,16 @@ static inline void ki_parse_args(int argc, char *argv[]) {
             printf("    colswap-3-4 : swap col 3+4k ↔ 4+4k (majority triple (0,4,8) → (0,3,7))\n");
             printf("    colswap-2-4 : swap col 2+4k ↔ 4+4k (majority triple (0,4,8) → (0,2,6))\n");
             printf("    colswap-1-4 : swap col 1+4k ↔ 4+4k (majority triple (0,4,8) → (0,1,5))\n");
+            printf("  Row-wise running average filters (wrap-right):\n");
+            printf("    avg2       : p[i] = (p[i] + p[i+1]) / 2  (2-tap blur, wrap-right)\n");
+            printf("    avg3       : p[i] = (p[i] + p[i+1] + p[i+2]) / 3  (3-tap)\n");
+            printf("    avg4       : p[i] = (p[i] + p[i+1] + p[i+2] + p[i+3]) / 4  (4-tap)\n");
+            printf("  Pipeline chaining via @ (sequential application):\n");
+            printf("    X@Y        : apply X first, then Y on the result\n");
+            printf("    Example: rot90@avg4  → rotate 90°, then 4-tap blur\n");
+            printf("    Example: avg2@avg4   → 2-tap then 4-tap = ~6-tap\n");
+            printf("    Example: rot45@avg2@avg4  → rotate 45°, avg2, avg4\n");
+            printf("    Note: id@X = X (identity steps are filtered out)\n");
             printf("  Pixel shifts (12) — fill vacated pixels with 0:\n");
             printf("    sft-u1/2/3  : shift up by 1/2/3 px\n");
             printf("    sft-d1/2/3  : shift down by 1/2/3 px\n");
@@ -667,10 +841,13 @@ static inline void ki_parse_args(int argc, char *argv[]) {
             printf("    all-shuffle  : shuffle+shuffle1-shuffle10\n");
             printf("  Multiple transforms create independent members with own W0+Target.\n");
             printf("  Each transform is applied BEFORE channel computation.\n");
-            printf("  Example: --xform id,hflip       → 2× member multiplier\n");
-            printf("           --xform all            → 30+ member multiplier\n");
-            printf("           --xform shift          → 12× member multiplier\n");
-            printf("           --xform performance    → 5× member multiplier\n");
+            printf("  Example: --xform id,hflip           → 2× member multiplier\n");
+            printf("           --xform all                → 30+ member multiplier\n");
+            printf("           --xform shift              → 12× member multiplier\n");
+            printf("           --xform performance        → 5× member multiplier\n");
+            printf("           --xform rot90@avg4         → 1× member (pipeline)\n");
+            printf("           --xform id,rot45,rot90     → 3× members (independent W0)\n");
+            printf("           --xform avg4,rot45@avg4,rot90@avg4  → 3× members\n");
             exit(1);   /* INTENTIONAL: non-zero so run-research.sh suppresses logging */
         } else if (strcmp(argv[i], "--completion") == 0) {
             if (i + 1 < argc && argv[i+1][0] == '-' && argv[i+1][1] == '-') {
@@ -785,6 +962,10 @@ static inline void ki_parse_args(int argc, char *argv[]) {
                 fprintf(stderr, "[ERROR] --maj: expected '1','1r','1p','1rp','3','7', got '%s'\n", val);
                 exit(1);
             }
+        } else if (strcmp(argv[i], "--maj1-thresh") == 0 && i + 1 < argc) {
+            int val = atoi(argv[++i]);
+            if (val < -2) { fprintf(stderr, "[ERROR] --maj1-thresh: expected >= -2, -2=auto=encoding, -1=n/2\n"); exit(1); }
+            aa.maj1_thresh = val;
         } else if (strcmp(argv[i], "--maj-step") == 0 && i + 1 < argc) {
             int val = atoi(argv[++i]);
             if (val < 0) { fprintf(stderr, "[ERROR] --maj-step: expected non-negative integer\n"); exit(1); }
@@ -825,6 +1006,8 @@ static inline void ki_parse_args(int argc, char *argv[]) {
         } else if (strcmp(argv[i], "--export-neurons") == 0 && i + 1 < argc) {
             strncpy(aa.export_neurons, argv[++i], sizeof(aa.export_neurons) - 1);
             aa.export_neurons[sizeof(aa.export_neurons) - 1] = '\0';
+        } else if (strcmp(argv[i], "--export-gb") == 0) {
+            aa.export_gb = 1;
         } else if (strcmp(argv[i], "--import") == 0 || strcmp(argv[i], "--import") == 0) {
             if (i + 1 >= argc) { fprintf(stderr, "[ERROR] --import DIR\n"); exit(1); }
             strncpy(aa.importD, argv[++i], sizeof(aa.importD) - 1);
@@ -841,6 +1024,8 @@ static inline void ki_parse_args(int argc, char *argv[]) {
             aa.debug_confusion_all = 1;
         } else if (strcmp(argv[i], "--debug-member") == 0) {
             aa.debug_member = 1;
+        } else if (strcmp(argv[i], "--debug-gb") == 0) {
+            aa.debug_gb = 1;
         } else if (strcmp(argv[i], "--debug-member-stats") == 0) {
             aa.debug_member_stats = 1;
             /* Optional: next arg not starting with -- is the filename */
@@ -946,20 +1131,51 @@ static inline void ki_parse_args(int argc, char *argv[]) {
                         int _x = ki_xform_parse(_t);
                         if (_x >= 0) {
                             aa.xforms |= (1ull << _x);
-                            if (aa.xform_list_count < KI_XFORM_LIST_MAX)
-                                aa.xform_list[aa.xform_list_count++] = _x;
+                            ki_xform_list_add(_x);
                         }
+                    }
+                } else if (strchr(tok, '@')) {
+                    /* Pipeline: rot90@avg4 → create pipe, store virtual ID
+                     * IMPORTANT: use strtok_r to not corrupt the outer strtok(NULL, ",")
+                     * KI_XFORM_ID steps are skipped (id@avg4 = avg4). */
+                    char _pipe_buf[128];
+                    strncpy(_pipe_buf, tok, sizeof(_pipe_buf) - 1);
+                    _pipe_buf[sizeof(_pipe_buf) - 1] = '\0';
+                    int _steps[KI_XFORM_PIPE_MAX_STEPS], _n = 0;
+                    int _err = 0;
+                    char *_psave = NULL;
+                    for (char *_st = strtok_r(_pipe_buf, "@", &_psave); _st && _n < KI_XFORM_PIPE_MAX_STEPS; _st = strtok_r(NULL, "@", &_psave)) {
+                        while (*_st == ' ' || *_st == '\t') _st++;
+                        int _s = ki_xform_parse(_st);
+                        if (_s < 0) { fprintf(stderr, "[ERROR] --xform: unknown step '%s' in pipeline '%s'\n", _st, tok); _err = 1; break; }
+                        if (_s != KI_XFORM_ID) _steps[_n++] = _s;  /* skip identity steps */
+                    }
+                    if (_err) exit(1);
+                    if (_n < 1) {
+                        /* Only identity steps → just use id */
+                        aa.xforms |= (1ull << KI_XFORM_ID);
+                        ki_xform_list_add(KI_XFORM_ID);
+                    } else if (_n == 1) {
+                        /* Single effective step → use it directly */
+                        int _xf = _steps[0];
+                        aa.xforms |= (1ull << _xf);
+                        ki_xform_list_add(_xf);
+                    } else {
+                        int pipe_id = ki_xform_pipe_create(_steps, _n);
+                        if (pipe_id < 0) { fprintf(stderr, "[ERROR] --xform: too many pipelines (max %d)\n", KI_XFORM_PIPE_MAX); exit(1); }
+                        aa.xforms |= (1ull << (unsigned)pipe_id);
+                        ki_xform_list_add(pipe_id);
                     }
                 } else {
                     int xf = ki_xform_parse(tok);
                     if (xf >= 0) {
                         aa.xforms |= (1ull << xf);
-                        if (aa.xform_list_count < KI_XFORM_LIST_MAX)
-                            aa.xform_list[aa.xform_list_count++] = xf;
+                        ki_xform_list_add(xf);
                     } else {
                         fprintf(stderr, "[ERROR] --xform: unknown transform '%s'. "
                                 "Valid: all, shift, augmentation, performance, id, hflip, vflip, dflip1, dflip2, "
                                 "rot90, rot180, rot270, rot45, spiral, colswap-3-4, colswap-2-4, colswap-1-4, "
+                                "avg2, avg3, avg4, "
                                 "sft-u1/2/3, sft-d1/2/3, sft-l1/2/3, sft-r1/2/3, "
                                 "shuffle, shuffle1..10\n", tok);
                         exit(1);
@@ -1060,8 +1276,8 @@ static inline void ki_parse_args(int argc, char *argv[]) {
             aa.channel_explicit = 1;
         } else if (strcmp(argv[i], "--encoding-sizeN") == 0 && i + 1 < argc) {
             int sz = atoi(argv[++i]);
-            if (sz != 8 && sz != 16 && sz != 24 && sz != 32) {
-                fprintf(stderr, "[ERROR] --encoding-sizeN: expected 8, 16, 24, or 32, got %d\n", sz);
+            if (sz != 0 && sz != 8 && sz != 16 && sz != 24 && sz != 32) {
+                fprintf(stderr, "[ERROR] --encoding-sizeN: expected 0 (RAW), 8, 16, 24, or 32, got %d\n", sz);
                 exit(1);
             }
             aa.enc_size = sz;
@@ -1111,7 +1327,7 @@ static inline void ki_parse_args(int argc, char *argv[]) {
 
             /* ── Encoding "all": Cartesian product channels × encodings ── */
             if (strcmp(buf, "all") == 0) {
-                int _all_width = aa.enc_size;
+                int _all_width = aa.enc_size > 0 ? aa.enc_size : 8;
                 for (int _ch = 1; _ch < COLOR_NB; _ch++) {
                     if (!(aa.channel & (1 << _ch))) continue;
                     for (int _enc = 0; _enc < KI_ENC_COUNT; _enc++) {
@@ -1334,7 +1550,7 @@ static inline void ki_parse_args(int argc, char *argv[]) {
                     if (!(aa.channel & (1 << b))) continue;
                     if (aa.enc_count < KI_ENC_MAX) {
                         aa.enc_array[aa.enc_count].type  = (int8_t)def_type;
-                        aa.enc_array[aa.enc_count].width = (int8_t)aa.enc_size;
+                        aa.enc_array[aa.enc_count].width = (int8_t)(aa.enc_size > 0 ? aa.enc_size : KI_ENC_WIDTH_DEFAULT);
                         aa.enc_array[aa.enc_count].color = (int8_t)b;
                         aa.enc_count++;
                     }
@@ -1373,7 +1589,15 @@ static inline void ki_parse_args(int argc, char *argv[]) {
             if (enc_mask) aa.channel = enc_mask;
         }
         /* ── Post-process: override KI_ENC_WIDTH_DEFAULT (8) with --encoding-sizeN ── */
-        if (aa.enc_size != KI_ENC_WIDTH_DEFAULT) {
+        if (aa.enc_size == 0) {
+            /* --encoding-sizeN 0: RAW passthrough, width=8 (no encoding transformation) */
+            for (int _i = 0; _i < aa.enc_count; _i++) {
+                aa.enc_array[_i].type = KI_ENC_RAW;
+                if (aa.enc_array[_i].width < 1)
+                    aa.enc_array[_i].width = KI_ENC_WIDTH_DEFAULT;
+            }
+            /* --encoding-sizeN 0: silent (Structure line shows raw8) */
+        } else if (aa.enc_size != KI_ENC_WIDTH_DEFAULT) {
             if (aa.enc_size != KI_BIT_WIDTH) {
                 fprintf(stderr, "[WARNING] --encoding-sizeN %d != KI_BIT_WIDTH %d. "
                         "Pixel-majority uses %d bits (compile-time constant).\n",
@@ -1411,11 +1635,11 @@ static inline float ki_lr_schedule(int epoch, int total_epochs, int warmup,
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
- * COUNTER_TYPE — Datenformat für Target/OFFSET/Korrektur-Step
+ * COUNTER_TYPE — Data format for Target/OFFSET/Correction step
  * ═══════════════════════════════════════════════════════════════════════
- * int32_t: fixed-point skaliert mit OT_F (aktuelles, int32-Komp.)
- * float:   IEEE 754 32-Bit, direkt, keine Skalierung (halbiert offset)
- * Definiert in ki-local.h (pro Dataset überschreibbar).
+ * int32_t: fixed-point scaled by OT_F (current, int32-compatible)
+ * float:   IEEE 754 32-bit, direct, no scaling (halves offset)
+ * Defined in ki-local.h (overridable per dataset).
  */
 #ifndef COUNTER_TYPE_IS_FLOAT
 #define COUNTER_TYPE_IS_FLOAT 0
@@ -1428,10 +1652,10 @@ static inline float ki_lr_schedule(int epoch, int total_epochs, int warmup,
 #endif
 
 /* ═══════════════════════════════════════════════════════════════════════
- * OT_PRECISION / OT_F — Skalierungsfaktor für fixed-point Mode
+ * OT_PRECISION / OT_F — Scaling factor for fixed-point mode
  * ═══════════════════════════════════════════════════════════════════════
- * int32_t Mode: F = (1<<OT_PRECISION), logit values scaled by F.
- * float Mode:   F = 1 (keine Skalierung).
+ * int32_t mode: F = (1<<OT_PRECISION), logit values scaled by F.
+ * float mode:   F = 1 (no scaling).
  */
 #define OT_F (1 << OT_PRECISION)  /* always 1024 — scaling for gap, independent of COUNTER_TYPE */
 static inline double ot_precision(double in) {
@@ -1562,10 +1786,10 @@ __attribute__((unused))
 static const char *xform_str(void) {
     static char _xform_buf[1024];
     int pos = 0;
-    for (int x = 0; x < KI_XFORM_COUNT; x++) {
-        if (!(aa.xforms & (1ull << x))) continue;
+    for (int i = 0; i < aa.xform_list_count && i < KI_XFORM_LIST_MAX; i++) {
+        int x = aa.xform_list[i];
         if (pos > 0) _xform_buf[pos++] = ',';
-        const char *n = ki_xform_name(x);
+        const char *n = ki_xform_is_pipe(x) ? ki_xform_pipe_name(x) : ki_xform_name(x);
         while (*n && pos < (int)sizeof(_xform_buf) - 2) _xform_buf[pos++] = *n++;
     }
     if (pos == 0) { _xform_buf[pos++] = 'i'; _xform_buf[pos++] = 'd'; }

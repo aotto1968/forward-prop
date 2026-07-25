@@ -139,8 +139,8 @@ static inline int ki_batch_correct(COUNTER_TYPE *target, int H,
             COUNTER_TYPE *ct = dc[t];
             for (size_t i = 0; i < tgt_sz; i++) {
                 COUNTER_TYPE d = ct[i];
-                /* INTENTIONAL: >/< statt != um -Wfloat-equal zu vermeiden.
-                 * Semantisch identisch zu != 0 für beide Typen. */
+                /* INTENTIONAL: >/< instead of != to avoid -Wfloat-equal.
+                 * Semantically identical to != 0 for both types. */
                 if (d > (COUNTER_TYPE)0 || d < (COUNTER_TYPE)0) target[i] += d;
             }
             memset(ct, 0, tgt_sz * sizeof(COUNTER_TYPE));

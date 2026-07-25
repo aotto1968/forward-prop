@@ -80,7 +80,10 @@ enum ki_xform {
     KI_XFORM_COLSWAP34  = 33, /* colswap-3-4: swap col 3+4k ↔ 4+4k per row (forces triple (0,3,7) instead of (0,4,8)) */
     KI_XFORM_COLSWAP24  = 34, /* colswap-2-4: swap col 2+4k ↔ 4+4k */
     KI_XFORM_COLSWAP14  = 35, /* colswap-1-4: swap col 1+4k ↔ 4+4k */
-    KI_XFORM_COUNT   = 36
+    KI_XFORM_AVG2     = 36, /* 2-tap row-wise running avg (wrap-right) */
+    KI_XFORM_AVG3     = 37, /* 3-tap row-wise running avg (wrap-right) */
+    KI_XFORM_AVG4     = 38, /* 4-tap row-wise running avg (wrap-right) */
+    KI_XFORM_COUNT   = 39
 };
 
 /* ── Xform short name for display ──────────────────────────────── */
@@ -122,6 +125,9 @@ static inline const char *ki_xform_name(int xf) {
                 [KI_XFORM_COLSWAP34] = "colswap-3-4",
                 [KI_XFORM_COLSWAP24] = "colswap-2-4",
                 [KI_XFORM_COLSWAP14] = "colswap-1-4",
+                [KI_XFORM_AVG2]     = "avg2",
+                [KI_XFORM_AVG3]     = "avg3",
+                [KI_XFORM_AVG4]     = "avg4",
     };
     if (xf >= 0 && xf < KI_XFORM_COUNT) return names[xf];
     return "?";
@@ -377,6 +383,57 @@ static inline void ki_xform_raw(uint8_t *restrict out,
             }
             break;
         }
+        case KI_XFORM_AVG2: {
+            /* 2-tap: p[i] = (p[i] + p[i+1])/2, wrap-right, truncation */
+            for (int _pl = 0; _pl < ch; _pl++) {
+                const uint8_t *_s = in + (size_t)_pl * (size_t)stride;
+                uint8_t *_d = out + (size_t)_pl * (size_t)stride;
+                for (int y = 0; y < h; y++) {
+                    int ro = y * w;
+                    for (int x = 0; x < w; x++) {
+                        int s0 = _s[ro + x];
+                        int s1 = _s[ro + (x + 1 < w ? x + 1 : x + 1 - w)];
+                        _d[ro + x] = (uint8_t)((s0 + s1) / 2);
+                    }
+                }
+            }
+            break;
+        }
+        case KI_XFORM_AVG3: {
+            /* 3-tap: p[i] = (p[i] + p[i+1] + p[i+2])/3, wrap-right, truncation */
+            for (int _pl = 0; _pl < ch; _pl++) {
+                const uint8_t *_s = in + (size_t)_pl * (size_t)stride;
+                uint8_t *_d = out + (size_t)_pl * (size_t)stride;
+                for (int y = 0; y < h; y++) {
+                    int ro = y * w;
+                    for (int x = 0; x < w; x++) {
+                        int s0 = _s[ro + x];
+                        int s1 = _s[ro + (x + 1 < w ? x + 1 : x + 1 - w)];
+                        int s2 = _s[ro + (x + 2 < w ? x + 2 : x + 2 - w)];
+                        _d[ro + x] = (uint8_t)((s0 + s1 + s2) / 3);
+                    }
+                }
+            }
+            break;
+        }
+        case KI_XFORM_AVG4: {
+            /* 4-tap: p[i] = (p[i] + p[i+1] + p[i+2] + p[i+3])/4, wrap-right, truncation */
+            for (int _pl = 0; _pl < ch; _pl++) {
+                const uint8_t *_s = in + (size_t)_pl * (size_t)stride;
+                uint8_t *_d = out + (size_t)_pl * (size_t)stride;
+                for (int y = 0; y < h; y++) {
+                    int ro = y * w;
+                    for (int x = 0; x < w; x++) {
+                        int s0 = _s[ro + x];
+                        int s1 = _s[ro + (x + 1 < w ? x + 1 : x + 1 - w)];
+                        int s2 = _s[ro + (x + 2 < w ? x + 2 : x + 2 - w)];
+                        int s3 = _s[ro + (x + 3 < w ? x + 3 : x + 3 - w)];
+                        _d[ro + x] = (uint8_t)((s0 + s1 + s2 + s3) / 4);
+                    }
+                }
+            }
+            break;
+        }
         }
     }
 }
@@ -563,19 +620,22 @@ static inline int ki_xform_parse(const char *tok) {
     if (ki_strcasecmp(tok, "colswap-3-4") == 0) return KI_XFORM_COLSWAP34;
     if (ki_strcasecmp(tok, "colswap-2-4") == 0) return KI_XFORM_COLSWAP24;
     if (ki_strcasecmp(tok, "colswap-1-4") == 0) return KI_XFORM_COLSWAP14;
+    if (ki_strcasecmp(tok, "avg2") == 0) return KI_XFORM_AVG2;
+    if (ki_strcasecmp(tok, "avg3") == 0) return KI_XFORM_AVG3;
+    if (ki_strcasecmp(tok, "avg4") == 0) return KI_XFORM_AVG4;
     return -1;
 }
 
 /* ── Xform alias lookup: token → comma-separated expansion string ──
  * Like encoding aliases (ki_encoding_alias_lookup). Returns a string
- * of xform tokens (die dann rekursiv über strtok+ki_xform_parse
- * expandiert werden können) oder NULL wenn 'name' kein Alias ist.
+ * of xform tokens (which are then recursively expanded via
+ * strtok+ki_xform_parse) or NULL if 'name' is not an alias.
  *
- * Die Expansion kann selbst wieder Aliase enthalten (z.B. "augmentation"→"all").
- * Der Aufrufer iteriert bis zu 5× zur Auflösung, genau wie bei encoding-Aliases.
+ * The expansion may itself contain aliases (e.g. "augmentation"→"all").
+ * The caller iterates up to 5× to resolve, just like encoding aliases.
  *
- * Flexibel: einfach die Tabelle editieren — Tokens werden durch ki_xform_parse
- * aufgelöst, müssen also gültige xform-Namen sein (keine IDs).
+ * Flexible: simply edit the table — tokens are resolved by ki_xform_parse
+ * and must be valid xform names (not IDs).
  */
 static inline const char *ki_xform_alias_expand(const char *name) {
     static const struct {

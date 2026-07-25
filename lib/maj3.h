@@ -227,13 +227,13 @@ static inline uint32_t majority_tree3_pixel_step(const uint32_t *vals, int n,
 
     if (px_step > ppc) {
         /* ═══════════════════════════════════════════════════════════
-         * PATH 2: step > ppc — flaches Packen, kein Slot-Konzept
+         * PATH 2: step > ppc — flat packing, no slot concept
          * ═══════════════════════════════════════════════════════════
-         * Triples (px[i], px[i+S], px[i+2S]) werden der Reihe nach
-         * in uint32_t-Container gepackt (ppc pro Container), dann
-         * majority_tree3 reduziert sie. Der Output ist ein uint32_t
-         * mit Tripel-Ergebnissen an beliebigen Slot-Positionen —
-         * korrekt, weil jedes Bit unabhängig zählt. */
+         * Triples (px[i], px[i+S], px[i+2S]) are packed sequentially
+         * into uint32_t containers (ppc per container), then
+         * majority_tree3 reduces them. The output is a uint32_t
+         * with triple results at arbitrary slot positions —
+         * correct because each bit counts independently. */
         int spacing = 3 * px_step;
         uint32_t pre[MAJ3_BUF];
         int pn = 0;

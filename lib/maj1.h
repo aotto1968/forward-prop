@@ -10,7 +10,7 @@
  *
  * Usage:
  *   #include "maj1.h"
- *   uint32_t r = majority_tree1(match, 256);
+ *   uint32_t r = majority_tree1(match, 256, 128);
  *
  * match[]: uint32 array of length n (pre-XNOR'd values)
  * n:       number of containers (256 for CIFAR, 196 for MNIST)
@@ -22,29 +22,79 @@
 #include <stdint.h>
 
 /**
+ * ki_default_half — Default majority threshold for a given container count.
+ *
+ * Returns the pre-tuned threshold for known n values, or n/2 otherwise.
+ * Used when aa.maj1_thresh == -2 (auto per encoding).
+ *
+ * Tested on CIFAR-10, H=512, --maj 1 performance encoding:
+ *   n=256 → 135  (≈52.7%, optimal for 8-bit)
+ *   n=512 → 269  (≈52.5%, optimal for 16-bit, --encoding-sizeN 16)
+ *   n=1024 → 540 (≈52.7%, linear extrapolation, not yet benchmarked)
+ */
+static inline int ki_default_half(int n) {
+    switch (n) {
+        case 256:  return 135;
+        case 512:  return 269;
+        case 1024: return 540;
+        default:   return n / 2;
+    }
+}
+
+/**
  * majority_tree1 — Exact bitwise majority over n uint32 values.
  *
  * For each of the 32 bits:
- *   output[b] = (popcount( match[0..n-1], Bit b ) > n/2)
+ *   output[b] = (popcount( match[0..n-1], Bit b ) > half)
  *
- * That is: a bit is 1 when MORE THAN HALF of the match values
- * have that bit set.
+ * NOTE: half is NOT computed here — it is precomputed per member
+ * (see ki_Member.half) and passed in directly.  This avoids repeated
+ * multiplications in the inner loop.
+ *
+ * @param vals  match[] array (pre-XNOR'd)
+ * @param n     number of containers
+ * @param half  threshold count (bit set if popcount > half)
  */
-static inline uint32_t majority_tree1(const uint32_t *vals, int n) {
+static inline uint32_t majority_tree1(const uint32_t *vals, int n, int half) {
     if (n <= 0) return 0;
     int bits[32] = {0};
-    int half = n / 2;
 
-    /* Popcount per bit position across all n values */
+    /* Popcount per bit position across all n values.
+     *
+     * TESTED AND REJECTED ALTERNATIVES (all slower on Zen 4):
+     *
+     * 1. __builtin_ctz  (2026-07-23):  ~2.3× SLOWER (49s vs 21s @ H=2048).
+     *    TZCNT has 3-5 cy latency and the data-dependent v &= v-1 loop
+     *    prevents superscalar execution + compiler unrolling/vectorization.
+     *    See plan-2026-07-23-ctz-slower.md.
+     *
+     * 2. Manual 32-way unrolled (e.g. bits[0] += (v>>0)&1; …): zero speed
+     *    benefit — gcc -O3 unrolls the small loop identically.
+     *
+     * 3. AVX-512 SIMD majority_impl_avx512: BUGGY — counted per-lane
+     *    (every 16th value) instead of per-bit-position.  Removed.
+     *
+     * 4. AVX2 SIMD majority_impl_avx2: SAME BUG (every 8th value).
+     *    Result was always 0 for n > 8 because max per-lane count = n/8
+     *    never exceeded threshold n/2.  Removed.
+     *
+     * 5. Inline assembly (2026-07-24): theoretically possible with 4-pass
+     *    byte processing + 8 GPR counters, but gcc -O3 -march=native
+     *    already auto-vectorizes this loop to AVX-512 (ZMM register
+     *    counters, opmask for v==0 skip).  Measured overhead of
+     *    majority_tree1 is <5% of total training time — no headroom.
+     *
+     * CONCLUSION: The simple 32-iteration loop is optimal.  gcc keeps
+     * the bits[32] array in ZMM registers (no stack spill), auto-vectorizes
+     * the inner loop, and the predictable branch pattern + superscalar
+     * execution saturates the pipeline. */
     for (int i = 0; i < n; i++) {
         uint32_t v = vals[i];
-        if (v == 0) continue;  /* fast skip for empty containers */
-        /* Manual bit decomposition (no popcount intrinsic needed) */
+        if (v == 0) continue;
         for (int b = 0; b < 32; b++)
             if (v & (1u << b)) bits[b]++;
     }
 
-    /* Ergebnis: Bit b = 1 wenn bits[b] > half */
     uint32_t r = 0;
     for (int b = 0; b < 32; b++)
         if (bits[b] > half) r |= (1u << b);
@@ -64,24 +114,25 @@ static inline uint32_t majority_tree1(const uint32_t *vals, int n) {
  * @param vals          match[] array (pre-XNOR'd)
  * @param n             number of containers (nc_local)
  * @param cont_per_row  containers per image row (KI_COLS * width / 32)
+ * @param half          threshold count (bit set if popcount > half)
  * @return              32-bit majority result
  */
 static inline uint32_t majority_tree1_rowwise(const uint32_t *vals, int n,
-                                              int cont_per_row) {
+                                              int cont_per_row, int half) {
     /* ── Validation ──────────────────────────────────────────── */
-    if (cont_per_row < 1) return majority_tree1(vals, n);
+    if (cont_per_row < 1) return majority_tree1(vals, n, half);
     int rows = n / cont_per_row;
     if (rows * cont_per_row != n || rows < 2)
-        return majority_tree1(vals, n);   /* fallback: flat */
-    if (rows > 256) rows = 256;          /* safety limit */
+        return majority_tree1(vals, n, half);   /* fallback: flat */
+    if (rows > 256) rows = 256;                /* safety limit */
 
     /* ── Phase 1: per-row majority ────────────────────────────── */
     uint32_t row_maj[256];
     for (int r = 0; r < rows; r++)
-        row_maj[r] = majority_tree1(vals + r * cont_per_row, cont_per_row);
+        row_maj[r] = majority_tree1(vals + r * cont_per_row, cont_per_row, half);
 
     /* ── Phase 2: cross-row majority ──────────────────────────── */
-    return majority_tree1(row_maj, rows);
+    return majority_tree1(row_maj, rows, half);
 }
 
 /**
@@ -110,6 +161,9 @@ static inline uint32_t majority_tree1_pixel(const uint32_t *vals, int n_cont, in
     for (int c = 0; c < n_cont; c++) {
         uint32_t v = vals[c];
         if (v == 0) continue;
+        /* NOTE: __builtin_ctz tested — ~2× slower than fixed 32-iteration
+         * loop because TZCNT latency breaks superscalar execution and the
+         * data-dependent loop prevents unrolling.  Keep simple loop. */
 #if KI_BIT_WIDTH == 8
         uint8_t px0 = (uint8_t)(v >>  0);
         uint8_t px1 = (uint8_t)(v >>  8);

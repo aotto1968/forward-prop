@@ -6,6 +6,7 @@
 
 logs/*
 models/*
+data/*
 tags
 *.sw*
 *.bak

@@ -16,7 +16,7 @@
 
 /* ── Counter type for target/offset/step (overridable, default int32_t) ── */
 #ifndef COUNTER_TYPE
-#define COUNTER_TYPE int32_t   /* int32_t (fixed-point) or float */
+#define COUNTER_TYPE float
 #endif
 
 /* ═══════════════════════════════════════════════════════════════════════
@@ -176,7 +176,7 @@ static uint8_t *ki_cifar_read_batch(const char *base_dir, const char *filename) 
 }
 
 /* ── CIFAR-10 read (5 train + 1 test batch, 60000 total) ──────── */
-static int ki_cifar_read(ki_ImageData *out) {
+static __attribute__((unused)) int ki_cifar_read(ki_ImageData *out) {
     const char *candidates[] = {
         "data/cifar-10-batches-bin",
         "cifar-1/data/cifar-10-batches-bin",    /* launch from PROJECT_ROOT */
@@ -378,40 +378,40 @@ static const char *ki_class_names[KI_NCLASSES] = {
 /* ── Encoding aliases (dataset-specific) ──────────────────────── */
 #define KI_COMMON_ALIAS_LOOKUP
 static const char *ki_encoding_alias_lookup(const char *name) {
-    if (strcasecmp(name, "ey-c") == 0) return "r=up,cl=down,cm=sig,cp=sig";
-    if (strcasecmp(name, "ey-c-2") == 0) return "cl=down,cm=sig,cp=sig";
-    if (strcasecmp(name, "ey-s-2b") == 0) return "lbp=gamma,dog=sig,var=exp";
-    if (strcasecmp(name, "ey-s-2c") == 0) return "range=exp,var=log,dir=tri";
+    if (strcasecmp(name, "ey-c") == 0) return "r:up,cl:down,cm:sig,cp:sig";
+    if (strcasecmp(name, "ey-c-2") == 0) return "cl:down,cm:sig,cp:sig";
+    if (strcasecmp(name, "ey-s-2b") == 0) return "lbp:gamma,dog:sig,var:exp";
+    if (strcasecmp(name, "ey-s-2c") == 0) return "range:exp,var:log,dir:tri";
     if (strcasecmp(name, "best-mnist") == 0) return "exp,log,log";
-    if (strcasecmp(name, "top-rgb") == 0) return "r=down,g=down,b=down";
-    if (strcasecmp(name, "latest-2") == 0) return "g=down,bl=gamma,bm=sig,bp=sig,b=sqrt,al=down,am=sig,ap=sig,h=lin,c=cbrt,gb=sig";
+    if (strcasecmp(name, "top-rgb") == 0) return "r:down,g:down,b:down";
+    if (strcasecmp(name, "latest-2") == 0) return "g:down,bl:gamma,bm:sig,bp:sig,b:sqrt,al:down,am:sig,ap:sig,h:lin,c:cbrt,gb:sig";
     /* old try */
-    if (strcasecmp(name, "ey-b") == 0) return "g=up,bl=down,bm=sig,bp=sig";
-    if (strcasecmp(name, "ey-a") == 0) return "b=up,al=down,am=sig,ap=sig";
-    if (strcasecmp(name, "ey-h") == 0) return "h=down,c=exp,gb=sig";
-    if (strcasecmp(name, "ey-s") == 0) return "lbp=up,dog=sig,var=exp";
+    if (strcasecmp(name, "ey-b") == 0) return "g:up,bl:down,bm:sig,bp:sig";
+    if (strcasecmp(name, "ey-a") == 0) return "b:up,al:down,am:sig,ap:sig";
+    if (strcasecmp(name, "ey-h") == 0) return "h:down,c:exp,gb:sig";
+    if (strcasecmp(name, "ey-s") == 0) return "lbp:up,dog:sig,var:exp";
     if (strcasecmp(name, "old") == 0) return "ey-b,ey-a,ey-h,ey-s";
-    /* maj=3 optimized */  // --hiddenN 128 --epochsN 10 --ensembleN 1 --xform id
-    if (strcasecmp(name, "ey-a-3") == 0) return "al=sqrt,am=sig,ap=sig";
-    if (strcasecmp(name, "ey-b-3") == 0) return "bl=gamma,bm=down,bp=sig";
-    if (strcasecmp(name, "ey-h-3") == 0) return "h=down,c=gamma,gb=sig";
-    if (strcasecmp(name, "ey-s-3") == 0) return "dir=tri,range=sqrt,lbp-rg=cbrt";
+    /* maj:3 optimized */  // --hiddenN 128 --epochsN 10 --ensembleN 1 --xform id
+    if (strcasecmp(name, "ey-a-3") == 0) return "al:sqrt,am:sig,ap:sig";
+    if (strcasecmp(name, "ey-b-3") == 0) return "bl:gamma,bm:down,bp:sig";
+    if (strcasecmp(name, "ey-h-3") == 0) return "h:down,c:gamma,gb:sig";
+    if (strcasecmp(name, "ey-s-3") == 0) return "dir:tri,range:sqrt,lbp-rg:cbrt";
     if (strcasecmp(name, "performance") == 0) return "ey-b-3,ey-a-3,ey-h-3,ey-s-3";
-    /* maj=1 optimized by otto */
-    if (strcasecmp(name, "ey-b-1") == 0) return "bl=gamma,bm=lin,bp=sig";
-    if (strcasecmp(name, "ey-a-1") == 0) return "al=sqrt,am=sig,ap=sig";
-    if (strcasecmp(name, "ey-h-1") == 0) return "h=up,c=gamma,gb=sig";
-    if (strcasecmp(name, "ey-s-1") == 0) return "dir=lin,range=gamma,lbp-rg=exp";
+    /* maj:1 optimized by otto */
+    if (strcasecmp(name, "ey-b-1") == 0) return "bl:gamma,bm:lin,bp:sig";
+    if (strcasecmp(name, "ey-a-1") == 0) return "al:sqrt,am:sig,ap:sig";
+    if (strcasecmp(name, "ey-h-1") == 0) return "h:up,c:gamma,gb:sig";
+    if (strcasecmp(name, "ey-s-1") == 0) return "dir:lin,range:gamma,lbp-rg:exp";
     if (strcasecmp(name, "performance-1") == 0) return "ey-b-1,ey-a-1,ey-h-1,ey-s-1";
-    /* maj=1-optimized variants (2026-07-18 sweep) */
-    if (strcasecmp(name, "ey-m1-b") == 0) return "bl=gamma,bm=lin,bp=sig";
-    if (strcasecmp(name, "ey-m1-a") == 0) return "al=sqrt,am=sig,ap=sig";
-    if (strcasecmp(name, "ey-m1-h") == 0) return "h=up,c=gamma,gb=sig";
-    if (strcasecmp(name, "ey-m1-s") == 0) return "dir=lin,range=gamma,lbp-rg=up";
+    /* maj:1-optimized variants (2026-07-18 sweep) */
+    if (strcasecmp(name, "ey-m1-b") == 0) return "bl:gamma,bm:lin,bp:sig";
+    if (strcasecmp(name, "ey-m1-a") == 0) return "al:sqrt,am:sig,ap:sig";
+    if (strcasecmp(name, "ey-m1-h") == 0) return "h:up,c:gamma,gb:sig";
+    if (strcasecmp(name, "ey-m1-s") == 0) return "dir:lin,range:gamma,lbp-rg=up";
     if (strcasecmp(name, "performance-maj1") == 0) return "ey-m1-b,ey-m1-a,ey-m1-h,ey-m1-s";
     /* summary */
     if (strcasecmp(name, "latest") == 0) return "performance";
-    return NULL;
+    return ki_encoding_alias_expand(name);
 }
 
 

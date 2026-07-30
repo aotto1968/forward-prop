@@ -20,6 +20,8 @@ CFLAGS   = -O3 -g -march=native -fopenmp -Wall -Wextra -Werror \
            -I. -I../lib -I..
 LDLIBS   = -lm -lz
 
+HDRS = $(wildcard *.h) $(wildcard ../lib/*.h) Makefile
+
 MODEL_DIR = ../models
 
 .PHONY: all otto hebbian adam ensemble vis-errors clean setup \
@@ -39,14 +41,14 @@ OTTO_SRC = mlp-bin32-otto-trn-seq.c
 
 otto: fashion-mlp-bin32-otto-trn-xnor.exe fashion-mlp-bin32-otto-trn-xor.exe
 
-fashion-mlp-bin32-otto-trn-xnor.exe: $(OTTO_SRC) ki-common.h
+fashion-mlp-bin32-otto-trn-xnor.exe: $(OTTO_SRC) $(HDRS)
 	$(CC) $(CFLAGS) \
-	  -Wno-sign-conversion -Wno-unused-parameter -Wno-unused-function -Wno-unused-variable \
+	  -Wno-sign-conversion -Wno-unused-parameter -Wno-unused-variable \
 	  -o $@ $< $(LDLIBS)
 
-fashion-mlp-bin32-otto-trn-xor.exe: $(OTTO_SRC) ki-common.h
+fashion-mlp-bin32-otto-trn-xor.exe: $(OTTO_SRC) $(HDRS)
 	$(CC) $(CFLAGS) \
-	  -Wno-sign-conversion -Wno-unused-parameter -Wno-unused-function -Wno-unused-variable \
+	  -Wno-sign-conversion -Wno-unused-parameter -Wno-unused-variable \
 	  -DH0_XOR -o $@ $< $(LDLIBS)
 
 model-otto: fashion-mlp-bin32-otto-trn-xnor.exe
@@ -61,16 +63,16 @@ HEBB_SRC = mlp-bin32-hebbian-trn.c
 
 hebbian: fashion-mlp-bin32-hebbian-trn-xnor.exe fashion-mlp-bin32-hebbian-trn-xor.exe
 
-fashion-mlp-bin32-hebbian-trn-xnor.exe: $(HEBB_SRC) ki-common.h
+fashion-mlp-bin32-hebbian-trn-xnor.exe: $(HEBB_SRC) $(HDRS)
 	$(CC) $(CFLAGS) \
 	  -Wno-sign-conversion -Wno-unused-parameter \
-	  -Wno-unused-function -Wno-unused-variable \
+	  -Wno-unused-variable \
 	  -o $@ $< $(LDLIBS)
 
-fashion-mlp-bin32-hebbian-trn-xor.exe: $(HEBB_SRC) ki-common.h
+fashion-mlp-bin32-hebbian-trn-xor.exe: $(HEBB_SRC) $(HDRS)
 	$(CC) $(CFLAGS) \
 	  -Wno-sign-conversion -Wno-unused-parameter \
-	  -Wno-unused-function -Wno-unused-variable \
+	  -Wno-unused-variable \
 	  -DH0_XOR -o $@ $< $(LDLIBS)
 
 model-hebbian: fashion-mlp-bin32-hebbian-trn-xnor.exe
@@ -85,9 +87,9 @@ ADAM_SRC = mlp-flt32-adam-trn.c
 
 adam: fashion-mlp-flt32-adam-trn.exe
 
-fashion-mlp-flt32-adam-trn.exe: $(ADAM_SRC) ki-common.h ../lib/ki-adamw.h
+fashion-mlp-flt32-adam-trn.exe: $(ADAM_SRC) $(HDRS)
 	$(CC) $(CFLAGS) \
-	  -Wno-sign-conversion -Wno-unused-parameter -Wno-unused-function -Wno-unused-variable \
+	  -Wno-sign-conversion -Wno-unused-parameter -Wno-unused-variable \
 	  -Wno-format-truncation -Wno-pointer-to-int-cast -o $@ $< $(LDLIBS)
 
 model-adam: fashion-mlp-flt32-adam-trn.exe
@@ -102,7 +104,7 @@ MERGE_SRC = merge-ensemble.c
 
 ensemble: fashion-merge-ensemble.exe
 
-fashion-merge-ensemble.exe: $(MERGE_SRC)
+fashion-merge-ensemble.exe: $(MERGE_SRC) $(HDRS)
 	$(CC) $(CFLAGS) -Wno-sign-conversion -Wno-unused-parameter -o $@ $< $(LDLIBS)
 
 # ═══════════════════════════════════════════════════════════
@@ -112,7 +114,7 @@ VIS_SRC = mlp-otto-vis-errors.c
 
 vis-errors: fashion-mlp-otto-vis-errors.exe
 
-fashion-mlp-otto-vis-errors.exe: $(VIS_SRC)
+fashion-mlp-otto-vis-errors.exe: $(VIS_SRC) $(HDRS)
 	$(CC) $(CFLAGS) -o $@ $< $(LDLIBS)
 
 # ═══════════════════════════════════════════════════════════
@@ -147,7 +149,7 @@ BITVOTE_SRC = mlp-bin32-otto-trn-bitvoting.c
 bitvote: fashion-mlp-bin32-otto-trn-bitvoting.exe
 
 fashion-mlp-bin32-otto-trn-bitvoting.exe: $(BITVOTE_SRC) $(HDRS)
-	$(CC) $(CFLAGS) -Wno-sign-conversion -Wno-unused-parameter -Wno-unused-function -Wno-unused-variable -o $@ $< $(LDLIBS)
+	$(CC) $(CFLAGS) -Wno-sign-conversion -Wno-unused-parameter -Wno-unused-variable -o $@ $< $(LDLIBS)
 
 # ═══════════════════════════════════════════════════════════
 # Clean

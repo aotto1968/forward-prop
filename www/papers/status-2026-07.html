@@ -60,6 +60,20 @@
 <h1 style="font-size:2rem; color:var(--navy); margin-bottom:0.25rem;">Status Report — July 2026</h1>
 <p style="font-size:1.1rem; color:var(--mid-gray); margin-bottom:2rem;"><em>DRAM-native Classification via Bit-Logic Operations</em></p>
 
+<div style="background:linear-gradient(135deg, rgba(0,150,136,0.12), rgba(0,150,136,0.04)); border:2px solid #009688; border-radius:8px; padding:1rem 1.5rem; margin-bottom:2rem;">
+    <strong style="font-size:1rem;">📈 Update July 30, 2026 — <span style="color:#00695C;">98.4% MNIST via Pipe Xform Ensemble — merge-ensemble 2.36× faster</span></strong>
+    <ul style="margin:0.5rem 0 0 1.2rem; font-size:0.9rem;">
+        <li><strong>98.4% MNIST (9837/10000) with 9 members</strong> — H=196, 10 ep, 14.2s. Previous record 97.9% (512×6shuf). <strong>+0.5pp breakthrough</strong> via <code>--xform sweep@avg4,avg3,avg2,spiral,colswap</code> pipe chains. <a href="mnist-number.html#pipe-xforms">Build recipe →</a></li>
+        <li><strong>Pipe xforms</strong> — <code>@</code> syntax chains transforms: <code>avg4@spiral</code> = running average filter + spiral pixel reorder. Creates fundamentally different input statistics that geometric xforms cannot achieve.</li>
+        <li><strong>merge-ensemble 2.36× faster</strong> — memcpy removed, fused argmax, <code>schedule(guided)</code>, trial-buffer eliminated. 10.1s → 4.3s.</li>
+        <li><strong>--min-gain now controls member selection</strong> — only members with gain ≥ threshold are included in <code>member.out</code>. With <code>--min-gain 0.03</code>, 9 of 26 members are selected — <strong>65% fewer members, 0.0pp loss</strong>.</li>
+        <li><strong>Bug Fix: Makefile BASE_CFLAGS typo</strong> — <code>merge-ensemble.exe</code> compiled without <code>-fopenmp</code>, <code>-O3</code> → 175s instead of 1.75s (100× slower). Fixed in <code>mnist-1/Makefile</code>.</li>
+        <li><strong>Bug Fix: member.out contained wrong members</strong> — <code>best_used</code> tracking in beam search only recorded the newly added member, not the full candidate set. Fixed: <code>memcpy(best_used, beam[si].used, n)</code> copies complete candidate mask.</li>
+        <li><strong>CIFAR-10 encoding alias fixed</strong> — <code>cifar/ki-local.h</code> used <code>=</code> separator (<code>bl=gamma</code>) but parser expects <code>:</code>. Aliases corrected to consistent format.</li>
+        <li><strong>Makefiles harmonized</strong> — all three datasets (mnist, cifar, fashion) use <code>HDRS = $(wildcard *.h) $(wildcard ../lib/*.h) Makefile</code> for proper dependency tracking.</li>
+    </ul>
+</div>
+
 <div style="background:linear-gradient(135deg, rgba(255,87,34,0.12), rgba(255,87,34,0.04)); border:2px solid #FF5722; border-radius:8px; padding:1rem 1.5rem; margin-bottom:2rem;">
     <strong style="font-size:1rem;">📈 Update July 25, 2026 — <span style="color:#D84315;">maj=1 Default, --export-gb, Avg Filters, xform@Pipes, 65% Ceiling Broken</span></strong>
     <ul style="margin:0.5rem 0 0 1.2rem; font-size:0.9rem;">

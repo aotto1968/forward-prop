@@ -20,6 +20,8 @@ CFLAGS   = -O3 -g -march=native -fopenmp -Wall -Wextra -Werror \
            -I. -I../lib -I..
 LDLIBS   = -lm -lz
 
+HDRS = $(wildcard *.h) $(wildcard ../lib/*.h) Makefile
+
 MODEL_DIR = ../models
 
 .PHONY: all otto hebbian adam ensemble vis-errors clean setup model-otto model-hebbian model-adam
@@ -39,14 +41,14 @@ OTTO_SRC = mlp-bin32-otto-trn-seq.c
 
 otto: cifar-mlp-bin32-otto-trn-xnor.exe cifar-mlp-bin32-otto-trn-xor.exe
 
-cifar-mlp-bin32-otto-trn-xnor.exe: $(OTTO_SRC) ki-common.h
+cifar-mlp-bin32-otto-trn-xnor.exe: $(OTTO_SRC) $(HDRS)
 	$(CC) $(CFLAGS) \
-	  -Wno-sign-conversion -Wno-unused-parameter -Wno-unused-function -Wno-unused-variable \
+	  -Wno-sign-conversion -Wno-unused-parameter -Wno-unused-variable \
 	  -o $@ $< $(LDLIBS)
 
-cifar-mlp-bin32-otto-trn-xor.exe: $(OTTO_SRC) ki-common.h
+cifar-mlp-bin32-otto-trn-xor.exe: $(OTTO_SRC) $(HDRS)
 	$(CC) $(CFLAGS) \
-	  -Wno-sign-conversion -Wno-unused-parameter -Wno-unused-function -Wno-unused-variable \
+	  -Wno-sign-conversion -Wno-unused-parameter -Wno-unused-variable \
 	  -DH0_XOR -o $@ $< $(LDLIBS)
 
 model-otto: cifar-mlp-bin32-otto-trn-xnor.exe
@@ -61,14 +63,14 @@ HEBB_SRC = mlp-bin32-hebbian-trn.c
 
 hebbian: cifar-mlp-bin32-hebbian-trn-xnor.exe cifar-mlp-bin32-hebbian-trn-xor.exe
 
-cifar-mlp-bin32-hebbian-trn-xnor.exe: $(HEBB_SRC) ki-common.h
+cifar-mlp-bin32-hebbian-trn-xnor.exe: $(HEBB_SRC) $(HDRS)
 	$(CC) $(CFLAGS) \
-	  -Wno-sign-conversion -Wno-unused-parameter -Wno-unused-function -Wno-unused-variable \
+	  -Wno-sign-conversion -Wno-unused-parameter -Wno-unused-variable \
 	  -o $@ $< $(LDLIBS)
 
-cifar-mlp-bin32-hebbian-trn-xor.exe: $(HEBB_SRC) ki-common.h
+cifar-mlp-bin32-hebbian-trn-xor.exe: $(HEBB_SRC) $(HDRS)
 	$(CC) $(CFLAGS) \
-	  -Wno-sign-conversion -Wno-unused-parameter -Wno-unused-function -Wno-unused-variable \
+	  -Wno-sign-conversion -Wno-unused-parameter -Wno-unused-variable \
 	  -DH0_XOR -o $@ $< $(LDLIBS)
 
 
@@ -84,9 +86,9 @@ ADAM_SRC = mlp-flt32-adam-trn.c
 
 adam: cifar-mlp-flt32-adam-trn.exe
 
-cifar-mlp-flt32-adam-trn.exe: $(ADAM_SRC) ki-common.h ../lib/ki-adamw.h
+cifar-mlp-flt32-adam-trn.exe: $(ADAM_SRC) $(HDRS)
 	$(CC) $(CFLAGS) \
-	  -Wno-sign-conversion -Wno-unused-parameter -Wno-unused-function -Wno-unused-variable \
+	  -Wno-sign-conversion -Wno-unused-parameter -Wno-unused-variable \
 	  -Wno-format-truncation -Wno-pointer-to-int-cast -o $@ $< $(LDLIBS)
 
 model-adam: cifar-mlp-flt32-adam-trn.exe
@@ -128,9 +130,9 @@ VIS_SRC = mlp-otto-vis-errors.c
 
 vis-errors: cifar-mlp-otto-vis-errors.exe
 
-cifar-mlp-otto-vis-errors.exe: $(VIS_SRC) ki-common.h
+cifar-mlp-otto-vis-errors.exe: $(VIS_SRC) $(HDRS)
 	$(CC) $(CFLAGS) \
-	  -Wno-sign-conversion -Wno-unused-parameter -Wno-unused-function \
+	  -Wno-sign-conversion -Wno-unused-parameter \
 	  -o $@ $< $(LDLIBS)
 
 # ═══════════════════════════════════════════════════════════
@@ -140,8 +142,8 @@ MERGE_SRC = merge-ensemble.c
 
 ensemble: cifar-merge-ensemble.exe
 
-cifar-merge-ensemble.exe: $(MERGE_SRC)
-	$(CC) $(CFLAGS) -Wno-sign-conversion -Wno-unused-parameter -Wno-unused-function -o $@ $< $(LDLIBS)
+cifar-merge-ensemble.exe: $(MERGE_SRC) $(HDRS)
+	$(CC) $(CFLAGS) -Wno-sign-conversion -Wno-unused-parameter -o $@ $< $(LDLIBS)
 
 # ═══════════════════════════════════════════════════════════════
 # Bit-Voting Baseline (experiment)
@@ -152,7 +154,7 @@ BITVOTE_SRC = mlp-bin32-otto-trn-bitvoting.c
 bitvote: cifar-mlp-bin32-otto-trn-bitvoting.exe
 
 cifar-mlp-bin32-otto-trn-bitvoting.exe: $(BITVOTE_SRC) $(HDRS)
-	$(CC) $(CFLAGS) -Wno-sign-conversion -Wno-unused-parameter -Wno-unused-function -Wno-unused-variable -o $@ $< $(LDLIBS)
+	$(CC) $(CFLAGS) -Wno-sign-conversion -Wno-unused-parameter -Wno-unused-variable -o $@ $< $(LDLIBS)
 
 # ── Clean ──────────────────────────────────────────────────
 clean:

@@ -4,7 +4,7 @@
 set -e
 
 DIR="$(cd "$(dirname "$0")" && pwd)"
-OUTDIR="$DIR/www/data/mnist"
+OUTDIR="$DIR/data/mnist"
 mkdir -p "$OUTDIR"
 
 # List of files to download: local_name source_url

@@ -22,7 +22,7 @@
 
 /* ── Counter type for target/offset/step (overridable, default int32_t) ── */
 #ifndef COUNTER_TYPE
-#define COUNTER_TYPE int32_t
+#define COUNTER_TYPE float
 #endif
 
 /* ═══════════════════════════════════════════════════════════════════════
@@ -128,7 +128,7 @@ static int ki_decompress_gz(const char *path, uint8_t **out_data, size_t *out_si
 }
 
 /* ── Fashion-MNIST read ──────────────────────────────────────────── */
-static int ki_fashion_read(ki_FashionData *out) {
+static __attribute__((unused)) int ki_fashion_read(ki_FashionData *out) {
     const char *candidates[] = {
         "data/mnist-fashion",
         "../data/mnist-fashion",
@@ -350,7 +350,7 @@ static const char *ki_class_names[KI_NCLASSES] = {
 #define KI_COMMON_ALIAS_LOOKUP
 static const char *ki_encoding_alias_lookup(const char *name) {
     if (strcasecmp(name, "latest") == 0) return "exp";
-    return NULL;
+    return ki_encoding_alias_expand(name);
 }
 
 /* ── Random pixel shuffle map (fixed seed 42, pairwise permutation) ── */

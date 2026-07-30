@@ -10,7 +10,9 @@
 #ifndef KI_COMMON_H
 #define KI_COMMON_H
 
+#ifndef _POSIX_C_SOURCE
 #define _POSIX_C_SOURCE 200809L
+#endif
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -86,7 +88,7 @@ static const char *target_init_str(void);
  * ═══════════════════════════════════════════════════════════════════════
  *
  * Each has its own Encoding-Funktion haben.
- * Controlled via --encoding r=lin8,g=up,b=down (per Block) oder
+ * Controlled via --encoding r:lin8,g:up,b:down (per Block) oder
  * --encoding lin8 (default for all active blocks).
  */
 
@@ -102,65 +104,10 @@ static const char *target_init_str(void);
  * Handles: mnist,r,g,b,y,601,lum,l,rg,by,yl,709,auge,packed,full
  */
 static inline int ki_color_parse(const char *tok) {
-    /* Data-driven: multiple aliases allowed.
-     * strcasecmp → case-insensitive. Sonderfaelle: auge=-2, grey=-3,
-     * rgb=-4, diff=-5. */
-    static const struct { const char *name; int idx; } _lut[] = {
-        {"mnist", COLOR_MNIST},
-
-        {"r",     COLOR_R},
-        {"g",     COLOR_G},
-        {"b",     COLOR_B},
-
-        {"y",     COLOR_Y},
-        {"601",   COLOR_Y},
-        {"yl",    COLOR_YL},
-        {"709",   COLOR_YL},
-
-        {"lum",   COLOR_AL},
-        {"al",    COLOR_AL},
-        {"am",    COLOR_AM},
-        {"ap",    COLOR_AP},
-        {"by",    COLOR_AP},
-
-        {"bl",    COLOR_BL},
-        {"bm",    COLOR_BM},
-        {"bp",    COLOR_BP},
-
-        {"rg",    COLOR_RG},
-        {"rb",    COLOR_RB},
-        {"gb",    COLOR_GB},
-
-        {"h",     COLOR_H},
-        {"s",     COLOR_S},
-        {"c",     COLOR_C},
-
-        {"edge",  COLOR_EDGE},
-        {"bin",   COLOR_BIN},
-        {"lbp",   COLOR_LBP},
-        {"dog",   COLOR_DOG},
-        {"var",   COLOR_VAR},
-        {"dir",   COLOR_DIR},
-        {"range", COLOR_RANGE},
-        {"lbp-rg", COLOR_LBP_RG},
-        {"dist",  COLOR_DIST},
-
-        {"cl",    COLOR_CL},
-        {"cm",    COLOR_CM},
-        {"cp",    COLOR_CP},
-
-        /* Specials */
-        {"auge",  -2},
-        {"grey",  -3},
-        {"rgb",   -4},
-        {"diff",  -5},
-};
-
-    for (size_t i = 0; i < sizeof(_lut) / sizeof(_lut[0]); i++) {
-        if (strcasecmp(tok, _lut[i].name) == 0)
-            return _lut[i].idx;
-    }
-    return -1;  /* kein Farbname */
+    for (int i = 0; i < (int)(sizeof(ki_color_table)/sizeof(ki_color_table[0])); i++)
+        if (strcasecmp(tok, ki_color_table[i].name) == 0)
+            return ki_color_table[i].id;
+    return -1;  /* kein Farbname — Aliase werden vorher expandiert */
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
@@ -175,14 +122,18 @@ static inline int ki_color_parse(const char *tok) {
  * NOTE: Individual -D overrides (COUNTER_TYPE, SCORE_TYPE) still work.
  */
 #ifdef MODE_FLOAT32
+/* Legacy alias — float is now the default, this is a no-op. */
+#endif
+
+#ifdef MODE_INT32
 #  ifndef COUNTER_TYPE
-#    define COUNTER_TYPE float
+#    define COUNTER_TYPE int32_t
 #  endif
 #  ifndef COUNTER_TYPE_IS_FLOAT
-#    define COUNTER_TYPE_IS_FLOAT 1
+#    define COUNTER_TYPE_IS_FLOAT 0
 #  endif
 #  ifndef SCORE_TYPE
-#    define SCORE_TYPE float
+#    define SCORE_TYPE int64_t
 #  endif
 #endif
 
@@ -226,9 +177,8 @@ static inline int ki_color_parse(const char *tok) {
  * Each dataset provides its own ki_encoding_alias_lookup() via KI_COMMON_ALIAS_LOOKUP
  * guard.  Fallback returns NULL (no aliases). */
 #ifndef KI_COMMON_ALIAS_LOOKUP
-static const char *ki_encoding_alias_lookup(const char *name) {
-    (void)name;
-    return NULL;
+static inline const char *ki_encoding_alias_lookup(const char *name) {
+    return ki_encoding_alias_expand(name);
 }
 #endif
 
@@ -268,6 +218,7 @@ static const char *ki_encoding_alias_lookup(const char *name) {
  * ═══════════════════════════════════════════════════════════════════════ */
 
  #define KI_ENC_MAX 512
+ #define KI_MEMBER_MAX 32768    /* max member specs (was KI_ENC_MAX*8=4096, now 64×) */
  #define KI_DEFAULT_TARGET_NORM 0  /* --optional target-norm: default ON */
 
  /* ── Target initialisation modes (--target-init) ──────────── */
@@ -287,6 +238,17 @@ typedef struct {
     int8_t color;  /* COLOR_BIT or -1 (default/all) */
 } ki_EncSlot;
 
+/* ── Explicit member spec (from --member-file, --member, or product gen) ─── */
+typedef struct {
+    int xform_id;    /* KI_XFORM_ID, KI_XFORM_HFLIP, ... */
+    int color;       /* COLOR_R, COLOR_G, COLOR_B, COLOR_LBP_RG, ... */
+    int enc_type;    /* KI_ENC_RAW, KI_ENC_EXP, ... */
+    int enc_width;   /* 8, 16, 32 */
+    int seed;        /* random seed for W0 (0 = default), from --member-out */
+    int source_idx;  /* member index within the seed's archive */
+    int hn_idx;      /* splitHN index (0 .. splitHN-1), for slice offset */
+} ki_MemberSpec;
+
 typedef struct {
     int    hidden;          			/* Hidden neurons (--hiddenN, default: 64) */
     int    epochs;          			/* Iterations (--epochsN, default: 1) */
@@ -302,6 +264,13 @@ typedef struct {
     char   export_scores[256]; 			/* --export-scores FILE: save per-sample scores (10×int64+uint8) */
     char   export_neurons[256]; 		/* --export-neurons FILE: save gb_buf+Target+Offset for Adam-on-neurons */
     int    export_gb;           		/* --export-gb: persist gb_buf to data/gb/ cache */
+    int    import_gb;           		/* --import-gb: load gb_buf from data/gb/ cache on startup */
+    int    sweep;              			/* --sweep: member sweep mode (skip if .ens exists) */
+    int    force;              			/* --force: rebuild even if .ens exists (with --sweep) */
+    char   member_file[1024];  		/* --member-file PATH: explicit member list (bypasses --xform/--encoding) */
+    char   member_str[4096];  		/* --member CHAN:ENC:XF,... explicit member list (inline) */
+    ki_MemberSpec member_spec[KI_MEMBER_MAX];  /* parsed member specs from file */
+    int    member_spec_count;
     float  lr;              			/* Step size (--lr, default: 0.05) */
     float  lr_min;          			/* Min LR fraction (--lr-min, default: 0.1) */
     int    lr_step;         			/* round(aa.lr * (1<<OT_PRECISION)) */
@@ -343,7 +312,7 @@ typedef struct {
     int    seed_splitmix;  			/* --seed-splitmix: ignore seed_file, use splitmix64 PRNG */
     int    multi_correct;  			/* --multi-correct: punish all over true_k (default: 1) */
     int    target_init_mode; 			/* enum ki_TargetInit (default: KI_TARGET_COUNT) */
-    int    ensemble_seed;    			/* ENS_SEED_ONCE|CONST|INCR (default: ONCE) */
+    int    ensemble_seed;    			/* ENS_SEED_ONCE|CONST|INCR (default: CONST) */
     int    debug_class_voting; 			/* --debug-class-voting: Member × Class accuracy (end only) */
     int    debug_class_voting_all; 		/* --debug-class-voting-all: every epoch */
     int    debug_confusion;    			/* --debug-confusion-matrix: confusion matrix (end only) */
@@ -370,7 +339,10 @@ enum ki_MajMode {
     KI_MAJ_1RP = 5,  /* pixel-accurate row-wise: per-row pixel then cross-row */
 };
 /* ── Global args (defined in each main .c file) ────────────── */
-extern ki_Args aa;
+#ifndef KI_ARGS_EXTERN
+#define KI_ARGS_EXTERN extern
+#endif
+KI_ARGS_EXTERN ki_Args aa;
 
 /* ── Unified encoding display (reads aa.enc_array directly) ───────── */
 static inline void ki_print_encodings(void) {
@@ -391,16 +363,50 @@ static inline void ki_print_encodings(void) {
 
 /* ── Ensemble seeding strategy ──────────────────────────────── */
 typedef enum {
-    ENS_SEED_ONCE  = 0,  /* default: one seed, sequential fill */
-    ENS_SEED_CONST,      /* const: share W0 within ensemble */
-    ENS_SEED_INCR,       /* incr: each member gets seed + m */
+    ENS_SEED_CONST = 0,  /* default: one W0 shared across ALL members */
+    ENS_SEED_ONCE  = 1,  /* once: one seed, sequential fill (legacy) */
+    ENS_SEED_INCR  = 2,  /* incr: each member gets seed + m */
 } ki_EnsembleSeed;
 
 static inline const char *ensemble_seed_str() {
     switch (aa.ensemble_seed) {
         case ENS_SEED_CONST: return "const";
+        case ENS_SEED_ONCE:  return "once";
         case ENS_SEED_INCR:  return "incr";
-        default:             return "once";
+        default:             return "?";
+    }
+}
+
+/* ── Rebuild enc_array from member_spec (single source of truth) ─── *
+ * Called after --member-file / --member / --encoding parsing so that
+ * load_input() and all enc_array consumers see the correct encoding set.
+ * enc_array is only a DERIVED cache of member_spec — never written directly. */
+static inline void rebuild_enc_array(void) {
+    aa.enc_count = 0;
+    for (int i = 0; i < aa.member_spec_count && aa.enc_count < KI_ENC_MAX; i++) {
+        ki_MemberSpec *sp = &aa.member_spec[i];
+        int col = sp->color;
+        /* MNIST: reassign CIFAR colors to COLOR_MNIST */
+        if (KI_COLORS <= 1 && col >= 0 && col != COLOR_MNIST) col = COLOR_MNIST;
+        int dup = 0;
+        for (int j = 0; j < aa.enc_count && !dup; j++)
+            if (aa.enc_array[j].type  == (int8_t)sp->enc_type &&
+                aa.enc_array[j].width == (int8_t)sp->enc_width &&
+                aa.enc_array[j].color == (int8_t)col) dup = 1;
+        if (!dup) {
+            aa.enc_array[aa.enc_count].type  = (int8_t)sp->enc_type;
+            aa.enc_array[aa.enc_count].width = (int8_t)sp->enc_width;
+            aa.enc_array[aa.enc_count].color = (int8_t)col;
+            aa.enc_count++;
+        }
+    }
+    /* Fallback: kein member_spec → ein Default-Encoding */
+    if (aa.enc_count == 0 && aa.member_spec_count == 0) {
+        int def_enc = aa.debug_binarize ? KI_ENC_LIN7 : KI_ENC_RAW;
+        aa.enc_array[0].type  = (int8_t)def_enc;
+        aa.enc_array[0].width = (int8_t)KI_ENC_WIDTH_DEFAULT;
+        aa.enc_array[0].color = -1;
+        aa.enc_count = 1;
     }
 }
 
@@ -439,7 +445,7 @@ static const struct _comp_entry _comp_table[] = {
     {"--seed-file",                     "file",  NULL},
     {"--seed-splitmix",                 "none",  NULL},
     {"--seed-member",                   "token", "once const incr"},
-    {"--channels",                      "token", "all packed full flat auge diff rgb grey h s c edge bin lbp dog var dir range lbp-rg dist mnist r g b"},
+    {"--channels",                      "token", "all packed full flat auge diff rgb grey h s c edge bin lbp dog var dir range lbp-rg lbp-rb lbp-gb mnist r g b"},
     {"--encoding",                      "token", "all performance performance-maj1 performance-1 latest latest-2 raw lin7 lin8 down up mid log exp sig sqrt cbrt gamma tri inv-exp"},
     {"--encoding-sizeN",                "token", "0 8 12 16 24 32"},
     {"--export-merge-scores",           "dir",   NULL},
@@ -447,6 +453,9 @@ static const struct _comp_entry _comp_table[] = {
     {"--export-neurons",                "file",  NULL},
     {"--export",                        "dir",   NULL},
     {"--export-gb",                     "none",  NULL},
+    {"--import-gb",                     "none",  NULL},
+    {"--member-file",                   "file",  NULL},
+    {"--member",                        "token", NULL},
     {"--import",                        "dir",   NULL},
     {"--predictions",                   "file",  NULL},
     {"--no-multi-correct",              "none",  NULL},
@@ -467,7 +476,9 @@ static const struct _comp_entry _comp_table[] = {
     {"--debug-member",                      "none",  NULL},
     {"--debug-member-stats",                "file",  NULL},
     {"--debug-gb",                          "none",  NULL},
-    {"--xform",              "token", "all shift augmentation performance id hflip vflip dflip1 dflip2 rot90 rot180 rot270 rot45 spiral colswap-3-4 colswap-2-4 colswap-1-4 sft-u1 sft-u2 sft-u3 sft-d1 sft-d2 sft-d3 sft-l1 sft-l2 sft-l3 sft-r1 sft-r2 sft-r3 shuffle shuffle1 shuffle2 shuffle3 shuffle4 shuffle5 shuffle6 shuffle7 shuffle8 shuffle9 shuffle10"},
+    {"--sweep",                             "none",  NULL},
+    {"--force",                             "none",  NULL},
+    {"--xform",              "token", "all shift augmentation performance performance-2 id hflip vflip dflip1 dflip2 rot90 rot22 rot67 rot45 spiral colswap-3-4 colswap-2-4 colswap-1-4 avg2 avg3 avg4 sft-u1 sft-u2 sft-u3 sft-d1 sft-d2 sft-d3 sft-l1 sft-l2 sft-l3 sft-r1 sft-r2 sft-r3 shuffle shuffle1 shuffle2 shuffle3 shuffle4 shuffle5 shuffle6 shuffle7 shuffle8 shuffle9 shuffle10"},
     {"--filter",                        "token", NULL},
     {"--shuffle",                       "none",  NULL},
     {"--help",                          "none",  NULL},
@@ -492,12 +503,24 @@ static inline void ki_xform_list_add(int xf) {
  * The bitmask aa.xforms uses bits up to KI_XFORM_COUNT + pipe_count - 1.
  * KI_XFORM_BUF_MAX: max slots for xform/pipe data buffers (must cover pipes). */
 #define KI_XFORM_PIPE_MAX_STEPS 8
-#define KI_XFORM_PIPE_MAX 16
+#define KI_XFORM_PIPE_MAX 128
 #define KI_XFORM_BUF_MAX 64
 
 static int _xf_pipe_steps[KI_XFORM_PIPE_MAX][KI_XFORM_PIPE_MAX_STEPS];
 static int _xf_pipe_nsteps[KI_XFORM_PIPE_MAX];
 static int _xf_pipe_count = 0;
+
+/* Find existing pipe by its steps (dedup). Returns virtual xform ID or -1. */
+static inline int ki_xform_pipe_find(const int *steps, int n) {
+    for (int i = 0; i < _xf_pipe_count; i++) {
+        if (_xf_pipe_nsteps[i] != n) continue;
+        int match = 1;
+        for (int j = 0; j < n; j++)
+            if (_xf_pipe_steps[i][j] != steps[j]) { match = 0; break; }
+        if (match) return KI_XFORM_COUNT + i;
+    }
+    return -1;
+}
 
 /* Register a pipeline from an array of xform IDs. Returns virtual xform ID. */
 static inline int ki_xform_pipe_create(const int *steps, int n) {
@@ -532,6 +555,222 @@ static inline const char *ki_xform_pipe_name(int xf) {
     }
     _buf[pos] = '\0';
     return _buf;
+}
+static inline const char *ki_xform_str(int xf) {
+  return ki_xform_is_pipe(xf) ? ki_xform_pipe_name(xf) : ki_xform_name(xf);
+}
+
+/* ── Parse xform with optional @-pipeline chaining.
+ * Returns xform_id (regular or pipe virtual ID), or -1 on error.
+ * Does NOT modify aa.xforms or aa.xform_list — caller handles that.
+ * KI_XFORM_ID steps in a pipeline are silently skipped (id@avg4 = avg4). */
+static inline int ki_xform_parse_or_pipe(const char *xf_str) {
+    if (!strchr(xf_str, '@')) {
+        return ki_xform_parse(xf_str);
+    }
+    char _pipe_buf[128];
+    strncpy(_pipe_buf, xf_str, sizeof(_pipe_buf) - 1);
+    _pipe_buf[sizeof(_pipe_buf) - 1] = '\0';
+    int _steps[KI_XFORM_PIPE_MAX_STEPS], _n = 0;
+    char *_psave = NULL;
+    for (char *_st = strtok_r(_pipe_buf, "@", &_psave);
+         _st && _n < KI_XFORM_PIPE_MAX_STEPS;
+         _st = strtok_r(NULL, "@", &_psave)) {
+        while (*_st == ' ' || *_st == '\t') _st++;
+        int _s = ki_xform_parse(_st);
+        if (_s < 0) {
+            fprintf(stderr, "[ERROR] unknown xform step '%s' in pipeline '%s'\n", _st, xf_str);
+            return -1;
+        }
+        if (_s != KI_XFORM_ID) _steps[_n++] = _s;
+    }
+    if (_n < 1) return KI_XFORM_ID;
+    if (_n == 1) return _steps[0];
+    int pipe_id = ki_xform_pipe_find(_steps, _n);
+    if (pipe_id >= 0) return pipe_id;
+    pipe_id = ki_xform_pipe_create(_steps, _n);
+    if (pipe_id < 0) {
+        fprintf(stderr, "[ERROR] too many pipelines (max %d)\n", KI_XFORM_PIPE_MAX);
+        return -1;
+    }
+    return pipe_id;
+}
+
+/* ── Core member spec add (parsed ints) — called by all three paths. */
+static inline int ki_member_spec_add_raw(int col, int enc_type, int enc_width,
+                                          int xform_id, int hn_idx) {
+    int n = aa.member_spec_count;
+    if (n >= (int)(sizeof(aa.member_spec) / sizeof(aa.member_spec[0]))) {
+        fprintf(stderr, "[ERROR] Too many member specs (max %zu)\n",
+                sizeof(aa.member_spec) / sizeof(aa.member_spec[0]));
+        return -1;
+    }
+    aa.member_spec[n].xform_id  = xform_id;
+    aa.member_spec[n].color     = col;
+    aa.member_spec[n].enc_type  = enc_type;
+    aa.member_spec[n].enc_width = enc_width;
+    aa.member_spec[n].hn_idx    = hn_idx;
+    aa.member_spec_count = n + 1;
+    return 0;
+}
+
+/* ── Generate member specs from --xform × --encoding × --channels product.
+ * Called AFTER ki_parse_args() when no --member/--member-file was given.
+ * Populates aa.member_spec[] from aa.xform_list[], aa.enc_array[], aa.channel. */
+static inline int ki_member_spec_generate_from_product(void) {
+    if (aa.member_spec_count > 0) return 0;  /* already have explicit specs */
+    if (aa.xform_list_count == 0) {
+        /* Default: identity only */
+        aa.xform_list[0] = KI_XFORM_ID;
+        aa.xform_list_count = 1;
+    }
+    /* Determine active channels/encodings */
+    int n_enc = aa.enc_count > 0 ? aa.enc_count : 1;
+    if (aa.enc_count == 0) {
+        /* No explicit encodings — use channel bitmask */
+        n_enc = 0;
+        for (int b = 0; b < COLOR_NB; b++)
+            if (aa.channel & (1 << b)) n_enc++;
+        if (n_enc < 1) n_enc = 1;
+    }
+    /* Iterate product: xform × encoding × splitHN */
+    for (int xf_idx = 0; xf_idx < aa.xform_list_count; xf_idx++) {
+        int xf_id = aa.xform_list[xf_idx];
+        for (int vi = 0; vi < n_enc; vi++) {
+            int col = 0, enc_type = KI_ENC_RAW, enc_width = KI_ENC_WIDTH_DEFAULT;
+            if (aa.enc_count > 0 && vi < aa.enc_count) {
+                col       = (int)aa.enc_array[vi].color;
+                enc_type  = (int)aa.enc_array[vi].type;
+                enc_width = (int)aa.enc_array[vi].width;
+            } else if (aa.enc_count > 0) {
+                col       = (int)aa.enc_array[0].color;
+                enc_type  = (int)aa.enc_array[0].type;
+                enc_width = (int)aa.enc_array[0].width;
+            } else {
+                /* Find channel from bitmask */
+                int cnt = 0;
+                for (int b = 0; b < COLOR_NB; b++) {
+                    if (aa.channel & (1 << b)) {
+                        if (cnt == vi) { col = b; break; }
+                        cnt++;
+                    }
+                }
+                if (cnt < vi) col = 0;
+                enc_type  = (int)aa.enc_default_type;
+                enc_width = (int)aa.enc_default_width;
+            }
+            for (int hn = 0; hn < aa.splitHN; hn++) {
+                if (ki_member_spec_add_raw(col, enc_type, enc_width, xf_id, hn) < 0)
+                    return -1;
+            }
+        }
+    }
+    printf("  [PRODUCT] %d members (%d xforms × %d enc × %d HN)\n",
+           aa.member_spec_count,
+           aa.xform_list_count, n_enc, aa.splitHN);
+    return aa.member_spec_count;
+}
+
+/* ── String-based wrapper for --member and --member-file.
+ * Parses channel/encoding/xform from strings, hn_idx = 0 (no splitHN). */
+static inline int ki_member_spec_add(const char *ch_str,
+                                      const char *enc_str,
+                                      const char *xf_str) {
+    int col = ki_color_parse(ch_str);
+    if (col < 0) {
+        fprintf(stderr, "[ERROR] --member/--member-file: unknown channel '%s'\n", ch_str);
+        return -1;
+    }
+    int enc_w = 8;
+    int enc = ki_enc_parse(enc_str, &enc_w);
+    if (enc < 0) {
+        fprintf(stderr, "[ERROR] --member/--member-file: unknown encoding '%s'\n", enc_str);
+        return -1;
+    }
+    int xf_id = ki_xform_parse_or_pipe(xf_str);
+    if (xf_id < 0) {
+        fprintf(stderr, "[ERROR] --member/--member-file: unknown xform '%s'\n", xf_str);
+        return -1;
+    }
+    return ki_member_spec_add_raw(col, enc, enc_w, xf_id, 0);
+}
+
+/* ── Parse --member inline: "XF:CHAN:ENC,XF:CHAN:ENC,..."
+ * Each comma-separated token defines one explicit member.
+ * Calls ki_member_spec_add() for each — same path as --member-file. */
+static inline int ki_member_parse(void) {
+    if (!aa.member_str[0]) return 0;
+    char buf[4096];
+    strncpy(buf, aa.member_str, sizeof(buf) - 1);
+    buf[sizeof(buf) - 1] = '\0';
+    int n = 0;
+    char *save = NULL;
+    for (char *tok = strtok_r(buf, ",", &save); tok; tok = strtok_r(NULL, ",", &save)) {
+        while (*tok == ' ' || *tok == '\t') tok++;
+        if (*tok == '\0') continue;
+        /* Format: XF:CHAN:ENC — split by ':' (xform first, matches workflow) */
+        char *ch_start = strchr(tok, ':');
+        if (!ch_start) {
+            fprintf(stderr, "[ERROR] --member: expected 'XF:CHAN:ENC', got '%s'\n", tok);
+            return -1;
+        }
+        *ch_start = '\0';
+        char *xf_str   = tok;
+        char *rest     = ch_start + 1;
+        char *enc_str  = strchr(rest, ':');
+        if (!enc_str) {
+            fprintf(stderr, "[ERROR] --member: expected 'XF:CHAN:ENC', got '%s:%s'\n", xf_str, rest);
+            return -1;
+        }
+        *enc_str = '\0';
+        char *ch_str  = rest;
+        char *enc_only = enc_str + 1;
+        if (ki_member_spec_add(ch_str, enc_only, xf_str) < 0) return -1;
+        n++;
+    }
+    if (n == 0) {
+        fprintf(stderr, "[ERROR] --member: no valid members found\n");
+        return -1;
+    }
+    printf("  [MEMBER] %d explicit members\n", n);
+    return n;
+}
+
+/* ── Parse member file: one member per line.
+ * Format:  XF:CHAN:ENC   (same as --member, xform first).
+ * Lines starting with # or ; are comments. Empty lines skipped.
+ * Delegates to ki_member_spec_add (supports @-pipelines). */
+static inline int ki_member_file_parse(void) {
+    if (!aa.member_file[0]) return 0;
+    FILE *f = fopen(aa.member_file, "r");
+    if (!f) { fprintf(stderr, "[ERROR] Cannot open --member-file: %s\n", aa.member_file); return -1; }
+    char line[256];
+    while (fgets(line, sizeof(line), f)) {
+        char *p = line;
+        while (*p == ' ' || *p == '\t') p++;
+        if (*p == '#' || *p == ';' || *p == '\n' || *p == '\0') continue;
+        { size_t l = strlen(p); while (l > 0 && (p[l-1] == '\n' || p[l-1] == '\r')) p[--l] = '\0'; }
+        /* Format: XF:CHAN:ENC — two colons */
+        char *first = strchr(p, ':');
+        char *second = first ? strchr(first + 1, ':') : NULL;
+        if (!first || !second) {
+            fprintf(stderr, "[WARN] --member-file: expected 'XF:CHAN:ENC', got: %s\n", line);
+            continue;
+        }
+        *first = '\0';   /* p = XF */
+        *second = '\0';  /* first+1 = CHAN */
+        /* Strip optional W0 marker suffix from encoding (e.g. "exp8  0xABCDEF12") */
+        char *_enc_only = second + 1;
+        {   char *_sp = strchr(_enc_only, ' ');
+            if (_sp) *_sp = '\0';  /* space before W0 marker → truncate */
+        }
+        if (ki_member_spec_add(first + 1, _enc_only, p) < 0) { fclose(f); return -1; }
+    }
+    fclose(f);
+    int n = aa.member_spec_count;
+    if (n == 0) { fprintf(stderr, "[ERROR] --member-file: no valid members found in %s\n", aa.member_file); return -1; }
+    printf("  [MEMBER-FILE] %s  (%d members)\n", aa.member_file, n);
+    return n;
 }
 
 /* ── Apply xform (or pipe) to a raw image buffer ────────────────────
@@ -587,9 +826,12 @@ static inline void ki_xform_apply_buf(uint8_t *restrict out,
  * All parameters that affect gb_buf (W0, input pipeline, dimensions).
  * W0[0..3] = PRNG proxy (first 4 weights). */
 static inline uint32_t gb_cache_hash(const uint32_t *w0_first4,
-                                      int total_train, int total_eval,
-                                      int H_local, int NC_slice,
-                                      size_t n_cont, int xform_id) {
+                                       int total_train, int total_eval,
+                                       int H_local, int NC_slice,
+                                       size_t n_cont,
+                                       const char *color_name,
+                                       const char *enc_name, int enc_width,
+                                       const char *xf_name) {
     uint32_t h = (uint32_t)KI_DATASET_ID;
     for (int i = 0; i < 4; i++) h = h * 31 + w0_first4[i];
     h = h * 31 + (uint32_t)total_train;
@@ -599,17 +841,15 @@ static inline uint32_t gb_cache_hash(const uint32_t *w0_first4,
     h = h * 31 + (uint32_t)n_cont;
     h = h * 31 + (uint32_t)aa.splitVN;
     h = h * 31 + (uint32_t)aa.splitHN;
-    h = h * 31 + (uint32_t)xform_id;
     h = h * 31 + (uint32_t)aa.channel;
     h = h * 31 + (uint32_t)aa.enc_size;
     h = h * 31 + (uint32_t)KI_BIT_WIDTH;
     h = h * 31 + (uint32_t)KI_PX;
     h = h * 31 + (uint32_t)KI_COLORS;
-    for (int i = 0; i < aa.enc_count && i < KI_ENC_MAX; i++) {
-        h = h * 31 + (uint32_t)(uint8_t)aa.enc_array[i].type;
-        h = h * 31 + (uint32_t)(uint8_t)aa.enc_array[i].width;
-        h = h * 31 + (uint32_t)(uint8_t)aa.enc_array[i].color;
-    }
+    while (color_name && *color_name) h = h * 31 + (uint8_t)*color_name++;
+    while (enc_name && *enc_name)   h = h * 31 + (uint8_t)*enc_name++;
+    h = h * 31 + (uint32_t)enc_width;
+    while (xf_name && *xf_name)     h = h * 31 + (uint8_t)*xf_name++;
     return h;
 }
 
@@ -737,7 +977,7 @@ static inline void ki_parse_args(int argc, char *argv[]) {
             exit(1);   /* INTENTIONAL: non-zero so run-research.sh suppresses logging */
         } else if (strcmp(argv[i], "--help-encoding") == 0) {
             printf("--encoding [all|%s]                              (default: latest)\n", ki_enc_names_all());
-            printf("  OR <color>=<enc>[width] per-block: r=exp16,g=lin8,b=sqrt8   \n");
+            printf("  OR <color>:<enc>[width] per-block: r:exp16,g:lin8,b:sqrt8   \n");
             printf("  Pixel-Encoding pro Farb-Block.\n");
             printf("  Optionaler Width-Suffix: exp16=16-bit, lin32=32-bit\n");
             printf("  8-bit  : 4 px/cont, 8 Stufen (default, exp=0.3)\n");
@@ -1008,6 +1248,18 @@ static inline void ki_parse_args(int argc, char *argv[]) {
             aa.export_neurons[sizeof(aa.export_neurons) - 1] = '\0';
         } else if (strcmp(argv[i], "--export-gb") == 0) {
             aa.export_gb = 1;
+        } else if (strcmp(argv[i], "--import-gb") == 0) {
+            aa.import_gb = 1;
+        } else if (strcmp(argv[i], "--sweep") == 0) {
+            aa.sweep = 1;
+        } else if (strcmp(argv[i], "--force") == 0) {
+            aa.force = 1;
+        } else if (strcmp(argv[i], "--member-file") == 0 && i + 1 < argc) {
+            strncpy(aa.member_file, argv[++i], sizeof(aa.member_file) - 1);
+            aa.member_file[sizeof(aa.member_file) - 1] = '\0';
+        } else if (strcmp(argv[i], "--member") == 0 && i + 1 < argc) {
+            strncpy(aa.member_str, argv[++i], sizeof(aa.member_str) - 1);
+            aa.member_str[sizeof(aa.member_str) - 1] = '\0';
         } else if (strcmp(argv[i], "--import") == 0 || strcmp(argv[i], "--import") == 0) {
             if (i + 1 >= argc) { fprintf(stderr, "[ERROR] --import DIR\n"); exit(1); }
             strncpy(aa.importD, argv[++i], sizeof(aa.importD) - 1);
@@ -1135,36 +1387,50 @@ static inline void ki_parse_args(int argc, char *argv[]) {
                         }
                     }
                 } else if (strchr(tok, '@')) {
-                    /* Pipeline: rot90@avg4 → create pipe, store virtual ID
-                     * IMPORTANT: use strtok_r to not corrupt the outer strtok(NULL, ",")
-                     * KI_XFORM_ID steps are skipped (id@avg4 = avg4). */
-                    char _pipe_buf[128];
-                    strncpy(_pipe_buf, tok, sizeof(_pipe_buf) - 1);
-                    _pipe_buf[sizeof(_pipe_buf) - 1] = '\0';
-                    int _steps[KI_XFORM_PIPE_MAX_STEPS], _n = 0;
-                    int _err = 0;
-                    char *_psave = NULL;
-                    for (char *_st = strtok_r(_pipe_buf, "@", &_psave); _st && _n < KI_XFORM_PIPE_MAX_STEPS; _st = strtok_r(NULL, "@", &_psave)) {
-                        while (*_st == ' ' || *_st == '\t') _st++;
-                        int _s = ki_xform_parse(_st);
-                        if (_s < 0) { fprintf(stderr, "[ERROR] --xform: unknown step '%s' in pipeline '%s'\n", _st, tok); _err = 1; break; }
-                        if (_s != KI_XFORM_ID) _steps[_n++] = _s;  /* skip identity steps */
-                    }
-                    if (_err) exit(1);
-                    if (_n < 1) {
-                        /* Only identity steps → just use id */
-                        aa.xforms |= (1ull << KI_XFORM_ID);
-                        ki_xform_list_add(KI_XFORM_ID);
-                    } else if (_n == 1) {
-                        /* Single effective step → use it directly */
-                        int _xf = _steps[0];
-                        aa.xforms |= (1ull << _xf);
-                        ki_xform_list_add(_xf);
+                    /* Pipeline: rot90@avg4 → create pipe, store virtual ID.
+                     * If the prefix (@-part before first @) is an alias,
+                     * expand it and create pipelines for each expanded token + suffix.
+                     * Example: sweep@spiral → id@spiral, hflip@spiral, vflip@spiral, ... */
+                    const char *_at = strchr(tok, '@');
+                    size_t _pre_len = (size_t)(_at - tok);
+                    char _pre[256], _suf[256];
+                    if (_pre_len >= sizeof(_pre)) _pre_len = sizeof(_pre) - 1;
+                    memcpy(_pre, tok, _pre_len); _pre[_pre_len] = '\0';
+                    strncpy(_suf, _at + 1, sizeof(_suf) - 1);
+                    _suf[sizeof(_suf) - 1] = '\0';
+                    const char *_alias_exp = ki_xform_alias_expand(_pre);
+                    if (_alias_exp) {
+                        /* Expand alias: create pipeline for each expanded token + suffix */
+                        char _exp_buf[4096];
+                        strncpy(_exp_buf, _alias_exp, sizeof(_exp_buf) - 1);
+                        _exp_buf[sizeof(_exp_buf) - 1] = '\0';
+                        int _has_pipe = 0;
+                        for (char *_et = strtok(_exp_buf, ","); _et; _et = strtok(NULL, ",")) {
+                            char _pipe_token[512];
+                            snprintf(_pipe_token, sizeof(_pipe_token), "%s@%s", _et, _suf);
+                            int _pid = ki_xform_parse_or_pipe(_pipe_token);
+                            if (_pid < 0) {
+                                fprintf(stderr, "[ERROR] --xform: bad pipeline '%s' (from alias '%s@%s')\n",
+                                        _pipe_token, _pre, _suf);
+                                exit(1);
+                            }
+                            aa.xforms |= (1ull << (unsigned)_pid);
+                            ki_xform_list_add(_pid);
+                            _has_pipe = 1;
+                        }
+                        if (!_has_pipe) {
+                            aa.xforms |= (1ull << KI_XFORM_ID);
+                            ki_xform_list_add(KI_XFORM_ID);
+                        }
                     } else {
-                        int pipe_id = ki_xform_pipe_create(_steps, _n);
-                        if (pipe_id < 0) { fprintf(stderr, "[ERROR] --xform: too many pipelines (max %d)\n", KI_XFORM_PIPE_MAX); exit(1); }
-                        aa.xforms |= (1ull << (unsigned)pipe_id);
-                        ki_xform_list_add(pipe_id);
+                        /* Direct pipeline (no alias expansion) */
+                        int _pid = ki_xform_parse_or_pipe(tok);
+                        if (_pid < 0) {
+                            fprintf(stderr, "[ERROR] --xform: bad pipeline '%s'\n", tok);
+                            exit(1);
+                        }
+                        aa.xforms |= (1ull << (unsigned)_pid);
+                        ki_xform_list_add(_pid);
                     }
                 } else {
                     int xf = ki_xform_parse(tok);
@@ -1173,8 +1439,8 @@ static inline void ki_parse_args(int argc, char *argv[]) {
                         ki_xform_list_add(xf);
                     } else {
                         fprintf(stderr, "[ERROR] --xform: unknown transform '%s'. "
-                                "Valid: all, shift, augmentation, performance, id, hflip, vflip, dflip1, dflip2, "
-                                "rot90, rot180, rot270, rot45, spiral, colswap-3-4, colswap-2-4, colswap-1-4, "
+                                "Valid: all, shift, augmentation, performance, performance-2, id, hflip, vflip, dflip1, dflip2, "
+                                "rot90, rot22, rot67, rot45, spiral, colswap-3-4, colswap-2-4, colswap-1-4, "
                                 "avg2, avg3, avg4, "
                                 "sft-u1/2/3, sft-d1/2/3, sft-l1/2/3, sft-r1/2/3, "
                                 "shuffle, shuffle1..10\n", tok);
@@ -1241,29 +1507,47 @@ static inline void ki_parse_args(int argc, char *argv[]) {
             }
         } else if (strcmp(argv[i], "--channels") == 0 && i + 1 < argc) {
             const char *val = argv[++i];
-            int mask = 0;
-            char buf[128];
+            /* 5-pass iterative alias expansion (like --xform / --encoding) */
+            char buf[4096];
             strncpy(buf, val, sizeof(buf) - 1);
             buf[sizeof(buf) - 1] = '\0';
-            const char *delim = ",";
-            for (char *tok = strtok(buf, delim); tok; tok = strtok(NULL, delim)) {
+            for (int _iter = 0; _iter < 5; _iter++) {
+                char _tmp[4096], _new[4096] = "";
+                strncpy(_tmp, buf, sizeof(_tmp) - 1);
+                _tmp[sizeof(_tmp) - 1] = '\0';
+                int _any = 0;
+                char *_save = NULL;
+                for (char *_t = strtok_r(_tmp, ",", &_save); _t; _t = strtok_r(NULL, ",", &_save)) {
+                    while (*_t == ' ' || *_t == '\t') _t++;
+                    if (*_t == '\0') continue;
+                    const char *_exp = ki_color_alias_expand(_t);
+                    if (_exp) {
+                        if (_new[0]) strncat(_new, ",", sizeof(_new) - strlen(_new) - 1);
+                        strncat(_new, _exp, sizeof(_new) - strlen(_new) - 1);
+                        _any = 1;
+                    } else {
+                        if (_new[0]) strncat(_new, ",", sizeof(_new) - strlen(_new) - 1);
+                        strncat(_new, _t, sizeof(_new) - strlen(_new) - 1);
+                    }
+                }
+                if (!_any) break;
+                strncpy(buf, _new, sizeof(buf) - 1);
+                buf[sizeof(buf) - 1] = '\0';
+            }
+            /* Build bitmask from fully expanded tokens */
+            int mask = 0;
+            for (char *tok = strtok(buf, ","); tok; tok = strtok(NULL, ",")) {
                 while (*tok == ' ' || *tok == '\t') tok++;
                 for (char *p = tok; *p; p++) *p = (char)tolower((unsigned char)*p);
                 if (strcmp(tok, "packed") == 0) { aa.packedB = 1; continue; }
                 else if (strcmp(tok, "full") == 0) { aa.packedB = 0; continue; }
                 else if (strcmp(tok, "flat") == 0) { aa.debug_flat = 1; continue; }
-                /* NOTE: 'bin' removed. Encoding via --encoding. */
-                int bit = ki_color_parse(tok);
-                if (bit == -2) { mask |= (1<<COLOR_AL)|(1<<COLOR_AM)|(1<<COLOR_AP); continue; }
-                if (bit == -3) { mask |= (1<<COLOR_Y); continue; }
-                if (bit == -4) { mask |= (1<<COLOR_R)|(1<<COLOR_G)|(1<<COLOR_B); continue; }
-                if (bit == -5) { mask |= (1<<COLOR_RG)|(1<<COLOR_RB)|(1<<COLOR_GB); continue; }
-                if (bit >= 0) { mask |= (1 << bit); continue; }
                 if (strcmp(tok, "all") == 0) {
-                    /* All CIFAR channels (1..COLOR_DIST) */
-                    for (int b = 1; b <= COLOR_DIST; b++) mask |= (1 << b);
+                    for (int b = 0; b <= COLOR_NB; b++) mask |= (1 << b);
                     continue;
                 }
+                int bit = ki_color_parse(tok);
+                if (bit >= 0) { mask |= (1 << bit); continue; }
                 fprintf(stderr, "[ERROR] --channels: unknown '%s'. "
                         "Valid: %s\n", tok, ki_color_names_all());
                 exit(1);
@@ -1351,13 +1635,13 @@ static inline void ki_parse_args(int argc, char *argv[]) {
 
             for (char *tok = strtok(buf, ","); tok; tok = strtok(NULL, ",")) {
                 while (*tok == ' ' || *tok == '\t') tok++;
-                const char *eq = strchr(tok, '=');
+                const char *sep = strchr(tok, ':');
                     int enc;
                     int w  = KI_ENC_WIDTH_DEFAULT;  /* fallback; overridden by post-process if --encoding-sizeN was set */
-                    if (eq) {
-                        /* Per-block encoding: r=exp16 */
+                    if (sep) {
+                        /* Per-block encoding: r:exp16 */
                         char col_buf[32];
-                        size_t col_len = (size_t)(eq - tok);
+                        size_t col_len = (size_t)(sep - tok);
                         if (col_len >= sizeof(col_buf)) col_len = sizeof(col_buf) - 1;
                         memcpy(col_buf, tok, col_len);
                         col_buf[col_len] = '\0';
@@ -1367,10 +1651,10 @@ static inline void ki_parse_args(int argc, char *argv[]) {
                                     "Valid: %s\n", col_buf, tok, ki_color_names_all());
                             exit(1);
                         }
-                        enc = ki_enc_parse(eq + 1, &w);
+                        enc = ki_enc_parse(sep + 1, &w);
                         if (enc < 0) {
                         fprintf(stderr, "[ERROR] --encoding: unknown encoding '%s' in '%s'. "
-                                "Valid: %s\n", eq + 1, tok, ki_enc_names_all());
+                                "Valid: %s\n", sep + 1, tok, ki_enc_names_all());
                         exit(1);
                     }
                     /* In enc_array eintragen — the only encoding path */
@@ -1512,18 +1796,18 @@ static inline void ki_parse_args(int argc, char *argv[]) {
                 /* Parse the fully expanded string into enc_array */
                 for (char *_tok = strtok(_def_buf, ","); _tok; _tok = strtok(NULL, ",")) {
                     while (*_tok == ' ' || *_tok == '\t') _tok++;
-                    const char *_eq = strchr(_tok, '=');
+                    const char *_sep = strchr(_tok, ':');
                     int _enc;
                     int _w  = KI_ENC_WIDTH_DEFAULT;
-                    if (_eq) {
-                        /* per-block: color=enc */
+                    if (_sep) {
+                        /* per-block: color:enc */
                         char _col_buf[32];
-                        size_t _col_len = (size_t)(_eq - _tok);
+                        size_t _col_len = (size_t)(_sep - _tok);
                         if (_col_len >= sizeof(_col_buf)) _col_len = sizeof(_col_buf) - 1;
                         memcpy(_col_buf, _tok, _col_len); _col_buf[_col_len] = '\0';
                         int _bit = ki_color_parse(_col_buf);
                         if (_bit >= 0) {
-                            _enc = ki_enc_parse(_eq + 1, &_w);
+                            _enc = ki_enc_parse(_sep + 1, &_w);
                             if (_enc >= 0 && aa.enc_count < KI_ENC_MAX) {
                                 aa.enc_array[aa.enc_count].type  = (int8_t)_enc;
                                 aa.enc_array[aa.enc_count].width = (int8_t)_w;
@@ -1637,18 +1921,19 @@ static inline float ki_lr_schedule(int epoch, int total_epochs, int warmup,
 /* ═══════════════════════════════════════════════════════════════════════
  * COUNTER_TYPE — Data format for Target/OFFSET/Correction step
  * ═══════════════════════════════════════════════════════════════════════
- * int32_t: fixed-point scaled by OT_F (current, int32-compatible)
- * float:   IEEE 754 32-bit, direct, no scaling (halves offset)
- * Defined in ki-local.h (overridable per dataset).
+ * Default: float (IEEE 754 32-bit, direct, no scaling).
+ * Use -DMODE_INT32 for int32_t fixed-point mode.
  */
 #ifndef COUNTER_TYPE_IS_FLOAT
-#define COUNTER_TYPE_IS_FLOAT 0
+#define COUNTER_TYPE_IS_FLOAT 1
+#endif
+#ifndef COUNTER_TYPE
+#define COUNTER_TYPE float
 #endif
 
-/* Score accumulator type: int64_t for int32 mode (overflow-safe), float for float mode.
- * Default to int64_t. Override via -DSCORE_TYPE=float for float mode. */
+/* Score accumulator type: float by default (overflow-safe), int64_t for int32 mode. */
 #ifndef SCORE_TYPE
-#define SCORE_TYPE int64_t
+#define SCORE_TYPE float
 #endif
 
 /* ═══════════════════════════════════════════════════════════════════════
@@ -1789,7 +2074,7 @@ static const char *xform_str(void) {
     for (int i = 0; i < aa.xform_list_count && i < KI_XFORM_LIST_MAX; i++) {
         int x = aa.xform_list[i];
         if (pos > 0) _xform_buf[pos++] = ',';
-        const char *n = ki_xform_is_pipe(x) ? ki_xform_pipe_name(x) : ki_xform_name(x);
+        const char *n = ki_xform_str(x);
         while (*n && pos < (int)sizeof(_xform_buf) - 2) _xform_buf[pos++] = *n++;
     }
     if (pos == 0) { _xform_buf[pos++] = 'i'; _xform_buf[pos++] = 'd'; }

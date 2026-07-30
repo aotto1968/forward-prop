@@ -59,7 +59,8 @@ static __attribute__((unused)) uint32_t *load_input(const uint8_t *X_raw,
         ki_compute_dir(px, 32, 32);
         ki_compute_range(px, 32, 32);
         ki_compute_lbp_rg(px, 32, 32);
-        ki_compute_dist(px, 32, 32);
+        ki_compute_lbp_rb(px, 32, 32);
+        ki_compute_lbp_gb(px, 32, 32);
         for (int i = 0; i < n_enc; i++) {
             int col = (int)aa.enc_array[i].color;
             int typ = (int)aa.enc_array[i].type;
@@ -130,20 +131,31 @@ static __attribute__((unused)) uint32_t *load_input(const uint8_t *X_raw,
  * Format: magic(4) ver(4) hash(4) samples(4) stride(4) data[...]
  * ═══════════════════════════════════════════════════════════════════════ */
 
-/* Config hash for cache key (xform_id: 0=identity) */
+/* Config hash for cache key — uses STRING names (not enum integers)
+ * so enum renumberings don't invalidate caches.
+ * xform_id: 0=identity,  otherwise the transform applied to raw pixels. */
 static uint32_t input_cache_hash(int xform_id) {
     uint32_t h = 0;
+    /* Encoding layout via string names (stable against enum changes) */
     for (int i = 0; i < aa.enc_count; i++) {
-        h = h * 31 + (uint32_t)(uint8_t)aa.enc_array[i].color;
-        h = h * 31 + (uint32_t)(uint8_t)aa.enc_array[i].type;
+        const char *cn = ki_color_name((int)aa.enc_array[i].color);
+        const char *en = ki_enc_name_short((int)aa.enc_array[i].type);
+        while (*cn) h = h * 31 + (uint8_t)*cn++;
+        while (*en) h = h * 31 + (uint8_t)*en++;
         h = h * 31 + (uint32_t)(uint8_t)aa.enc_array[i].width;
     }
     h = h * 31 + (uint32_t)aa.packedB;
+    /* channel bitmask: stable — users would expect different cache per mask */
     h = h * 31 + (uint32_t)aa.channel;
+    /* Dataset constants */
     h = h * 31 + (uint32_t)KI_NC;
     h = h * 31 + (uint32_t)KI_PX;
     h = h * 31 + (uint32_t)KI_COLORS;
-    h = h * 31 + (uint32_t)xform_id;        /* xform changes the pixel data cache */
+    /* Xform via string name (not enum integer) */
+    {
+        const char *xn = ki_xform_str(xform_id);
+        while (*xn) h = h * 31 + (uint8_t)*xn++;
+    }
 #ifdef KI_DATASET_ID
     h = h * 31 + (uint32_t)KI_DATASET_ID;
 #endif
@@ -177,11 +189,25 @@ static uint32_t *load_input_cached(const uint8_t *X_raw, int n_samples,
             size_t total = (size_t)n_samples * stride;
             uint32_t *X = (uint32_t *)ki_xmalloc(total * sizeof(uint32_t));
             if (fread(X, sizeof(uint32_t), total, cf) == total) {
-                fclose(cf);
-                if (aa.debug_gb) printf("  Input-cache: %s\n", cache_path);
-                return X;
+                /* Sanity check: first 10 containers of sample 0 should not all be zero
+                 * (prevents serving a stale cache from a previous enc_array setup) */
+                int _all_zero = 0;
+                int _ncheck = stride > 10 ? 10 : (int)stride;
+                if (_ncheck > 0) {
+                    _all_zero = 1;
+                    for (int _zi = 0; _zi < _ncheck; _zi++)
+                        if (X[_zi] != 0) { _all_zero = 0; break; }
+                }
+                if (!_all_zero) {
+                    fclose(cf);
+                    if (aa.debug_gb) printf("  Input-cache: %s\n", cache_path);
+                    return X;
+                }
+                if (aa.debug_gb) printf("  [CACHE] %s: all-zero data (stale?), recomputing\n", cache_path);
+                free(X);
+            } else {
+                free(X);
             }
-            free(X);
         }
         fclose(cf);
         if (aa.debug_gb) printf("  [CACHE] Invalid hash/config, recomputing\n");
@@ -256,6 +282,67 @@ static uint32_t *load_input_cached_xform(int xform_id,
         fclose(sf);
         if (aa.debug_gb) printf("  Input-cache: %s  (saved)\n", cpath);
     }
+    return X;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+ * LOAD ONE SLOT — encode exactly one encoding slot from raw pixels
+ * ═══════════════════════════════════════════════════════════════════════
+ * Returns buffer of n_samples × n_cont[vi] uint32. Caller must free(). */
+static __attribute__((unused)) uint32_t *load_input_slot(const uint8_t *X_raw,
+                                                          int n_samples, int vi) {
+    if (vi < 0 || vi >= aa.enc_count) return NULL;
+    int typ = (int)aa.enc_array[vi].type;
+    int w   = (int)aa.enc_array[vi].width;
+    if (w < 1) w = KI_ENC_WIDTH_DEFAULT;
+    if (typ < 0) typ = KI_ENC_LIN7;
+    int n_cont = (KI_COLORS > 1 ? KI_NC : NC) * w / KI_BIT_WIDTH;
+    int pack = 32 / w, shift = w;
+    uint32_t *X = (uint32_t *)ki_xmalloc((size_t)n_samples * (size_t)n_cont * sizeof(uint32_t));
+#if KI_COLORS > 1
+    int col = (int)aa.enc_array[vi].color;
+    for (int s = 0; s < n_samples; s++) {
+        uint8_t px[COLOR_NB][1024];
+        for (int px_i = 0; px_i < 1024; px_i++) {
+            size_t base = (size_t)s * KI_PX;
+            int r_val = (int)X_raw[base + (size_t)px_i];
+            int g_val = (int)X_raw[base + 1024 + (size_t)px_i];
+            int b_val = (int)X_raw[base + 2048 + (size_t)px_i];
+            uint8_t blk[COLOR_NB];
+            ki_blocks_from_rgb(r_val, g_val, b_val, blk);
+            for (int ci = 0; ci < COLOR_NB; ci++) px[ci][px_i] = blk[ci];
+        }
+        ki_compute_edge(px, 32, 32); ki_compute_binary(px, 32, 32);
+        ki_compute_lbp(px, 32, 32); ki_compute_dog(px, 32, 32);
+        ki_compute_var(px, 32, 32); ki_compute_dir(px, 32, 32);
+        ki_compute_range(px, 32, 32); ki_compute_lbp_rg(px, 32, 32);
+        ki_compute_lbp_rb(px, 32, 32); ki_compute_lbp_gb(px, 32, 32);
+        uint32_t *row_out = X + (size_t)s * (size_t)n_cont;
+        for (int c = 0; c < n_cont; c++) {
+            uint32_t val = 0;
+            for (int k = 0; k < pack; k++) {
+                uint8_t pv = px[col][c * pack + k];
+                uint32_t ev = enc_lut_get(typ, w, pv);
+                val |= ev << (unsigned)(k * shift);
+            }
+            row_out[c] = val;
+        }
+    }
+#else
+    for (int s = 0; s < n_samples; s++) {
+        uint32_t *row_out = X + (size_t)s * (size_t)n_cont;
+        for (int c = 0; c < n_cont; c++) {
+            uint32_t val = 0;
+            for (int k = 0; k < pack; k++) {
+                size_t p = (size_t)s * KI_PX + (size_t)c * (size_t)pack + (size_t)k;
+                uint8_t pv = X_raw[p];
+                uint32_t ev = enc_lut_get(typ, w, pv);
+                val |= ev << (unsigned)(k * shift);
+            }
+            row_out[c] = val;
+        }
+    }
+#endif
     return X;
 }
 

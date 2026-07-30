@@ -318,7 +318,7 @@ int main(int argc, char *argv[]) {
         for (int xi = 0; xi < n_xforms; xi++) {
             int _x = xf_id_list[xi];
             if (xi > 0) printf(",");
-            printf("%s", ki_xform_is_pipe(_x) ? ki_xform_pipe_name(_x) : ki_xform_name(_x));
+            printf("%s", ki_xform_str(_x));
         }
         printf("  (%d× ensemble multiplier)\n", n_xforms);
     }
@@ -384,7 +384,7 @@ int main(int argc, char *argv[]) {
             for (int xi = 0; xi < n_xforms; xi++) {
                 if (xi > 0) printf(",");
                 int _xid = xf_id_list[xi];
-                printf("%s", ki_xform_is_pipe(_xid) ? ki_xform_pipe_name(_xid) : ki_xform_name(_xid));
+                printf("%s", ki_xform_str(_xid));
             }
         }
         printf("\n");

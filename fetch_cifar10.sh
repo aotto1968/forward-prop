@@ -19,7 +19,7 @@
 set -euo pipefail
 
 DIR="$(cd "$(dirname "$0")" && pwd)"
-BASE="${1:-$DIR/www/data}"
+BASE="${1:-$DIR/data}"
 TARGET="$BASE/cifar-10-batches-bin"
 
 if [ -f "$TARGET/data_batch_1.bin" ]; then
@@ -39,14 +39,19 @@ URLS=(
 TARBALL="/tmp/cifar-10-binary.tar.gz"
 DOWNLOADED=0
 
-for URL in "${URLS[@]}"; do
-    echo "Trying: $URL"
-    if command -v curl &>/dev/null; then
-        curl -L -o "$TARBALL" "$URL" --connect-timeout 30 --max-time 600 -s && { DOWNLOADED=1; break; }
-    elif command -v wget &>/dev/null; then
-        wget -q --timeout=30 "$URL" -O "$TARBALL" && { DOWNLOADED=1; break; }
-    fi
-done
+if [ -f "$TARBALL" ] ; then
+  echo "Found $TARBALL"
+  DOWNLOADED=1
+else
+  for URL in "${URLS[@]}"; do
+      echo "Trying: $URL"
+      if command -v curl &>/dev/null; then
+          curl -L -o "$TARBALL" "$URL" --connect-timeout 30 --max-time 600 -s && { DOWNLOADED=1; break; }
+      elif command -v wget &>/dev/null; then
+          wget -q --timeout=30 "$URL" -O "$TARBALL" && { DOWNLOADED=1; break; }
+      fi
+  done
+fi
 
 if [ "$DOWNLOADED" -eq 0 ]; then
     echo "[ERROR] Failed to download CIFAR-10 from any mirror."
@@ -56,7 +61,7 @@ if [ "$DOWNLOADED" -eq 0 ]; then
 fi
 
 echo "Extracting to $BASE/ ..."
-tar -xzf "$TARBALL" -C "$BASE/" --strip-components=1 \
+tar -xzf "$TARBALL" -C "$BASE/" \
     cifar-10-batches-bin/data_batch_1.bin \
     cifar-10-batches-bin/data_batch_2.bin \
     cifar-10-batches-bin/data_batch_3.bin \

@@ -24,20 +24,17 @@
 /**
  * ki_default_half — Default majority threshold for a given container count.
  *
- * Returns the pre-tuned threshold for known n values, or n/2 otherwise.
+ * Returns the pre-tuned threshold for known n values.
+ * Default formula: n × 107/196 ≈ 54.6% (optimized for MNIST H=196).
  * Used when aa.maj1_thresh == -2 (auto per encoding).
- *
- * Tested on CIFAR-10, H=512, --maj 1 performance encoding:
- *   n=256 → 135  (≈52.7%, optimal for 8-bit)
- *   n=512 → 269  (≈52.5%, optimal for 16-bit, --encoding-sizeN 16)
- *   n=1024 → 540 (≈52.7%, linear extrapolation, not yet benchmarked)
  */
 static inline int ki_default_half(int n) {
     switch (n) {
+        case 196:  return 107;
         case 256:  return 135;
         case 512:  return 269;
         case 1024: return 540;
-        default:   return n / 2;
+        default:   return n * 135 / 256;  // close to maj3
     }
 }
 

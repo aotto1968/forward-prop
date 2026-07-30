@@ -13,7 +13,7 @@
 set -e
 
 DIR="$(cd "$(dirname "$0")" && pwd)"
-OUTDIR="$DIR/www/data/mnist-fashion"
+OUTDIR="$DIR/data/mnist-fashion"
 mkdir -p "$OUTDIR"
 
 FILES=(

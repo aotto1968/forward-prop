@@ -43,95 +43,116 @@ extern "C" {
  * buffer: [plane0(w×h)][plane1(w×h)][...], each plane row-major.
  */
 enum ki_xform {
-    KI_XFORM_ID      = 0,   /* Identity */
-    KI_XFORM_HFLIP   = 1,   /* Horizontal flip (left↔right) */
-    KI_XFORM_VFLIP   = 2,   /* Vertical flip (top↔bottom) */
-    KI_XFORM_DFLIP1  = 3,   /* Main diagonal flip (transpose) */
-    KI_XFORM_DFLIP2  = 4,   /* Anti-diagonal flip */
-    KI_XFORM_ROT90   = 5,   /* Rotate 90° clockwise */
-    KI_XFORM_ROT180  = 6,   /* Rotate 180° (hflip+vflip) */
-    KI_XFORM_ROT270  = 7,   /* Rotate 270° clockwise (≡ rot90⁻¹) */
-    /* Shifts (12 variants) — move image in 4 directions × 3 distances */
-    KI_XFORM_SFT_U1  = 8,   /* Shift up 1 px */
-    KI_XFORM_SFT_U2  = 9,   /* Shift up 2 px */
-    KI_XFORM_SFT_U3  = 10,  /* Shift up 3 px */
-    KI_XFORM_SFT_D1  = 11,  /* Shift down 1 px */
-    KI_XFORM_SFT_D2  = 12,  /* Shift down 2 px */
-    KI_XFORM_SFT_D3  = 13,  /* Shift down 3 px */
-    KI_XFORM_SFT_L1  = 14,  /* Shift left 1 px */
-    KI_XFORM_SFT_L2  = 15,  /* Shift left 2 px */
-    KI_XFORM_SFT_L3  = 16,  /* Shift left 3 px */
-    KI_XFORM_SFT_R1  = 17,  /* Shift right 1 px */
-    KI_XFORM_SFT_R2  = 18,  /* Shift right 2 px */
-    KI_XFORM_SFT_R3  = 19,  /* Shift right 3 px */
-    KI_XFORM_SHUFFLE = 20,  /* Random pixel permutation (pairwise swaps, fixed seed 42) */
-    KI_XFORM_SHUFFLE1 = 21, /* Shuffle with seed 1 */
-    KI_XFORM_SHUFFLE2 = 22, /* Shuffle with seed 2 */
-    KI_XFORM_SHUFFLE3 = 23, /* Shuffle with seed 3 */
-    KI_XFORM_SHUFFLE4 = 24, /* Shuffle with seed 4 */
-    KI_XFORM_SHUFFLE5 = 25, /* Shuffle with seed 5 */
-    KI_XFORM_SHUFFLE6 = 26, /* Shuffle with seed 6 */
-    KI_XFORM_SHUFFLE7 = 27, /* Shuffle with seed 7 */
-    KI_XFORM_SHUFFLE8 = 28, /* Shuffle with seed 8 */
-    KI_XFORM_SHUFFLE9 = 29, /* Shuffle with seed 9 */
-    KI_XFORM_SHUFFLE10= 30, /* Shuffle with seed 10 */
-    KI_XFORM_ROT45    = 31, /* Rotate 45° clockwise (nearest-neighbor, fill with 0) */
-    KI_XFORM_SPIRAL   = 32, /* Spiral distortion (bilinear, strongest at center, chromatic per channel) */
-    KI_XFORM_COLSWAP34  = 33, /* colswap-3-4: swap col 3+4k ↔ 4+4k per row (forces triple (0,3,7) instead of (0,4,8)) */
-    KI_XFORM_COLSWAP24  = 34, /* colswap-2-4: swap col 2+4k ↔ 4+4k */
-    KI_XFORM_COLSWAP14  = 35, /* colswap-1-4: swap col 1+4k ↔ 4+4k */
-    KI_XFORM_AVG2     = 36, /* 2-tap row-wise running avg (wrap-right) */
-    KI_XFORM_AVG3     = 37, /* 3-tap row-wise running avg (wrap-right) */
-    KI_XFORM_AVG4     = 38, /* 4-tap row-wise running avg (wrap-right) */
-    KI_XFORM_COUNT   = 39
+    KI_XFORM_ID         =  0,
+    KI_XFORM_HFLIP      ,
+    KI_XFORM_VFLIP      ,
+    KI_XFORM_DFLIP1     ,
+    KI_XFORM_DFLIP2     ,
+    KI_XFORM_ROT22      ,
+    KI_XFORM_ROT45      ,
+    KI_XFORM_ROT67      ,
+    KI_XFORM_ROT90      ,
+    KI_XFORM_SFT_U1     ,
+    KI_XFORM_SFT_U2     ,
+    KI_XFORM_SFT_U3     ,
+    KI_XFORM_SFT_D1     ,
+    KI_XFORM_SFT_D2     ,
+    KI_XFORM_SFT_D3     ,
+    KI_XFORM_SFT_L1     ,
+    KI_XFORM_SFT_L2     ,
+    KI_XFORM_SFT_L3     ,
+    KI_XFORM_SFT_R1     ,
+    KI_XFORM_SFT_R2     ,
+    KI_XFORM_SFT_R3     ,
+    KI_XFORM_SHUFFLE    ,
+    KI_XFORM_SHUFFLE1   ,
+    KI_XFORM_SHUFFLE2   ,
+    KI_XFORM_SHUFFLE3   ,
+    KI_XFORM_SHUFFLE4   ,
+    KI_XFORM_SHUFFLE5   ,
+    KI_XFORM_SHUFFLE6   ,
+    KI_XFORM_SHUFFLE7   ,
+    KI_XFORM_SHUFFLE8   ,
+    KI_XFORM_SHUFFLE9   ,
+    KI_XFORM_SHUFFLE10  ,
+    KI_XFORM_SPIRAL     ,
+    KI_XFORM_COLSWAP34  ,
+    KI_XFORM_COLSWAP24  ,
+    KI_XFORM_COLSWAP14  ,
+    KI_XFORM_AVG2       ,
+    KI_XFORM_AVG3       ,
+    KI_XFORM_AVG4       ,
+    KI_XFORM_COUNT
 };
 
-/* ── Xform short name for display ──────────────────────────────── */
-static inline const char *ki_xform_name(int xf) {
-    static const char *names[] = {
-        [KI_XFORM_ID]     = "id",
-        [KI_XFORM_HFLIP]  = "hflip",
-        [KI_XFORM_VFLIP]  = "vflip",
-        [KI_XFORM_DFLIP1] = "dflip1",
-        [KI_XFORM_DFLIP2] = "dflip2",
-        [KI_XFORM_ROT90]  = "rot90",
-        [KI_XFORM_ROT180] = "rot180",
-        [KI_XFORM_ROT270] = "rot270",
-        [KI_XFORM_SFT_U1] = "sft-u1",
-        [KI_XFORM_SFT_U2] = "sft-u2",
-        [KI_XFORM_SFT_U3] = "sft-u3",
-        [KI_XFORM_SFT_D1] = "sft-d1",
-        [KI_XFORM_SFT_D2] = "sft-d2",
-        [KI_XFORM_SFT_D3] = "sft-d3",
-        [KI_XFORM_SFT_L1] = "sft-l1",
-        [KI_XFORM_SFT_L2] = "sft-l2",
-        [KI_XFORM_SFT_L3] = "sft-l3",
-        [KI_XFORM_SFT_R1] = "sft-r1",
-        [KI_XFORM_SFT_R2] = "sft-r2",
-        [KI_XFORM_SFT_R3] = "sft-r3",
-        [KI_XFORM_SHUFFLE] = "shuffle",
-        [KI_XFORM_SHUFFLE1] = "shuffle1",
-        [KI_XFORM_SHUFFLE2] = "shuffle2",
-        [KI_XFORM_SHUFFLE3] = "shuffle3",
-        [KI_XFORM_SHUFFLE4] = "shuffle4",
-        [KI_XFORM_SHUFFLE5] = "shuffle5",
-        [KI_XFORM_SHUFFLE6] = "shuffle6",
-        [KI_XFORM_SHUFFLE7] = "shuffle7",
-        [KI_XFORM_SHUFFLE8] = "shuffle8",
-        [KI_XFORM_SHUFFLE9] = "shuffle9",
-            [KI_XFORM_SHUFFLE10] = "shuffle10",
-                [KI_XFORM_ROT45] = "rot45",
-                [KI_XFORM_SPIRAL] = "spiral",
-                [KI_XFORM_COLSWAP34] = "colswap-3-4",
-                [KI_XFORM_COLSWAP24] = "colswap-2-4",
-                [KI_XFORM_COLSWAP14] = "colswap-1-4",
-                [KI_XFORM_AVG2]     = "avg2",
-                [KI_XFORM_AVG3]     = "avg3",
-                [KI_XFORM_AVG4]     = "avg4",
-    };
-    if (xf >= 0 && xf < KI_XFORM_COUNT) return names[xf];
-    return "?";
+/* ── Xform meta-info table — single source of truth for name + description ─── */
+typedef struct {
+    int         id;
+    const char *name;   /* short CLI token: "hflip", "rot90", etc. */
+    const char *desc;   /* human description (for --help-xform and --debug-member) */
+} ki_XformInfo;
+
+static const ki_XformInfo ki_xform_table[] = {
+    {KI_XFORM_ID,      "id",       "Identity (original image)"},
+    {KI_XFORM_HFLIP,   "hflip",    "Horizontal flip (left<->right)"},
+    {KI_XFORM_VFLIP,   "vflip",    "Vertical flip (top<->bottom)"},
+    {KI_XFORM_DFLIP1,  "dflip1",   "Main diagonal flip (transpose)"},
+    {KI_XFORM_DFLIP2,  "dflip2",   "Anti-diagonal flip"},
+    {KI_XFORM_ROT22,   "rot22",    "Rotate 22\302\260 clockwise (nearest-neighbor, fill 0)"},
+    {KI_XFORM_ROT45,   "rot45",    "Rotate 45\302\260 clockwise (nearest-neighbor, fill 0)"},
+    {KI_XFORM_ROT67,   "rot67",    "Rotate 67\302\260 clockwise (nearest-neighbor, fill 0)"},
+    {KI_XFORM_ROT90,   "rot90",    "Rotate 90\302\260 clockwise"},
+    {KI_XFORM_SFT_U1,  "sft-u1",   "Shift up 1 px"},
+    {KI_XFORM_SFT_U2,  "sft-u2",   "Shift up 2 px"},
+    {KI_XFORM_SFT_U3,  "sft-u3",   "Shift up 3 px"},
+    {KI_XFORM_SFT_D1,  "sft-d1",   "Shift down 1 px"},
+    {KI_XFORM_SFT_D2,  "sft-d2",   "Shift down 2 px"},
+    {KI_XFORM_SFT_D3,  "sft-d3",   "Shift down 3 px"},
+    {KI_XFORM_SFT_L1,  "sft-l1",   "Shift left 1 px"},
+    {KI_XFORM_SFT_L2,  "sft-l2",   "Shift left 2 px"},
+    {KI_XFORM_SFT_L3,  "sft-l3",   "Shift left 3 px"},
+    {KI_XFORM_SFT_R1,  "sft-r1",   "Shift right 1 px"},
+    {KI_XFORM_SFT_R2,  "sft-r2",   "Shift right 2 px"},
+    {KI_XFORM_SFT_R3,  "sft-r3",   "Shift right 3 px"},
+    {KI_XFORM_SHUFFLE, "shuffle",  "Random pixel permutation (pairwise swaps, seed 42)"},
+    {KI_XFORM_SHUFFLE1,"shuffle1", "Random pixel permutation (pairwise swaps, seed 1)"},
+    {KI_XFORM_SHUFFLE2,"shuffle2", "Random pixel permutation (pairwise swaps, seed 2)"},
+    {KI_XFORM_SHUFFLE3,"shuffle3", "Random pixel permutation (pairwise swaps, seed 3)"},
+    {KI_XFORM_SHUFFLE4,"shuffle4", "Random pixel permutation (pairwise swaps, seed 4)"},
+    {KI_XFORM_SHUFFLE5,"shuffle5", "Random pixel permutation (pairwise swaps, seed 5)"},
+    {KI_XFORM_SHUFFLE6,"shuffle6", "Random pixel permutation (pairwise swaps, seed 6)"},
+    {KI_XFORM_SHUFFLE7,"shuffle7", "Random pixel permutation (pairwise swaps, seed 7)"},
+    {KI_XFORM_SHUFFLE8,"shuffle8", "Random pixel permutation (pairwise swaps, seed 8)"},
+    {KI_XFORM_SHUFFLE9,"shuffle9", "Random pixel permutation (pairwise swaps, seed 9)"},
+    {KI_XFORM_SHUFFLE10,"shuffle10","Random pixel permutation (pairwise swaps, seed 10)"},
+    {KI_XFORM_SPIRAL,  "spiral",   "Spiral distortion (bilinear, strongest at center)"},
+    {KI_XFORM_COLSWAP34,"colswap-3-4","Swap col 3+4k <-> 4+4k per row (triple (0,3,7))"},
+    {KI_XFORM_COLSWAP24,"colswap-2-4","Swap col 2+4k <-> 4+4k per row (triple (0,2,6))"},
+    {KI_XFORM_COLSWAP14,"colswap-1-4","Swap col 1+4k <-> 4+4k per row (triple (0,1,5))"},
+    {KI_XFORM_AVG2,    "avg2",     "2-tap row-wise running avg (wrap-right)"},
+    {KI_XFORM_AVG3,    "avg3",     "3-tap row-wise running avg (wrap-right)"},
+    {KI_XFORM_AVG4,    "avg4",     "4-tap row-wise running avg (wrap-right)"},
+};
+
+/* ── Xform info lookup by ID ───────────────────────────────────── */
+static inline const ki_XformInfo *ki_xform_info(int xf) {
+    for (int i = 0; i < (int)(sizeof(ki_xform_table)/sizeof(ki_xform_table[0])); i++)
+        if (ki_xform_table[i].id == xf) return &ki_xform_table[i];
+    return NULL;
 }
+static inline const char *ki_xform_name(int xf) {
+    const ki_XformInfo *info = ki_xform_info(xf);
+    return info ? info->name : "?";
+}
+static inline const char *ki_xform_desc(int xf) {
+    const ki_XformInfo *info = ki_xform_info(xf);
+    return info ? info->desc : "?";
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+ * COLOR/ENCODING struct tables are defined AFTER the respective enums
+ * (below, to avoid forward-reference issues).
+ * ═══════════════════════════════════════════════════════════════════════ */
 
 /* ── Dataset-specific shuffle apply (defined in ki-local.h) ── */
 extern void ki_xform_shuffle_apply(uint8_t *restrict out,
@@ -212,23 +233,35 @@ static inline void ki_xform_raw(uint8_t *restrict out,
                     dst[y * w + x] = src[(w - 1 - x) * w + (h - 1 - y)];
             break;
         case KI_XFORM_ROT90:
-            /* Rotate 90° clockwise: out[y][x] = in[x][h-1-y] */
+            /* Rotate 90° clockwise: out[y][x] = in[h-1-x][y] */
             for (int y = 0; y < h; y++)
                 for (int x = 0; x < w; x++)
-                    dst[y * w + x] = src[x * w + (h - 1 - y)];
+                    dst[(size_t)y * (size_t)w + (size_t)x] = src[((size_t)h - 1 - (size_t)x) * (size_t)w + (size_t)y];
             break;
-        case KI_XFORM_ROT180:
-            /* Rotate 180°: out[y][x] = in[h-1-y][w-1-x] (= hflip(vflip)) */
-            for (int y = 0; y < h; y++)
-                for (int x = 0; x < w; x++)
-                    dst[y * w + x] = src[(h - 1 - y) * w + (w - 1 - x)];
+        case KI_XFORM_ROT22:
+        case KI_XFORM_ROT67: {
+            /* Rotate by angle° clockwise, nearest-neighbor, fill borders with 0 */
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+            float angle = (xf == KI_XFORM_ROT22) ? 22.0f : 67.0f;
+            float rad = angle * (float)M_PI / 180.0f;
+            float _c = cosf(rad), _s = sinf(rad);
+            float cx = (float)(w - 1) * 0.5f, cy = (float)(h - 1) * 0.5f;
+            for (int y = 0; y < h; y++) {
+                for (int x = 0; x < w; x++) {
+                    float fx = (float)x, fy = (float)y;
+                    float sx = _c * (fx - cx) + _s * (fy - cy) + cx;
+                    float sy = -_s * (fx - cx) + _c * (fy - cy) + cy;
+                    int isx = (int)(sx + 0.5f), isy = (int)(sy + 0.5f);
+                    if (isx >= 0 && isx < w && isy >= 0 && isy < h)
+                        dst[(size_t)y * (size_t)w + (size_t)x] = src[(size_t)isy * (size_t)w + (size_t)isx];
+                    else
+                        dst[(size_t)y * (size_t)w + (size_t)x] = 0;
+                }
+            }
             break;
-        case KI_XFORM_ROT270:
-            /* Rotate 270° clockwise (= rot90⁻¹): out[y][x] = in[w-1-x][y] */
-            for (int y = 0; y < h; y++)
-                for (int x = 0; x < w; x++)
-                    dst[y * w + x] = src[(w - 1 - x) * w + y];
-            break;
+        }
         /* ── Shifts: move entire image, fill vacated with 0 ──────── */
         case KI_XFORM_SFT_U1: case KI_XFORM_SFT_U2: case KI_XFORM_SFT_U3: {
             int n = xf - KI_XFORM_SFT_U1 + 1;
@@ -461,6 +494,45 @@ enum ki_encoding {
     KI_ENC_COUNT    = 14
 };
 
+/* ═══════════════════════════════════════════════════════════════════════
+ * ENCODING TABLE — single source of truth for name + description
+ * ═══════════════════════════════════════════════════════════════════════
+ * IDs from enum ki_encoding (KI_ENC_RAW=0 … KI_ENC_INV_EXP=13).
+ * Serialized as name strings in v7+ archives → add here, NEVER renumber. */
+typedef struct {
+    int         id;
+    const char *name;  /* short token: "exp", "gamma", etc. */
+    const char *desc;  /* human description */
+} ki_EncInfo;
+
+static const ki_EncInfo ki_enc_table[] = {
+    {KI_ENC_RAW,     "raw",     "Raw 8-bit pixel value (no encoding)"},
+    {KI_ENC_LIN7,    "lin7",    "7-level thermometer (legacy bin)"},
+    {KI_ENC_LIN8,    "lin",     "Linear 8-level thermometer"},
+    {KI_ENC_DOWN,    "down",    "Shadow-weighted (more resolution in shadows)"},
+    {KI_ENC_UP,      "up",      "Highlight-weighted (more resolution in highlights)"},
+    {KI_ENC_MID,     "mid",     "Midtone-weighted"},
+    {KI_ENC_LOG,     "log",     "Logarithmic (natural brightness perception)"},
+    {KI_ENC_EXP,     "exp",     "Exponential (heavily top-weighted)"},
+    {KI_ENC_SIG,     "sig",     "Sigmoid S-curve (smooth transition)"},
+    {KI_ENC_SQRT,    "sqrt",    "Square root (softer than exp)"},
+    {KI_ENC_CBRT,    "cbrt",    "Cube root (natural image curve)"},
+    {KI_ENC_GAMMA,   "gamma",   "Gamma 0.45 power-law"},
+    {KI_ENC_TRIANGLE,"tri",     "Triangle (peaks at 128, zero at ends)"},
+    {KI_ENC_INV_EXP, "inv-exp", "Inverse exp (dark emphasis, 1-e^(-k*x))"},
+};
+
+static inline const ki_EncInfo *ki_enc_info(int id) {
+    for (int i = 0; i < (int)(sizeof(ki_enc_table)/sizeof(ki_enc_table[0])); i++)
+        if (ki_enc_table[i].id == id) return &ki_enc_table[i];
+    return NULL;
+}
+/* ki_enc_name_short() — lookup in table */
+static inline const char *ki_enc_name_short(int id) {
+    const ki_EncInfo *info = ki_enc_info(id);
+    return info ? info->name : "?";
+}
+
 #ifdef KI_BIT_WIDTH
 #  define KI_ENC_WIDTH_DEFAULT KI_BIT_WIDTH
 #else
@@ -470,28 +542,6 @@ enum ki_encoding {
 /* ═══════════════════════════════════════════════════════════════════════
  * ENCODING NAMES (for display)
  * ═══════════════════════════════════════════════════════════════════════ */
-
-/* ── Kurzname (ohne Width-Suffix) ──────────────────────────────── */
-static inline const char *ki_enc_name_short(int enc) {
-    static const char *names[] = {
-        [KI_ENC_RAW]     = "raw",
-        [KI_ENC_LIN7]    = "lin7",
-        [KI_ENC_LIN8]    = "lin",
-        [KI_ENC_DOWN]    = "down",
-        [KI_ENC_UP]      = "up",
-        [KI_ENC_MID]     = "mid",
-        [KI_ENC_LOG]     = "log",
-        [KI_ENC_EXP]     = "exp",
-        [KI_ENC_SIG]     = "sig",
-        [KI_ENC_SQRT]    = "sqrt",
-        [KI_ENC_CBRT]    = "cbrt",
-        [KI_ENC_GAMMA]   = "gamma",
-        [KI_ENC_TRIANGLE]= "tri",
-        [KI_ENC_INV_EXP] = "inv-exp",
-    };
-    if (enc >= 0 && enc < KI_ENC_COUNT) return names[enc];
-    return "?";
-}
 
 /* ── All encoding names as comma-separated string (for error messages) ─ */
 static inline const char *ki_enc_names_all(void) {
@@ -529,53 +579,58 @@ static inline int ki_strcasecmp(const char *a, const char *b) {
     return (int)(unsigned char)*a - (int)(unsigned char)*b;
 }
 
+/* Helper: look up a bare encoding token (no width suffix) in ki_enc_table[] */
+static inline int ki_enc_parse_name(const char *tok) {
+    for (int i = 0; i < (int)(sizeof(ki_enc_table)/sizeof(ki_enc_table[0])); i++)
+        if (ki_strcasecmp(tok, ki_enc_table[i].name) == 0)
+            return ki_enc_table[i].id;
+    return -1;
+}
+
 static inline int ki_enc_parse(const char *tok, int *out_width) {
     int tok_len = (int)strlen(tok);
     if (tok_len > 32) return -1;
+    /* Try with width suffix first: "exp16", "gamma8", "lin32" */
     static const int widths[] = {32, 16, 8};
     for (int wi = 0; wi < 3; wi++) {
         int w = widths[wi];
         char wstr[4];
         snprintf(wstr, sizeof(wstr), "%d", w);
         int wslen = (int)strlen(wstr);
-        /* Number suffix: use strcmp (digits are case-insensitive by nature) */
         if (tok_len > wslen && memcmp(tok + tok_len - wslen, wstr, (size_t)wslen) == 0) {
-            char prefix[64];  /* 64 > max tok_len 32, safe for any prefix */
+            char prefix[64];
             int plen = tok_len - wslen;
             memcpy(prefix, tok, (size_t)plen);
             prefix[plen] = '\0';
-            if (ki_strcasecmp(prefix, "raw")  == 0) { if (out_width) *out_width = w; return KI_ENC_RAW; }
-            if (ki_strcasecmp(prefix, "lin7") == 0) { if (out_width) *out_width = w; return KI_ENC_LIN7; }
-            if (ki_strcasecmp(prefix, "lin8") == 0 || ki_strcasecmp(prefix, "lin") == 0) { if (out_width) *out_width = w; return KI_ENC_LIN8; }
-            if (ki_strcasecmp(prefix, "down") == 0 || ki_strcasecmp(prefix, "unten") == 0) { if (out_width) *out_width = w; return KI_ENC_DOWN; }
-            if (ki_strcasecmp(prefix, "up")   == 0 || ki_strcasecmp(prefix, "oben") == 0) { if (out_width) *out_width = w; return KI_ENC_UP; }
-            if (ki_strcasecmp(prefix, "mid")  == 0 || ki_strcasecmp(prefix, "mitte") == 0) { if (out_width) *out_width = w; return KI_ENC_MID; }
-            if (ki_strcasecmp(prefix, "log")  == 0) { if (out_width) *out_width = w; return KI_ENC_LOG; }
-            if (ki_strcasecmp(prefix, "exp")  == 0) { if (out_width) *out_width = w; return KI_ENC_EXP; }
-            if (ki_strcasecmp(prefix, "sig")     == 0) { if (out_width) *out_width = w; return KI_ENC_SIG; }
-            if (ki_strcasecmp(prefix, "sqrt")    == 0) { if (out_width) *out_width = w; return KI_ENC_SQRT; }
-            if (ki_strcasecmp(prefix, "cbrt")    == 0) { if (out_width) *out_width = w; return KI_ENC_CBRT; }
-            if (ki_strcasecmp(prefix, "gamma")   == 0) { if (out_width) *out_width = w; return KI_ENC_GAMMA; }
-            if (ki_strcasecmp(prefix, "tri")     == 0 || ki_strcasecmp(prefix, "triangle") == 0) { if (out_width) *out_width = w; return KI_ENC_TRIANGLE; }
-            if (ki_strcasecmp(prefix, "inv-exp") == 0 || ki_strcasecmp(prefix, "invexp") == 0) { if (out_width) *out_width = w; return KI_ENC_INV_EXP; }
+            /* German aliases: also check expanded names */
+            int id = ki_enc_parse_name(prefix);
+            if (id < 0) {
+                if (ki_strcasecmp(prefix, "unten") == 0) id = KI_ENC_DOWN;
+                else if (ki_strcasecmp(prefix, "oben") == 0) id = KI_ENC_UP;
+                else if (ki_strcasecmp(prefix, "mitte") == 0) id = KI_ENC_MID;
+                else if (ki_strcasecmp(prefix, "exponentiell") == 0) id = KI_ENC_EXP;
+                else if (ki_strcasecmp(prefix, "sigmoid") == 0) id = KI_ENC_SIG;
+                else if (ki_strcasecmp(prefix, "logarithmisch") == 0) id = KI_ENC_LOG;
+                else if (ki_strcasecmp(prefix, "triangle") == 0) id = KI_ENC_TRIANGLE;
+                else if (ki_strcasecmp(prefix, "invexp") == 0) id = KI_ENC_INV_EXP;
+            }
+            if (id >= 0) { if (out_width) *out_width = w; return id; }
         }
     }
-    if (out_width) *out_width = KI_ENC_WIDTH_DEFAULT;
-    if (ki_strcasecmp(tok, "raw")  == 0) return KI_ENC_RAW;
-    if (ki_strcasecmp(tok, "lin7") == 0) return KI_ENC_LIN7;
-    if (ki_strcasecmp(tok, "lin8") == 0 || ki_strcasecmp(tok, "lin") == 0) return KI_ENC_LIN8;
-    if (ki_strcasecmp(tok, "down") == 0 || ki_strcasecmp(tok, "unten") == 0) return KI_ENC_DOWN;
-    if (ki_strcasecmp(tok, "up")   == 0 || ki_strcasecmp(tok, "oben") == 0) return KI_ENC_UP;
-    if (ki_strcasecmp(tok, "mid")  == 0 || ki_strcasecmp(tok, "mitte") == 0) return KI_ENC_MID;
-    if (ki_strcasecmp(tok, "log")  == 0 || ki_strcasecmp(tok, "logarithmisch") == 0) return KI_ENC_LOG;
-    if (ki_strcasecmp(tok, "exp")  == 0 || ki_strcasecmp(tok, "exponentiell") == 0) return KI_ENC_EXP;
-    if (ki_strcasecmp(tok, "sig")  == 0 || ki_strcasecmp(tok, "sigmoid") == 0) return KI_ENC_SIG;
-    if (ki_strcasecmp(tok, "sqrt") == 0) return KI_ENC_SQRT;
-    if (ki_strcasecmp(tok, "cbrt") == 0) return KI_ENC_CBRT;
-    if (ki_strcasecmp(tok, "gamma") == 0) return KI_ENC_GAMMA;
-    if (ki_strcasecmp(tok, "tri")  == 0 || ki_strcasecmp(tok, "triangle") == 0) return KI_ENC_TRIANGLE;
-    if (ki_strcasecmp(tok, "inv-exp") == 0 || ki_strcasecmp(tok, "invexp") == 0) return KI_ENC_INV_EXP;
-    return -1;
+    /* No width suffix → try exact match + German aliases */
+    int id = ki_enc_parse_name(tok);
+    if (id < 0) {
+        if (ki_strcasecmp(tok, "unten") == 0) id = KI_ENC_DOWN;
+        else if (ki_strcasecmp(tok, "oben") == 0) id = KI_ENC_UP;
+        else if (ki_strcasecmp(tok, "mitte") == 0) id = KI_ENC_MID;
+        else if (ki_strcasecmp(tok, "exponentiell") == 0) id = KI_ENC_EXP;
+        else if (ki_strcasecmp(tok, "sigmoid") == 0) id = KI_ENC_SIG;
+        else if (ki_strcasecmp(tok, "logarithmisch") == 0) id = KI_ENC_LOG;
+        else if (ki_strcasecmp(tok, "triangle") == 0) id = KI_ENC_TRIANGLE;
+        else if (ki_strcasecmp(tok, "invexp") == 0) id = KI_ENC_INV_EXP;
+    }
+    if (id >= 0 && out_width) *out_width = KI_ENC_WIDTH_DEFAULT;
+    return id;
 }
 
 /* ── Xform parser: single token → xform enum value ────────────
@@ -584,45 +639,9 @@ static inline int ki_enc_parse(const char *tok, int *out_width) {
  * Returns -1 for unknown tokens.
  */
 static inline int ki_xform_parse(const char *tok) {
-    if (ki_strcasecmp(tok, "id")         == 0) return KI_XFORM_ID;
-    if (ki_strcasecmp(tok, "hflip")      == 0) return KI_XFORM_HFLIP;
-    if (ki_strcasecmp(tok, "vflip")      == 0) return KI_XFORM_VFLIP;
-    if (ki_strcasecmp(tok, "dflip1")     == 0) return KI_XFORM_DFLIP1;
-    if (ki_strcasecmp(tok, "dflip2")     == 0) return KI_XFORM_DFLIP2;
-    if (ki_strcasecmp(tok, "rot90")      == 0) return KI_XFORM_ROT90;
-    if (ki_strcasecmp(tok, "rot180")     == 0) return KI_XFORM_ROT180;
-    if (ki_strcasecmp(tok, "rot270")     == 0) return KI_XFORM_ROT270;
-    if (ki_strcasecmp(tok, "sft-u1")     == 0) return KI_XFORM_SFT_U1;
-    if (ki_strcasecmp(tok, "sft-u2")     == 0) return KI_XFORM_SFT_U2;
-    if (ki_strcasecmp(tok, "sft-u3")     == 0) return KI_XFORM_SFT_U3;
-    if (ki_strcasecmp(tok, "sft-d1")     == 0) return KI_XFORM_SFT_D1;
-    if (ki_strcasecmp(tok, "sft-d2")     == 0) return KI_XFORM_SFT_D2;
-    if (ki_strcasecmp(tok, "sft-d3")     == 0) return KI_XFORM_SFT_D3;
-    if (ki_strcasecmp(tok, "sft-l1")     == 0) return KI_XFORM_SFT_L1;
-    if (ki_strcasecmp(tok, "sft-l2")     == 0) return KI_XFORM_SFT_L2;
-    if (ki_strcasecmp(tok, "sft-l3")     == 0) return KI_XFORM_SFT_L3;
-    if (ki_strcasecmp(tok, "sft-r1")     == 0) return KI_XFORM_SFT_R1;
-    if (ki_strcasecmp(tok, "sft-r2")     == 0) return KI_XFORM_SFT_R2;
-    if (ki_strcasecmp(tok, "sft-r3")     == 0) return KI_XFORM_SFT_R3;
-    if (ki_strcasecmp(tok, "shuffle")    == 0) return KI_XFORM_SHUFFLE;
-    if (ki_strcasecmp(tok, "shuffle1")   == 0) return KI_XFORM_SHUFFLE1;
-    if (ki_strcasecmp(tok, "shuffle2")   == 0) return KI_XFORM_SHUFFLE2;
-    if (ki_strcasecmp(tok, "shuffle3")   == 0) return KI_XFORM_SHUFFLE3;
-    if (ki_strcasecmp(tok, "shuffle4")   == 0) return KI_XFORM_SHUFFLE4;
-    if (ki_strcasecmp(tok, "shuffle5")   == 0) return KI_XFORM_SHUFFLE5;
-    if (ki_strcasecmp(tok, "shuffle6")   == 0) return KI_XFORM_SHUFFLE6;
-    if (ki_strcasecmp(tok, "shuffle7")   == 0) return KI_XFORM_SHUFFLE7;
-    if (ki_strcasecmp(tok, "shuffle8")   == 0) return KI_XFORM_SHUFFLE8;
-    if (ki_strcasecmp(tok, "shuffle9")   == 0) return KI_XFORM_SHUFFLE9;
-    if (ki_strcasecmp(tok, "shuffle10")  == 0) return KI_XFORM_SHUFFLE10;
-    if (ki_strcasecmp(tok, "rot45")      == 0) return KI_XFORM_ROT45;
-    if (ki_strcasecmp(tok, "spiral")     == 0) return KI_XFORM_SPIRAL;
-    if (ki_strcasecmp(tok, "colswap-3-4") == 0) return KI_XFORM_COLSWAP34;
-    if (ki_strcasecmp(tok, "colswap-2-4") == 0) return KI_XFORM_COLSWAP24;
-    if (ki_strcasecmp(tok, "colswap-1-4") == 0) return KI_XFORM_COLSWAP14;
-    if (ki_strcasecmp(tok, "avg2") == 0) return KI_XFORM_AVG2;
-    if (ki_strcasecmp(tok, "avg3") == 0) return KI_XFORM_AVG3;
-    if (ki_strcasecmp(tok, "avg4") == 0) return KI_XFORM_AVG4;
+    for (int i = 0; i < (int)(sizeof(ki_xform_table)/sizeof(ki_xform_table[0])); i++)
+        if (ki_strcasecmp(tok, ki_xform_table[i].name) == 0)
+            return ki_xform_table[i].id;
     return -1;
 }
 
@@ -637,27 +656,37 @@ static inline int ki_xform_parse(const char *tok) {
  * Flexible: simply edit the table — tokens are resolved by ki_xform_parse
  * and must be valid xform names (not IDs).
  */
+/* ── Xform alias table (like color/encoding aliases) ────────── */
+typedef struct {
+    const char *name;       /* CLI token: "performance", "all", "shift" */
+    const char *expansion;  /* comma-sep expansion: "id,hflip,rot90,..." */
+    const char *desc;       /* human description */
+} ki_XformAlias;
+
+static const ki_XformAlias ki_xform_alias_table[] = {
+    {"all-basic",     "id,hflip,vflip,dflip1,dflip2,rot90,rot22,rot67,rot45,spiral,colswap-3-4,colswap-2-4,colswap-1-4",
+                      "8 geometric + 3 colswap + spiral + rot45"},
+    {"all-shuffle",   "shuffle,shuffle1,shuffle2,shuffle3,shuffle4,shuffle5,shuffle6,shuffle7,shuffle8,shuffle9,shuffle10",
+                      "11 pixel shuffles (seeds 0..10)"},
+    {"all-shift",     "sft-u1,sft-u2,sft-u3,sft-d1,sft-d2,sft-d3,sft-l1,sft-l2,sft-l3,sft-r1,sft-r2,sft-r3",
+                      "12 pixel shifts (4 dir × 3 dist)"},
+    {"shift",         "sft-u1,sft-u2,sft-u3,sft-d1,sft-d2,sft-d3,sft-l1,sft-l2,sft-l3,sft-r1,sft-r2,sft-r3",
+                      "12 pixel shifts (4 dir × 3 dist)"},
+    {"performance",   "id,hflip,rot90,rot45,spiral",
+                      "5 fast transforms for quick experiments"},
+    {"performance-2", "id,hflip,vflip,dflip1,dflip2,rot90,rot45,spiral",
+                      "8 transforms (includes D4 flips)"},
+    {"augmentation",  "all-basic,all-shift",
+                      "all geometric + shifts (no shuffle)"},
+    {"all",           "all-basic,all-shift,all-shuffle",
+                      "all available transforms"},
+    {"sweep",         "id,hflip,vflip,dflip1,dflip2,rot22,rot45,rot67,rot90,shuffle,spiral,colswap-3-4,colswap-2-4,colswap-1-4,avg2,avg3,avg4", "all for sweep"},
+};
+
 static inline const char *ki_xform_alias_expand(const char *name) {
-    static const struct {
-        const char *name;
-        const char *expansion;
-    } _aliases[] = {
-        {"all-basic",     "id,hflip,vflip,dflip1,dflip2,rot90,rot180,rot270,rot45,spiral,colswap-3-4,colswap-2-4,colswap-1-4"},
-        {"all-shuffle",   "shuffle,shuffle1,shuffle2,shuffle3,shuffle4,shuffle5,"
-                          "shuffle6,shuffle7,shuffle8,shuffle9,shuffle10"},
-        {"all-shift",     "sft-u1,sft-u2,sft-u3,sft-d1,sft-d2,sft-d3,"
-                          "sft-l1,sft-l2,sft-l3,sft-r1,sft-r2,sft-r3"},
-        {"all-shuffle",   "shuffle,shuffle1,shuffle2,shuffle3,shuffle4,shuffle5"},
-        {"performance",   "id,hflip,rot90,rot45,spiral"},
-        {"performance-2", "id,hflip,vflip,dflip1,dflip2,rot90,rot45,spiral"},
-        {"augmentation",  "all-basic,all-shift"},
-        {"all",           "all-basic,all-shift,all-shuffle"},
-    };
-    for (size_t i = 0; i < sizeof(_aliases)/sizeof(_aliases[0]); i++) {
-        if (ki_strcasecmp(name, _aliases[i].name) == 0) {
-            return _aliases[i].expansion;
-        }
-    }
+    for (int i = 0; i < (int)(sizeof(ki_xform_alias_table)/sizeof(ki_xform_alias_table[0])); i++)
+        if (ki_strcasecmp(name, ki_xform_alias_table[i].name) == 0)
+            return ki_xform_alias_table[i].expansion;
     return NULL;
 }
 
@@ -820,78 +849,185 @@ static inline uint32_t enc_lut_get(int enc, int width, uint8_t pv) {
 
 enum ki_color_bit {
     COLOR_MNIST = 0,
-    COLOR_R     = 1,
-    COLOR_G     = 2,
-    COLOR_B     = 3,
-    COLOR_Y     = 4,   /* ITU-R BT.601: Y=(77R+150G+29B)>>8 */
-    COLOR_YL    = 5,   /* ITU-R BT.709: Y=(54R+183G+18B)>>8 */
-    COLOR_AL    = 6,   /* (R+G)>>1           (lum) */
-    COLOR_AM    = 7,   /* R-G opponent       (rg)  */
-    COLOR_AP    = 8,   /* B-(R+G)/2 opponent (by)  */
-    COLOR_RG    = 9,   /* R-G opponent (clamp128)   */
-    COLOR_RB    = 10,  /* R-B opponent (clamp128)   */
-    COLOR_GB    = 11,  /* G-B opponent (clamp128)   */
-    COLOR_BL    = 12,  /* (R+B)>>1 */
-    COLOR_BM    = 13,  /* R-B opponent */
-    COLOR_BP    = 14,  /* G-(R+B)/2 opponent */
+    COLOR_R        ,
+    COLOR_G        ,
+    COLOR_B        ,
+    COLOR_Y        ,  /* ITU-R BT.601: Y=(77R+150G+29B)>>8 */ 
+    COLOR_YL       ,  /* ITU-R BT.709: Y=(54R+183G+18B)>>8 */ 
+    COLOR_AL       ,  /* (R+G)>>1           (lum) */
+    COLOR_AM       ,  /* R-G opponent       (rg)  */
+    COLOR_AP       ,  /* B-(R+G)/2 opponent (by)  */
+    COLOR_RG       ,  /* R-G opponent (clamp128)   */
+    COLOR_RB       ,  /* R-B opponent (clamp128)   */
+    COLOR_GB       ,  /* G-B opponent (clamp128)   */
+    COLOR_BL       ,  /* (R+B)>>1 */
+    COLOR_BM       ,  /* R-B opponent */
+    COLOR_BP       ,  /* G-(R+B)/2 opponent */
 
-    COLOR_H     = 15,  /* Hue */
-    COLOR_S     = 16,  /* Saturation */
-    COLOR_C     = 17,  /* Contrast (chromatische Varianz) */
+    COLOR_H        ,  /* Hue */
+    COLOR_S        ,  /* Saturation */
+    COLOR_C        ,  /* Contrast (chromatische Varianz) */
 
-    COLOR_CL    = 18,  /* (G+B)>>1 */
-    COLOR_CM    = 19,  /* G-B opponent */
-    COLOR_CP    = 20,  /* R-(G+B)/2 opponent */
+    COLOR_CL       ,  /* (G+B)>>1 */
+    COLOR_CM       ,  /* G-B opponent */
+    COLOR_CP       ,  /* R-(G+B)/2 opponent */
 
-    COLOR_EDGE  = 21,  /* Sobel edges on Y luminance (for --channels edge) */
-    COLOR_BIN   = 22,  /* Otsu-binarized Y (filled black/white) */
-    COLOR_LBP   = 23,  /* Local Binary Pattern (texture) */
-    COLOR_DOG   = 24,  /* Difference of Gaussians (band-pass) */
-    COLOR_VAR   = 25,  /* Local variance (roughness) */
-    COLOR_DIR   = 26,  /* Gradient direction (8-bin quantized) */
-    COLOR_RANGE = 27,  /* Local range (max-min in 3×3) */
-    COLOR_LBP_RG = 28, /* LBP on RG opponent (chromatic texture) */
-    COLOR_DIST  = 29,  /* Center distance (positional encoding) */
+    COLOR_EDGE     ,  /* Sobel edges on Y luminance (for --channels edge) */
+    COLOR_BIN      ,  /* Otsu-binarized Y (filled black/white) */
+    COLOR_LBP      ,  /* Local Binary Pattern (texture) */
+    COLOR_DOG      ,  /* Difference of Gaussians (band-pass) */
+    COLOR_VAR      ,  /* Local variance (roughness) */
+    COLOR_DIR      ,  /* Gradient direction (8-bin quantized) */
+    COLOR_RANGE    ,  /* Local range (max-min in 3×3) */
+    COLOR_LBP_RG   ,  /* LBP on RG opponent (chromatic texture) */
+    COLOR_LBP_RB   ,  /* LBP on RB opponent (chromatic texture) */
+    COLOR_LBP_GB   ,  /* LBP on GB opponent (chromatic texture) */
 
-    COLOR_NB    = 30   /* number of Farben */
+    COLOR_NB          /* number of Farben */
 };
 
-/* ── Block-Namen for display ────────────────────────────────── */
-static inline const char *ki_color_name(int bit) {
-    static const char *names[COLOR_NB] = {
-        [COLOR_MNIST] = "mnist",
-        [COLOR_R]     = "R",
-        [COLOR_G]     = "G",
-        [COLOR_B]     = "B",
-        [COLOR_Y]     = "Y",
-        [COLOR_YL]    = "YL",
-        [COLOR_AL]    = "AL",
-        [COLOR_AM]    = "AM",
-        [COLOR_AP]    = "AP",
-        [COLOR_RG]    = "RG",
-        [COLOR_RB]    = "RB",
-        [COLOR_GB]    = "GB",
-        [COLOR_BL]    = "BL",
-        [COLOR_BM]    = "BM",
-        [COLOR_BP]    = "BP",
-        [COLOR_H]     = "H",
-        [COLOR_S]     = "S",
-        [COLOR_C]     = "C",
-        [COLOR_CL]    = "CL",
-        [COLOR_CM]    = "CM",
-        [COLOR_CP]    = "CP",
-        [COLOR_EDGE]  = "edge",
-        [COLOR_BIN]   = "bin",
-        [COLOR_LBP]   = "lbp",
-        [COLOR_DOG]   = "dog",
-        [COLOR_VAR]   = "var",
-        [COLOR_DIR]   = "dir",
-        [COLOR_RANGE] = "range",
-        [COLOR_LBP_RG]= "lbp-rg",
-        [COLOR_DIST]  = "dist",
-    };
-    if ((unsigned)bit < COLOR_NB) return names[bit];
-    return "?";
+/* ═══════════════════════════════════════════════════════════════════════
+ * COLOR CHANNEL TABLE — single source of truth for name + description
+ * ═══════════════════════════════════════════════════════════════════════
+ * IDs from enum ki_color_bit (COLOR_MNIST=0 … COLOR_LBP_GB=31).
+ * Serialized as name strings in v7+ archives → add here, NEVER renumber. */
+typedef struct {
+    int         id;
+    const char *name;  /* short token: "R", "LBP", etc. */
+    const char *desc;  /* human description */
+} ki_ColorInfo;
+
+static const ki_ColorInfo ki_color_table[] = {
+    {COLOR_MNIST,  "mnist",  "MNIST grayscale (single block)"},
+    {COLOR_R,      "R",      "Red channel (raw)"},
+    {COLOR_G,      "G",      "Green channel (raw)"},
+    {COLOR_B,      "B",      "Blue channel (raw)"},
+    {COLOR_Y,      "Y",      "ITU-R BT.601 Luminance Y"},
+    {COLOR_YL,     "YL",     "ITU-R BT.709 Luminance YL"},
+    {COLOR_AL,     "AL",     "(R+G)/2 luminance"},
+    {COLOR_AM,     "AM",     "R-G opponent (rg)"},
+    {COLOR_AP,     "AP",     "B-(R+G)/2 opponent (by)"},
+    {COLOR_RG,     "RG",     "R-G clamp128 opponent"},
+    {COLOR_RB,     "RB",     "R-B clamp128 opponent"},
+    {COLOR_GB,     "GB",     "G-B clamp128 opponent"},
+    {COLOR_BL,     "BL",     "(R+B)/2 luminance"},
+    {COLOR_BM,     "BM",     "R-B opponent"},
+    {COLOR_BP,     "BP",     "G-(R+B)/2 opponent"},
+    {COLOR_H,      "H",      "Hue (atan2 color angle)"},
+    {COLOR_S,      "S",      "Saturation (max-min)"},
+    {COLOR_C,      "C",      "Contrast (chromatic variance)"},
+    {COLOR_CL,     "CL",     "(G+B)/2 luminance"},
+    {COLOR_CM,     "CM",     "G-B opponent"},
+    {COLOR_CP,     "CP",     "R-(G+B)/2 opponent"},
+    {COLOR_EDGE,   "edge",   "Sobel edges on Y luminance"},
+    {COLOR_BIN,    "bin",    "Otsu-binarized Y (filled black/white)"},
+    {COLOR_LBP,    "lbp",    "Local Binary Pattern (texture)"},
+    {COLOR_DOG,    "dog",    "Difference of Gaussians (band-pass)"},
+    {COLOR_VAR,    "var",    "Local variance (roughness)"},
+    {COLOR_DIR,    "dir",    "Gradient direction (8-bin)"},
+    {COLOR_RANGE,  "range",  "Local range (max-min 3x3)"},
+    {COLOR_LBP_RG, "lbp-rg", "LBP on RG opponent (chromatic texture)"},
+    {COLOR_LBP_RB, "lbp-rb", "LBP on RB opponent (chromatic texture)"},
+    {COLOR_LBP_GB, "lbp-gb", "LBP on GB opponent (chromatic texture)"},
+};
+
+static inline const ki_ColorInfo *ki_color_info(int id) {
+    for (int i = 0; i < (int)(sizeof(ki_color_table)/sizeof(ki_color_table[0])); i++)
+        if (ki_color_table[i].id == id) return &ki_color_table[i];
+    return NULL;
+}
+/* ki_color_name() — lookup in table */
+static inline const char *ki_color_name(int id) {
+    const ki_ColorInfo *info = ki_color_info(id);
+    return info ? info->name : "?";
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+ * COLOR CHANNEL ALIASES — alternative names + group expansions
+ * ═══════════════════════════════════════════════════════════════════════
+ * Like xform/encoding aliases: comma-separated expansion string.
+ * The --channels parser expands these iteratively (5-pass).
+ * Single-channel alias → single name; group alias → comma list. */
+typedef struct {
+    const char *name;       /* CLI token: "y", "601", "auge", "all" */
+    const char *expansion;  /* comma-sep expansion: "Y", "AL,AM,AP" */
+    const char *desc;       /* human description */
+} ki_ColorAlias;
+
+static const ki_ColorAlias ki_color_alias_table[] = {
+    {"y",     "Y",        "ITU-R BT.601 Luminance"},
+    {"601",   "Y",        "ITU-R BT.601 Luminance"},
+    {"yl",    "YL",       "ITU-R BT.709 Luminance"},
+    {"709",   "YL",       "ITU-R BT.709 Luminance"},
+    {"lum",   "AL",       "(R+G)/2 luminance"},
+    {"by",    "AP",       "B-(R+G)/2 opponent"},
+    {"auge",  "AL,AM,AP", "3-channel opponent set"},
+    {"grey",  "Y,YL",     "2 ITU luminance variants"},
+    {"rgb",   "R,G,B",    "3 raw RGB channels"},
+    {"diff",  "RG,RB,GB", "3-channel color difference set"},
+    {"sweep", "R,G,B,Y,AL,AM,AP,RG,RB,GB,BL,BM,BP,H,S,C,CL,CM,CP,edge,bin,lbp,dog,var,dir,range,lbp-rg,lbp-rb,lbp-gb",
+        "all for sweep test"},
+};
+
+static inline const char *ki_color_alias_expand(const char *name) {
+    for (int i = 0; i < (int)(sizeof(ki_color_alias_table)/sizeof(ki_color_alias_table[0])); i++)
+        if (ki_strcasecmp(name, ki_color_alias_table[i].name) == 0)
+            return ki_color_alias_table[i].expansion;
+    return NULL;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+ * ENCODING ALIAS TABLE — dataset-grouped encoding presets
+ * ═══════════════════════════════════════════════════════════════════════
+ * Single tokens expand to comma-separated channel:encoding specs.
+ * Like xform/color aliases: 5-pass iterative expansion in the parser. */
+typedef struct {
+    const char *name;       /* CLI token: "performance", "ey-b", "latest" */
+    const char *expansion;  /* comma-sep expansion: "bl:gamma,bm:down,..." */
+    const char *desc;       /* human description */
+} ki_EncAlias;
+
+static const ki_EncAlias ki_enc_alias_table[] = {
+    /* CIFAR-10 specific */
+    {"ey-c",      "r:up,cl:down,cm:sig,cp:sig",              "Red-cyan opponent encoding"},
+    {"ey-c-2",    "cl:down,cm:sig,cp:sig",                    "Cyan-only, no raw red"},
+    {"ey-b",      "g:up,bl:down,bm:sig,bp:sig",               "Blue-based opponent (original)"},
+    {"ey-a",      "b:up,al:down,am:sig,ap:sig",               "Amber-based opponent (original)"},
+    {"ey-h",      "h:down,c:exp,gb:sig",                      "Hue + contrast + blue-yellow"},
+    {"ey-s",      "lbp:up,dog:sig,var:exp",                   "Spatial/texture (LBP, DoG, Var)"},
+    {"old",       "ey-b,ey-a,ey-h,ey-s",                      "Original 14-member set"},
+    {"ey-a-3",    "al:sqrt,am:sig,ap:sig",                    "Maj3-optimized amber"},
+    {"ey-b-3",    "bl:gamma,bm:down,bp:sig",                  "Maj3-optimized blue"},
+    {"ey-h-3",    "h:down,c:gamma,gb:sig",                    "Maj3-optimized hue"},
+    {"ey-s-3",    "dir:tri,range:sqrt,lbp-rb:exp",            "Maj3-optimized spatial"},
+    {"performance","ey-b-3,ey-a-3,ey-h-3,ey-s-3",             "12-member sweet spot (maj3)"},
+    {"ey-b-1",    "bl:gamma,bm:lin,bp:sig",                   "Maj1-optimized blue"},
+    {"ey-a-1",    "al:sqrt,am:sig,ap:sig",                    "Maj1-optimized amber"},
+    {"ey-h-1",    "h:up,c:gamma,gb:sig",                      "Maj1-optimized hue"},
+    {"ey-s-1",    "dir:lin,range:gamma,lbp-rg:exp",           "Maj1-optimized spatial"},
+    {"performance-1","ey-b-1,ey-a-1,ey-h-1,ey-s-1",           "12-member sweet spot (maj1)"},
+    {"ey-m1-b",   "bl:gamma,bm:lin,bp:sig",                   "Maj1-sweep blue"},
+    {"ey-m1-a",   "al:sqrt,am:sig,ap:sig",                    "Maj1-sweep amber"},
+    {"ey-m1-h",   "h:up,c:gamma,gb:sig",                      "Maj1-sweep hue"},
+    {"ey-m1-s",   "dir:lin,range:gamma,lbp-rg:up",            "Maj1-sweep spatial"},
+    {"performance-maj1","ey-m1-b,ey-m1-a,ey-m1-h,ey-m1-s",    "12-member sweet spot (maj1 sweep)"},
+    {"ey-s-2b",   "lbp:gamma,dog:sig,var:exp",                "Spatial variant (gamma LBP)"},
+    {"ey-s-2c",   "range:exp,var:log,dir:tri",                "Spatial variant (exp range)"},
+    {"top-rgb",   "r:down,g:down,b:down",                     "Top-weighted raw RGB"},
+    {"best-mnist","exp,log,log",                               "Best MNIST encoding (reference)"},
+    {"latest-2",  "g:down,bl:gamma,bm:sig,bp:sig,b:sqrt,al:down,am:sig,ap:sig,h:lin,c:cbrt,gb:sig",
+                                                                "Optimized 11-member set"},
+    {"sweep", "raw,lin,down,up,mid,log,exp,sig,sqrt,cbrt,gamma,tri,inv-exp",
+        "all for sweep test"},
+
+    {"debug", "exp", "debug sweep"},
+};
+
+static inline const char *ki_encoding_alias_expand(const char *name) {
+    for (int i = 0; i < (int)(sizeof(ki_enc_alias_table)/sizeof(ki_enc_alias_table[0])); i++)
+        if (ki_strcasecmp(name, ki_enc_alias_table[i].name) == 0)
+            return ki_enc_alias_table[i].expansion;
+    return NULL;
 }
 
 /* ── All color names as comma-separated string (for error messages) ─── */
@@ -970,7 +1106,8 @@ static inline void ki_blocks_from_rgb(int r, int g, int b, uint8_t blocks[COLOR_
     blocks[COLOR_DIR] = 0;
     blocks[COLOR_RANGE] = 0;
     blocks[COLOR_LBP_RG] = 0;
-    blocks[COLOR_DIST] = 0;
+    blocks[COLOR_LBP_RB] = 0;
+    blocks[COLOR_LBP_GB] = 0;
 
     blocks[COLOR_CL] = (uint8_t)((g + b) >> 1);
     blocks[COLOR_CM] = (uint8_t)ki_clamp_u8(128 + (g - b));
@@ -1417,21 +1554,69 @@ static inline void ki_compute_lbp_rg(uint8_t px[COLOR_NB][1024], int w, int h) {
     }
 }
 
-/* ═══════════════════════════════════════════════════════════════════════
- * CENTER DISTANCE — positional encoding for spatial context
- * ═══════════════════════════════════════════════════════════════════════
- * Computes: COLOR_DIST — Manhattan distance from center (15.5,15.5).
- * Inverted: center=255, border=0. Static map, same for all images. */
+/* ── LBP on RB opponent (chromatic texture, red-blue) ──────────── */
 __attribute__((unused))
-static inline void ki_compute_dist(uint8_t px[COLOR_NB][1024], int w, int h) {
-    int cx = w / 2, cy = h / 2;  /* center pixel */
-    for (int y = 0; y < h; y++) {
-        for (int x = 0; x < w; x++) {
-            int d = abs(x - cx) + abs(y - cy);
-            int v = 255 - (d * 255 / (cx + cy));  /* invert: center=255 */
-            if (v < 0) v = 0;
-            px[COLOR_DIST][y * w + x] = (uint8_t)v;
+static inline void ki_compute_lbp_rb(uint8_t px[COLOR_NB][1024], int w, int h) {
+    if (w < 3 || h < 3) return;
+    for (int y = 1; y < h - 1; y++) {
+        for (int x = 1; x < w - 1; x++) {
+            int i = y * w + x;
+            uint8_t center = px[COLOR_RB][i];
+            uint8_t code = 0;
+            if (px[COLOR_RB][i-w-1] >= center) code |= 0x80;
+            if (px[COLOR_RB][i-w  ] >= center) code |= 0x40;
+            if (px[COLOR_RB][i-w+1] >= center) code |= 0x20;
+            if (px[COLOR_RB][i+1  ] >= center) code |= 0x10;
+            if (px[COLOR_RB][i+w+1] >= center) code |= 0x08;
+            if (px[COLOR_RB][i+w  ] >= center) code |= 0x04;
+            if (px[COLOR_RB][i+w-1] >= center) code |= 0x02;
+            if (px[COLOR_RB][i-1  ] >= center) code |= 0x01;
+            px[COLOR_LBP_RB][i] = code;
         }
+    }
+    for (int y = 1; y < h - 1; y++) {
+        int ro = y * w;
+        uint8_t lv = px[COLOR_LBP_RB][ro + 1];
+        uint8_t rv = px[COLOR_LBP_RB][ro + w - 2];
+        px[COLOR_LBP_RB][ro + 0]     = lv;
+        px[COLOR_LBP_RB][ro + w - 1] = rv;
+    }
+    for (int x = 0; x < w; x++) {
+        px[COLOR_LBP_RB][0 * w + x]       = px[COLOR_LBP_RB][1 * w + x];
+        px[COLOR_LBP_RB][(h - 1) * w + x] = px[COLOR_LBP_RB][(h - 2) * w + x];
+    }
+}
+
+/* ── LBP on GB opponent (chromatic texture, green-blue) ──────────── */
+__attribute__((unused))
+static inline void ki_compute_lbp_gb(uint8_t px[COLOR_NB][1024], int w, int h) {
+    if (w < 3 || h < 3) return;
+    for (int y = 1; y < h - 1; y++) {
+        for (int x = 1; x < w - 1; x++) {
+            int i = y * w + x;
+            uint8_t center = px[COLOR_GB][i];
+            uint8_t code = 0;
+            if (px[COLOR_GB][i-w-1] >= center) code |= 0x80;
+            if (px[COLOR_GB][i-w  ] >= center) code |= 0x40;
+            if (px[COLOR_GB][i-w+1] >= center) code |= 0x20;
+            if (px[COLOR_GB][i+1  ] >= center) code |= 0x10;
+            if (px[COLOR_GB][i+w+1] >= center) code |= 0x08;
+            if (px[COLOR_GB][i+w  ] >= center) code |= 0x04;
+            if (px[COLOR_GB][i+w-1] >= center) code |= 0x02;
+            if (px[COLOR_GB][i-1  ] >= center) code |= 0x01;
+            px[COLOR_LBP_GB][i] = code;
+        }
+    }
+    for (int y = 1; y < h - 1; y++) {
+        int ro = y * w;
+        uint8_t lv = px[COLOR_LBP_GB][ro + 1];
+        uint8_t rv = px[COLOR_LBP_GB][ro + w - 2];
+        px[COLOR_LBP_GB][ro + 0]     = lv;
+        px[COLOR_LBP_GB][ro + w - 1] = rv;
+    }
+    for (int x = 0; x < w; x++) {
+        px[COLOR_LBP_GB][0 * w + x]       = px[COLOR_LBP_GB][1 * w + x];
+        px[COLOR_LBP_GB][(h - 1) * w + x] = px[COLOR_LBP_GB][(h - 2) * w + x];
     }
 }
 

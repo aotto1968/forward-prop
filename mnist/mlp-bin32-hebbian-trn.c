@@ -188,7 +188,7 @@ static float accuracy_multi(const uint32_t *X, const uint8_t *Y, int N,
 }
 
 /* ── Single-member accuracy (backward compat) ───────────────────── */
-static float accuracy(const uint32_t *X, const uint8_t *Y, int N,
+static __attribute__((unused)) float accuracy(const uint32_t *X, const uint8_t *Y, int N,
                        const uint32_t *W0, const uint32_t *W1, int H, int nc) {
     return accuracy_multi(X, Y, N, &W0, &W1, &nc, (int[]){0}, H, 1);
 }

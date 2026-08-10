@@ -320,6 +320,7 @@ static int g_user_threadn = 0;     /* 1 = user passed --threadN explicitly */
 ki_Args aa = {
     .hidden             = 64,
     .epochs             = 1,
+    .cfg_epochs         = 1,
     .batchN             = KI_DEFAULT_BATCH_N,
     .trainN             = 0,      /* auto: set from dataset default */
     .evalN              = 0,      /* auto: set from dataset default */
@@ -3075,7 +3076,7 @@ int main(int argc, char *argv[]) {
         return 0;
     }
 
-    print_setup(H, aa.epochs, total_train, total_eval, aa.threadN, aa.seed, aa.batchN,
+    print_setup(H, aa.cfg_epochs, total_train, total_eval, aa.threadN, aa.seed, aa.batchN,
                 splitVN, splitHN, NC_slice, H_local, ensembleN, aa.channel, nc_blk, (int)n_cont);
 
     /* ── gb-cache status (GUARANTEED message, bug 2026-08-10): the STATUS
@@ -4458,7 +4459,7 @@ int main(int argc, char *argv[]) {
     float final_best = (best_evl_ok > evl_ok) ? (float)best_evl_ok : (float)evl_ok;
     final_best = final_best * 100.0f / (float)total_eval;
     printf("  H=%d  ens=%d  v_split=%d  h_split=%d  ep=%d  trn=%.1f%%  evl=%.1f%%  best=%.1f%%  lr=%.4f  time=%dms\n",
-           H, ensembleN, splitVN, splitHN, epochs, fin_trn, fin_evl, final_best,
+           H, ensembleN, splitVN, splitHN, aa.cfg_epochs, fin_trn, fin_evl, final_best,
            (double)aa.lr, elapsed_ms);
 
     /* REPORT uses best eval across all member evaluations.

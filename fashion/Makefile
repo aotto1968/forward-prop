@@ -202,7 +202,7 @@ test-adam: fashion-mlp-flt32-adam-trn.exe
 test-bitvoting: fashion-mlp-bin32-otto-trn-bitvoting.exe
 	@test -f $(MODEL_DIR)/fashion-bitvoting-e10/model.otto || $(MAKE) model-bitvote
 	@echo -n $(@) ": "
-	@./fashion-mlp-bin32-otto-trn-bitvoting.exe --import $(MODEL_DIR)/fashion-bitvoting-e10 --evalN 10000 2>&1 | grep '^REPORT'
+	@./fashion-mlp-bin32-otto-trn-bitvoting.exe --import $(MODEL_DIR)/fashion-bitvoting-e10 --evalN 10000 --threadN 8 2>&1 | grep '^REPORT'
 
 test-otto-debug: fashion-mlp-bin32-otto-trn-xnor.exe
 	@test -f $(MODEL_DIR)/fashion-otto-h196-e10/model.otto || $(MAKE) model-otto

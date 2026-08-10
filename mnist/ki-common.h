@@ -252,6 +252,13 @@ typedef struct {
 typedef struct {
     int    hidden;          			/* Hidden neurons (--hiddenN, default: 64) */
     int    epochs;          			/* Iterations (--epochsN, default: 1) */
+    /* cfg_epochs (FIX 2026-08-10): the CONFIGURED epoch count for DISPLAY.
+     * --dry-run forces aa.epochs = 0 (no training), which made the Args:/
+     * RESULT header show Ep=0 even when --epochsN 10 was given — the user
+     * could not verify the intended config in dry-run output. cfg_epochs
+     * keeps the user's --epochsN value untouched for the display while
+     * aa.epochs stays 0 for the execution. */
+    int    cfg_epochs;         		/* configured epochs for display (dry-run safe) */
     int    batchN;          			/* Mini-batch size (--batchN, default: 64) */
     int    trainN;          			/* Training samples (--trainN, default: 50000) */
     int    evalN;           			/* Eval samples (--evalN, default: 10000) */
@@ -705,9 +712,14 @@ static inline const int *ki_xform_pipe_steps(int xf) {
     int idx = xf - KI_XFORM_COUNT;
     return (idx >= 0 && idx < _xf_pipe_count) ? _xf_pipe_steps[idx] : NULL;
 }
-/* Build display name like "rot90@avg4" into a static buffer */
+/* Build display name like "rot90@avg4" into a static buffer.
+ * THREAD-SAFE (FIX 2026-08-10): the buffer must be thread-local — the PRF
+ * trainer exports .ens files from parallel member threads, and a shared
+ * static buffer raced (ens-verify "field 3 mismatch": shuffle@avg4 was
+ * overwritten by colswap-3-4@avg4 from another thread). Same pattern as
+ * the thread-local t_match buffer in h0_neuron. */
 static inline const char *ki_xform_pipe_name(int xf) {
-    static char _buf[64];
+    static __thread char _buf[64];
     int idx = xf - KI_XFORM_COUNT;
     if (idx < 0 || idx >= _xf_pipe_count) return "pipe?";
     int pos = 0;
@@ -996,7 +1008,7 @@ static inline void ki_member_file_apply_meta(void) {
         if (sscanf(line, "# META: H=%d EP=%d VN=%d HN=%d MAJ=%7s MAJ1_THRESH=%d",
                    &_H, &_EP, &_VN, &_HN, _MAJ, &_MAJT) < 4) break;
         if (_H > 0) aa.hidden = _H;
-        if (_EP > 0) aa.epochs = _EP;
+        if (_EP > 0) { aa.epochs = _EP; aa.cfg_epochs = _EP; }
         if (_VN > 0) aa.splitVN = _VN;
         if (_HN > 0) aa.splitHN = _HN;
         if (_MAJ[0] && strcmp(_MAJ, "-1") != 0) {
@@ -1342,17 +1354,22 @@ static inline void ki_parse_args(int argc, char *argv[]) {
             ki_completion_dispatch(argc, argv, &i);
         } else if (strcmp(argv[i], "--dry-run") == 0) {
             aa.dry_run = 1;
+            /* Execution: 0 epochs (no training). cfg_epochs keeps the user's
+             * --epochsN value so the Args:/RESULT display stays truthful
+             * (FIX 2026-08-10: dry-run showed Ep=0 despite --epochsN 10). */
+            if (aa.cfg_epochs <= 0) aa.cfg_epochs = aa.epochs;
             aa.epochs  = 0;
         } else if (strcmp(argv[i], "--debug") == 0) {
             aa.debug = 1;
         } else if (strcmp(argv[i], "--quick") == 0) {
             aa.trainN = 5000; aa.evalN = 2000;
         } else if (strcmp(argv[i], "--qq") == 0) {
-            aa.trainN = 5000; aa.evalN = 2000; aa.epochs = 3;
+            aa.trainN = 5000; aa.evalN = 2000; aa.epochs = 3; aa.cfg_epochs = 3;
         } else if (strcmp(argv[i], "--hiddenN") == 0 && i + 1 < argc) {
             aa.hidden = atoi(argv[++i]);
         } else if (strcmp(argv[i], "--epochsN") == 0 && i + 1 < argc) {
             aa.epochs = atoi(argv[++i]);
+            aa.cfg_epochs = aa.epochs;   /* keep configured value for display */
             /* NOTE: epochs=0 bedeutet "counting-only + eval, kein Training".
              * Do not couple with dry-run — --dry-run must be explicit. */
         } else if (strcmp(argv[i], "--batchN") == 0 && i + 1 < argc) {

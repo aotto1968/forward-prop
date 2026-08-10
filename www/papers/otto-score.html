@@ -416,7 +416,11 @@ in density: Otto's W0+majority compresses gb to <strong>~2.76 set bits/container
 Bit-Voting's identity keeps <strong>~14.38</strong> (5.2×). The training loop iterates over
 set bits, so Otto does 5.2× less training work but pays 7.3s in the gb phase;
 Bit-Voting pays 2.4× more in training. Net: BV is only ~1.12× faster serial,
-~equal parallel. <a href="bitvoting-baseline.html">See the Bit-Voting baseline paper.</a></p>
+~equal parallel. On Fashion the accuracy gain is +1.34pp (3:3) to +2.01pp (6:6) —
+<strong>statistically significant (p&lt;0.001) but small in effect size</strong>
+(Cohen's h = 0.04&ndash;0.07, &sect;5.5 of the baseline paper). In IFC Bit-Voting
+is ~19&times; faster (maj1(W0&times;I) not cacheable).
+<a href="bitvoting-baseline.html">See the Bit-Voting baseline paper.</a></p>
 
 <!-- ── 5. Key Insights ── -->
 <h2 style="margin-top:2.5rem;"><span class="accent-bar">&#8203;</span> 5. Key Insights</h2>

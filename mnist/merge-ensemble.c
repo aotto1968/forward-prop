@@ -1355,6 +1355,14 @@ static int load_directory(const char *dir) {
                 } else {
                     char path[1024];
                     snprintf(path, sizeof(path), "%s/%s", dir, snap[i].name);
+                    /* FIX (2026-08-10) double-free: read_ens_meta allocates a
+                     * NEW members buffer (no aliasing with idx[j].members),
+                     * so the old cache allocation must be released BEFORE the
+                     * re-read — and set to NULL so the final cleanup loop
+                     * (free(idx[ii].members)) skips it instead of freeing a
+                     * stale pointer a second time. */
+                    free(idx[j].members);
+                    idx[j].members = NULL;
                     read_ens_meta(path, &merged[n_merged++]);
                     n_rebuilt++;
                 }
@@ -1368,10 +1376,28 @@ static int load_directory(const char *dir) {
                 i++;
             } else {
                 /* Cache entry with no matching file → orphan */
+                /* FIX (2026-08-10): NULL after free — the final cleanup loop
+                 * (free(idx[ii].members)) must skip this entry instead of
+                 * double-freeing it (crash: "free(): double free detected"
+                 * after deleting 208 @shuffle files, 2026-08-10). */
                 free(idx[j].members);
+                idx[j].members = NULL;
                 n_orphaned++;
                 j++;
             }
+        }
+        /* FIX (2026-08-10): trailing cache entries whose file is gone.
+         * The main loop runs over the SNAPSHOT (i < n_snap) — any remaining
+         * idx entries (j < n_idx) have no matching file and must be dropped
+         * as orphans. Before this, deleting files (e.g. the 208 @shuffle
+         * .ens) left them unnoticed: "1885 files (cache up to date)" while
+         * the index still held 1886 — and worse, the stale entry's members
+         * were double-freed later (crash 2026-08-10). */
+        while (j < n_idx) {
+            free(idx[j].members);
+            idx[j].members = NULL;
+            n_orphaned++;
+            j++;
         }
         free(snap);
         if (!g_stdout) {
@@ -1744,8 +1770,24 @@ static int merge_and_greedy(const char *save_path, int initial_member, int beam_
                 sum_scores[i] += sc[i];
 
             if (gain > gain_threshold) {
-                /* ── COMMIT the pending block ── */
-                for (int _p = 0; _p < pending_n; _p++)
+                /* ── COMMIT the pending block ──
+                 * --max N (FIX 2026-08-10): cap the block at the remaining
+                 * slots — the whole block must not overshoot g_max_members.
+                 * The overshoot happened because the outer loop checks
+                 * order_n >= g_max_members only BETWEEN steps, while a
+                 * cumulative block can commit many members at once.
+                 * Members beyond the cap are rolled back from sum_scores
+                 * (they stay used[] — consumed, not retried). */
+                int _commit_n = pending_n;
+                if (g_max_members > 0 && order_n + _commit_n > g_max_members) {
+                    _commit_n = g_max_members - order_n;
+                    for (int _p = _commit_n; _p < pending_n; _p++) {
+                        const SCORE_TYPE *_sc = blocks[pending[_p]].scores;
+                        for (size_t _i = 0; _i < score_sz; _i++)
+                            sum_scores[_i] -= _sc[_i];
+                    }
+                }
+                for (int _p = 0; _p < _commit_n; _p++)
                     order[order_n++] = pending[_p];
 
                 /* Evaluate the accumulated sum (whole block) */
@@ -2352,6 +2394,14 @@ static int merge_and_beam(const char *save_path, int beam_width,
     float gain_threshold = g_min_gain;
     int best_n = 0;                 /* total members in best_used */
     uint8_t *best_used = (uint8_t *)calloc((size_t)n, 1);  /* which members form best ensemble */
+    /* BEST-SET TRACKING (FIX 2026-08-10): best_used is overwritten at every
+     * commit, so the final re-evaluation rated the LAST set — which can be
+     * WORSE than an earlier one (12 members: 88.62% vs 11: 88.72%, a member
+     * that lowers the ensemble acc). Keep the highest-eval set: on each
+     * commit, re-evaluate the set and remember the best one. */
+    uint8_t *best_set_best = (uint8_t *)calloc((size_t)n, 1);
+    int      best_set_n = 0;
+    float    best_set_eval = -1.0f;
     uint8_t *best_cand_used = (uint8_t *)calloc((size_t)n, 1); /* used-mask of the ACCEPTED candidate
                                                                   (beam[si].used | mi) — NOT beam[0].used
                                                                   after pruning; see acceptance block */
@@ -2469,6 +2519,11 @@ static int merge_and_beam(const char *save_path, int beam_width,
                 for (int mi = 0; mi < n; mi++) {
                     if (beam[si].used[mi]) continue;
                     if (pool_exclude && pool_exclude[mi]) continue;
+                    /* --max N (FIX 2026-08-10): never expand a path that is
+                     * already at the member cap — the acceptance can then not
+                     * overshoot (the old code only capped at the block commit,
+                     * but the accepted candidate's PATH itself grew past N). */
+                    if (g_max_members > 0 && beam[si].n_used >= g_max_members) continue;
 
                     const SCORE_TYPE *base = beam[si].sum;
                     const SCORE_TYPE *sc = blocks[mi].scores;
@@ -2748,10 +2803,23 @@ static int merge_and_beam(const char *save_path, int beam_width,
                     /* --max block commit: best_cand_used holds only the LAST
                      * accepted candidate's path — add ALL members buffered in
                      * pending[] since the previous commit, so the whole block
-                     * lands in best_used (bit-mass, plan 2026-08-07). */
+                     * lands in best_used (bit-mass, plan 2026-08-07).
+                     * --max N (FIX 2026-08-10): cap the block at the remaining
+                     * slots — otherwise a block commit overshoots the cap in
+                     * one step (the outer loop checks best_n >= g_max_members
+                     * only BETWEEN steps; a cumulative block adds many members
+                     * at once, 12 → 18). */
                     if (g_max_mode) {
-                        for (int _p = 0; _p < pending_n; _p++)
-                            best_used[pending[_p]] = 1;
+                        int _cur_n = 0;
+                        for (int _bi = 0; _bi < n; _bi++)
+                            if (best_used[_bi]) _cur_n++;
+                        for (int _p = 0; _p < pending_n; _p++) {
+                            if (g_max_members > 0 && _cur_n >= g_max_members) break;
+                            if (!best_used[pending[_p]]) {
+                                best_used[pending[_p]] = 1;
+                                _cur_n++;
+                            }
+                        }
                         pending_n = 0;
                     }
                 }
@@ -2763,6 +2831,38 @@ static int merge_and_beam(const char *save_path, int beam_width,
                 best_n = 0;
                 for (int _bi = 0; _bi < n; _bi++)
                     if (best_used[_bi]) best_n++;
+                /* BEST-SET TRACKING (FIX 2026-08-10): re-evaluate the set
+                 * that was just committed and keep the HIGHEST-eval set.
+                 * Without this the final REPORT rated the LAST commit, which
+                 * can be worse than an earlier one (BV --max 12: 11 members
+                 * 88.72% vs 12 members 88.62% — the 12th member hurt). */
+                if (g_max_mode && best_n > 0) {
+                    SCORE_TYPE *_set_sum = (SCORE_TYPE *)calloc(score_sz, sizeof(SCORE_TYPE));
+                    if (_set_sum) {
+                        for (int _bi = 0; _bi < n; _bi++) {
+                            if (!best_used[_bi]) continue;
+                            const SCORE_TYPE *_sc = blocks[_bi].scores;
+                            for (size_t _j = 0; _j < score_sz; _j++)
+                                _set_sum[_j] += _sc[_j];
+                        }
+                        int _sok = 0;
+                        for (int _s = 0; _s < g_n_test; _s++) {
+                            const SCORE_TYPE *_row = _set_sum + (size_t)_s * row_sz;
+                            int _pred = 0;
+                            for (int _k = 1; _k < g_n_classes; _k++)
+                                if (_row[_k] > _row[_pred]) _pred = _k;
+                            if (_pred == (int)g_labels[_s]) _sok++;
+                        }
+                        float _set_eval = (float)_sok * 100.0f / (float)g_n_test;
+                        if (_set_eval > best_set_eval) {
+                            best_set_eval = _set_eval;
+                            best_set_n = best_n;
+                            memset(best_set_best, 0, (size_t)n);
+                            memcpy(best_set_best, best_used, (size_t)n);
+                        }
+                        free(_set_sum);
+                    }
+                }
                 prev_acc = best_eval;
                 no_improve_steps = 0;
             } else if (g_max_mode) {
@@ -2811,8 +2911,16 @@ static int merge_and_beam(const char *save_path, int beam_width,
      * recurrence of bug-2026-07-30 "best_used incomplete"). The structural
      * fix: best_used is the SINGLE source of truth — re-evaluate the sum of
      * exactly those members so REPORT == member.out always. The beam stays
-     * the search algorithm (finds the set); the eval comes from the set. */
-    if (best_n > 0) {
+     * the search algorithm (finds the set); the eval comes from the set.
+     * BEST-SET (FIX 2026-08-10): in --max mode use the HIGHEST-eval set that
+     * was committed (best_set_best) — the LAST commit can be worse (BV
+     * --max 12: 11 members 88.72% vs 12 members 88.62%). */
+    if (g_max_mode && best_set_eval > 0.0f) {
+        memcpy(best_used, best_set_best, (size_t)n);
+        best_n = best_set_n;
+        real_n = best_n;
+        best_eval = best_set_eval;
+    } else if (best_n > 0) {
         SCORE_TYPE *final_sum = (SCORE_TYPE *)calloc(score_sz, sizeof(SCORE_TYPE));
         if (final_sum) {
             for (int i = 0; i < n; i++) {
@@ -2879,6 +2987,9 @@ static int merge_and_beam(const char *save_path, int beam_width,
     for (int i = 0; i < n_beam; i++) free(beam[i].sum);
     for (int i = 0; i < n_beam; i++) free(beam[i].used);
     free(beam); free(trial); free(exp); free(best_used); free(best_cand_used); free(pending); free(_owned_exclude);
+    /* FIX (2026-08-10): free the best-set-tracking buffer (was leaked —
+     * ASan: 1885 bytes in merge_and_beam, Z.2376). */
+    free(best_set_best);
     free(start_mask);
 
     if (g_tries <= 1) {
@@ -3687,11 +3798,18 @@ int main(int argc, char **argv) {
             g_beam_bestN = atoi(argv[++i]);
             if (g_beam_bestN < 1) g_beam_bestN = 1;
         } else if (strcmp(argv[i], "--max") == 0) {
-            /* --max allein = Beam-as-a-whole Scan (alter Formalismus);
-             * --max N = max member count */
+            /* --max allein = Beam-as-a-Whole Scan (alter Formalismus);
+             * --max N = max member count.
+             * FIX (2026-08-10): --max N must ALSO enable the cumulative
+             * acceptance mode (g_max_mode) — before this, --max 12 only set
+             * the cap and ran in STRICT mode (each member must beat min-gain
+             * individually), which stopped early (6 members instead of 12)
+             * while --max alone gave 26. The two forms must share the same
+             * acceptance algorithm; N only caps the result. */
             if (i + 1 < argc && argv[i + 1][0] >= '0' && argv[i + 1][0] <= '9') {
                 g_max_members = atoi(argv[++i]);
                 if (g_max_members < 1) g_max_members = 1;
+                g_max_mode = 1;
             } else {
                 g_max_mode = 1;
             }

@@ -183,7 +183,7 @@ by **human opponent-color vision** (see [color-vision-opponent-channels.md](colo
 | `range`      | Local range          | max − min in 3×3         | Texture sharpness (no division)  |
 | `lbp-rg`     | LBP on RG opponent   | 8-bit LBP on R-G color   | Chromatic texture                 |
 
-**How to combine:** `--channels h,c,lum,by,rg` selects Hue + Contrast +
+**How to combine:** `--channel h,c,lum,by,rg` selects Hue + Contrast +
 Luminance + Blue-Yellow + Red-Green. Each channel becomes a separate block
 of containers.
 
@@ -191,20 +191,20 @@ of containers.
 
 ```
 # One member: channel=mnist, encoding=exp8
---channels mnist --encoding exp8
+--channel mnist --encoding exp8
 
 # Two members: same channel, different encodings
---channels mnist --encoding exp8,log8
+--channel mnist --encoding exp8,log8
 
 # Three members: different channels with per-channel encoding
---channels g,bl,bm --encoding g=up8,bl=down8,bm=sig
+--channel g,bl,bm --encoding g=up8,bl=down8,bm=sig
 
 # 10 members: full CIFAR best config
 --encoding g=up8,bl=down8,bm=sig,bp=sig,b=up8,al=down8,am=sig,ap=sig,h=up8,c=log8
 ```
 
 Each comma-separated entry in `--encoding` creates one virtual block = one
-member. When `--channels` has fewer entries than `--encoding`, the last channel
+member. When `--channel` has fewer entries than `--encoding`, the last channel
 is reused.
 
 ---

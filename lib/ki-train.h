@@ -27,7 +27,7 @@
     uint32_t _b = (gb); \
     while (_b) { int _v = __builtin_ctz(_b); \
         for (int _k = 0; _k < KI_NCLASSES; _k++) \
-            (SC)[_k] += (TGT)[TGT_IDX(_k, (h), _v, H, NG)]; \
+            (SC)[_k] += (SCORE_TYPE)(TGT)[TGT_IDX(_k, (h), _v, H, NG)]; \
         _b &= _b - 1; } \
 } while (0)
 
@@ -114,7 +114,18 @@ static inline int ki_batch_correct(COUNTER_TYPE *target, int H,
                 } else if (gap > 0) {
                     COUNTER_TYPE step_i = _Generic((COUNTER_TYPE)0,
                         float: (COUNTER_TYPE)((float)gap < (float)OT_F
+#ifdef KI_SHIFT_STEP
+                            /* Experiment 2026-08-05 (KI_SHIFT_STEP): der
+                             * float-Zweig nutzt denselben INTEGER-Shift wie
+                             * der int-Zweig statt der fraktionalen Division.
+                             * Isoliert die fraktionale Korrektur-Akkumulation
+                             * als Ursache der 68.2-vs-69.6-Lücke
+                             * (flt32-int64=68.32, int32-int64=69.61 → nur
+                             * die Rundung/shift unterscheidet sie). */
+                            ? (float)(((int64_t)step * (int64_t)gap) >> OT_PRECISION)
+#else
                             ? (float)step * (float)gap / (float)OT_F
+#endif
                             : (float)step),
                         default: (COUNTER_TYPE)((int64_t)gap < (int64_t)OT_F
                             ? (((int64_t)step * (int64_t)gap) >> OT_PRECISION)
@@ -134,7 +145,12 @@ static inline int ki_batch_correct(COUNTER_TYPE *target, int H,
             }
         }
 
-        /* Apply: merge thread caches into global target */
+        /* Apply: merge thread caches into global target.
+         * Serial per-thread contiguous pass (bug 2026-08-10): a parallel
+         * version over i cost more than it saved — 64-sample batches spawn
+         * tiny 16-thread regions and the strided dc[t][i] reads thrash
+         * cache (threadN=8: 4.2s→5.6s, threadN=16: 11s→34s). Keep this
+         * sequential; the training speedup comes from the sample loop. */
         for (int t = 0; t < n_threads; t++) {
             COUNTER_TYPE *ct = dc[t];
             for (size_t i = 0; i < tgt_sz; i++) {

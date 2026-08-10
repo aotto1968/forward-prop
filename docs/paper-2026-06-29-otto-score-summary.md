@@ -145,7 +145,7 @@ by **human opponent-color vision** (see §4.2).
 | `s`          | Saturation           | `(max(R,G,B)-min(R,G,B))` | 0–255 | Color purity                     |
 | `c`          | Contrast             | Sobel 3×3 edge magnitude  | 0–255 | Spatial edges on LUM             |
 
-**How to combine:** `--channels h,c,lum,by,rg` selects Hue + Contrast + Luminance +
+**How to combine:** `--channel h,c,lum,by,rg` selects Hue + Contrast + Luminance +
 Blue-Yellow + Red-Green.  Each channel becomes a separate block of NC_slice containers.
 
 #### Encodings
@@ -201,20 +201,20 @@ same as `0x01` = 1) — hence thermometer is essential for photographic images.
 
 ```
 # One member: channel=mnist, encoding=exp8
---channels mnist --encoding exp8
+--channel mnist --encoding exp8
 
 # Two members: same channel, different encodings
---channels mnist --encoding exp8,log8
+--channel mnist --encoding exp8,log8
 
 # Three members: different channels with per-channel encoding
---channels g,bl,bm --encoding g=up8,bl=down8,bm=sig
+--channel g,bl,bm --encoding g=up8,bl=down8,bm=sig
 
 # 10 members: full CIFAR best config
 --encoding g=up8,bl=down8,bm=sig,bp=sig,b=up8,al=down8,am=sig,ap=sig,h=up8,c=log8
 ```
 
 Each comma-separated entry in `--encoding` creates one virtual block = one member.
-When `--channels` has fewer entries than `--encoding`, the last channel is reused.
+When `--channel` has fewer entries than `--encoding`, the last channel is reused.
 
 ### 2.6 Container Width Experiment: 8/16/32 Does Not Help
 
@@ -440,7 +440,7 @@ The opponent transformation is **critical**: raw R, G, B channels are highly
 correlated (all three rise/fall with brightness).  Opponent channels decorrelate
 brightness from color, giving the MAJ3 projection cleaner signal.
 
-**Experiment (2026-06-24):** Single R channel (`--channels r`) with H=512, 1 epoch
+**Experiment (2026-06-24):** Single R channel (`--channel r`) with H=512, 1 epoch
 gives ~30.3% — barely above chance.  Adding G+B independently (raw `r,g,b`)
 reaches 31.5%.  Switching to opponent channels (`lum,rg,by`) jumps to **33.1%**
 at equal bit-mass.  The opponent transformation extracts color information that

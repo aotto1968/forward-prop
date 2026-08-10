@@ -11,9 +11,9 @@
 
 .PHONY: all otto adam hebbian vis-errors setup clean \
         test test-mnist test-cifar test-fashion \
-        test-mnist-otto test-mnist-adam test-mnist-hebbian \
-        test-cifar-otto test-cifar-adam test-cifar-hebbian \
-        test-fashion-otto test-fashion-adam test-fashion-hebbian \
+        test-mnist-otto test-mnist-adam test-mnist-hebbian test-mnist-bitvoting \
+        test-cifar-otto test-cifar-adam test-cifar-hebbian test-cifar-bitvoting \
+        test-fashion-otto test-fashion-adam test-fashion-hebbian test-fashion-bitvoting \
         setup-mnist setup-cifar setup-fashion
 
 # ═══════════════════════════════════════════════════════════════
@@ -55,16 +55,19 @@ model-fashion-adam:   ; $(MAKE) -s -C fashion model-adam
 model-mnist-hebbian:   ; $(MAKE) -s -C mnist model-hebbian
 model-cifar-hebbian:   ; $(MAKE) -s -C cifar model-hebbian
 model-fashion-hebbian: ; $(MAKE) -s -C fashion model-hebbian
+model-mnist-bitvoting:   ; $(MAKE) -s -C mnist model-bitvote
+model-cifar-bitvoting:   ; $(MAKE) -s -C cifar model-bitvote
+model-fashion-bitvoting: ; $(MAKE) -s -C fashion model-bitvote
 
-model-mnist: model-mnist-otto model-mnist-adam model-mnist-hebbian
-model-cifar: model-cifar-otto model-cifar-adam model-cifar-hebbian
-model-fashion: model-fashion-otto model-fashion-adam model-fashion-hebbian
+model-mnist: model-mnist-otto model-mnist-adam model-mnist-hebbian model-mnist-bitvoting
+model-cifar: model-cifar-otto model-cifar-adam model-cifar-hebbian model-cifar-bitvoting
+model-fashion: model-fashion-otto model-fashion-adam model-fashion-hebbian model-fashion-bitvoting
 models: model-mnist model-cifar model-fashion
 
 .PHONY: models model-mnist model-cifar model-fashion \
-	model-mnist-otto model-mnist-hebbian model-mnist-adam \
-        model-cifar-otto model-cifar-hebbian model-cifar-adam \
-        model-fashion-otto model-fashion-hebbian model-fashion-adam
+	model-mnist-otto model-mnist-hebbian model-mnist-adam model-mnist-bitvoting \
+        model-cifar-otto model-cifar-hebbian model-cifar-adam model-cifar-bitvoting \
+        model-fashion-otto model-fashion-hebbian model-fashion-adam model-fashion-bitvoting
 
 # ═══════════════════════════════════════════════════════════════
 # Test — build missing models only, then eval via --import
@@ -82,23 +85,26 @@ test: all
 test-mnist-otto:    ; $(MAKE) -s -C mnist test-otto
 test-mnist-adam:    ; $(MAKE) -s -C mnist test-adam
 test-mnist-hebbian: ; $(MAKE) -s -C mnist test-hebbian
+test-mnist-bitvoting: ; $(MAKE) -s -C mnist test-bitvoting
 test-mnist:         ; $(MAKE) -s -C mnist test
 
 # ── CIFAR-10 ───────────────────────────────────────────────
 test-cifar-otto:    ; $(MAKE) -s -C cifar test-otto
 test-cifar-adam:    ; $(MAKE) -s -C cifar test-adam
 test-cifar-hebbian: ; $(MAKE) -s -C cifar test-hebbian
+test-cifar-bitvoting: ; $(MAKE) -s -C cifar test-bitvoting
 test-cifar:         ; $(MAKE) -s -C cifar test
 
 # ── Fashion-MNIST ──────────────────────────────────────────
 test-fashion-otto:    ; $(MAKE) -s -C fashion test-otto
 test-fashion-adam:    ; $(MAKE) -s -C fashion test-adam
 test-fashion-hebbian: ; $(MAKE) -s -C fashion test-hebbian
+test-fashion-bitvoting: ; $(MAKE) -s -C fashion test-bitvoting
 test-fashion:         ; $(MAKE) -s -C fashion test
 
-.PHONY: test-mnist test-mnist-otto test-mnist-adam test-mnist-hebbian \
-	test-cifar test-cifar-otto test-cifar-adam test-cifar-hebbian \
-	test-fashion test-fashion-otto test-fashion-adam test-fashion-hebbian
+.PHONY: test-mnist test-mnist-otto test-mnist-adam test-mnist-hebbian test-mnist-bitvoting \
+	test-cifar test-cifar-otto test-cifar-adam test-cifar-hebbian test-cifar-bitvoting \
+	test-fashion test-fashion-otto test-fashion-adam test-fashion-hebbian test-fashion-bitvoting
 
 # ═══════════════════════════════════════════════════════════════
 # Clean

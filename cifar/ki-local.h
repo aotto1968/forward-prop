@@ -14,53 +14,11 @@
 #include <string.h>
 #include <stdlib.h>
 
-/* ── Counter type for target/offset/step (overridable, default int32_t) ── */
-#ifndef COUNTER_TYPE
-#define COUNTER_TYPE float
-#endif
-
-/* ═══════════════════════════════════════════════════════════════════════
- * CONSTANTS — CIFAR-10
- * ═══════════════════════════════════════════════════════════════════════ */
-
-#ifndef KI_DATASET_ID
-#define KI_DATASET_ID             1       /* unique for cache key (overridable) */
-#define KI_DATASET_NAME           "CIFAR-10"
-#ifndef KI_BIT_WIDTH
-#define KI_BIT_WIDTH              8       /* bits per pixel (8/16/24/32) */
-#endif
-#define KI_PX_PER_CONT_W          (32 / KI_BIT_WIDTH)  /* 4 bei 8bit, 2 bei 16bit, 1 bei 32bit */
-#define KI_ROWS                   32
-#define KI_COLS                   32
-#endif
-#define KI_PX                     3072    /* 32 × 32 × 3 = 3072 pixels per image */
-#define KI_NCLASSES               10
-#define KI_DEFAULT_LR             0.01f   /* → step = 0.005 × 131072 = 655 (high lr leads to strong trn and weak evl */
-#define KI_DEFAULT_STEP_POWER     7.0f    /* higher yields smaller trn */
-#define KI_DEFAULT_STEP_MODE      STEP_COS_TIME
-#define KI_DEFAULT_BATCH_N        128     /* optimum */
-#define KI_DEFAULT_ENSEMBLE_SEED  ENS_SEED_ONCE
-#define KI_COLORS                 3       /* R, G, B as independent samples, each packed 4px/cont */
-#define KI_DEFAULT_COLOR          ((1<<COLOR_R)|(1<<COLOR_G)|(1<<COLOR_B))  /* CIFAR default: raw R+G+B (bits 1,2,3) */
-#define KI_NC                     (KI_PX / KI_COLORS / KI_PX_PER_CONT_W)  /* Container per color: 1024/4=256 bei 8bit, 1024/1=1024 bei 32bit */
-#define KI_NC_TOTAL               (KI_NC * KI_COLORS)
-#define KI_PACK                   KI_PX_PER_CONT_W
-
-#ifndef NC
-#define NC  KI_NC
-#endif
-
-#ifndef OT_PRECISION
-#define OT_PRECISION              17
-#endif
-
-/* For mlp-flt32-trn-*-adam.c (old trainer) */
-#ifndef KI_BITS_PER_CONT
-#define KI_BITS_PER_CONT          32
-#endif
-#ifndef KI_MODEL_DIR
-#define KI_MODEL_DIR              "models"
-#endif
+/* ── Static configuration (dataset-specific macros) comes from ki-config.h.
+ *    It is always included FIRST (before ki-encoding.h / ki-common.h) so the
+ *    shared headers see e.g. KI_SWEEP_PERFORMANCE_ENCODING. Symlinked into
+ *    cifar-1/ki-config.h. */
+#include "ki-config.h"
 
 /* ═══════════════════════════════════════════════════════════════════════
  * 8 BLOCK COMPUTATIONS — shared between trainer + samples tool
@@ -378,6 +336,7 @@ static const char *ki_class_names[KI_NCLASSES] = {
 /* ── Encoding aliases (dataset-specific) ──────────────────────── */
 #define KI_COMMON_ALIAS_LOOKUP
 static const char *ki_encoding_alias_lookup(const char *name) {
+    if (strcasecmp(name, "sweep-performance") == 0) return KI_SWEEP_PERFORMANCE_ENCODING;
     if (strcasecmp(name, "ey-c") == 0) return "r:up,cl:down,cm:sig,cp:sig";
     if (strcasecmp(name, "ey-c-2") == 0) return "cl:down,cm:sig,cp:sig";
     if (strcasecmp(name, "ey-s-2b") == 0) return "lbp:gamma,dog:sig,var:exp";

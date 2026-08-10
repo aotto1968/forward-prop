@@ -381,7 +381,7 @@ Result: <strong class="efficiency-badge">+0.5pp</strong> over previous record.
 # → 1053 archive files (13 enc × 9 xforms × 9 pipe variants)
 
 # Step 2: Beam search selects best subset
-./mnist-merge-ensemble.exe scores-196-10/ --optimize --beam 10 \
+./mnist-merge-ensemble.exe scores-196-10/ --beam 10 \
   --member-out member.out --min-gain 0.03
 
 # Step 3: Train selected 9 members → 98.4%

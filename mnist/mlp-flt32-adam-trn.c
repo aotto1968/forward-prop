@@ -9,6 +9,7 @@
  * Inference via --import: loads weights and evaluates.
  * Single source for both MNIST and CIFAR (via ki-local.h dataset aliases).
  */
+#include "ki-config.h"
 #include "ki-common.h"
 #include "ki-adamw.h"
 
@@ -151,9 +152,9 @@ int main(int argc, char *argv[]) {
     ki_parse_args(argc, argv);
 
     /* Should members or a matrix be used?
-     * Default (kein --channels, kein --encoding): single matrix (flat)
-     * --channels r,g,b  (ohne flat) → Members pro Block
-     * --channels flat              → single matrix
+     * Default (kein --channel, kein --encoding): single matrix (flat)
+     * --channel r,g,b  (ohne flat) → Members pro Block
+     * --channel flat              → single matrix
      * --encoding latest            → Members (mixed types) */
     int use_members = 0;
     if (aa.enc_count > 1) {
@@ -163,7 +164,7 @@ int main(int argc, char *argv[]) {
             if (aa.enc_array[i].type != first) { use_members = 1; break; }
     }
     if (!use_members && aa.channel_explicit && !aa.debug_flat)
-        use_members = 1;  /* --channels ohne flat → Members */
+        use_members = 1;  /* --channel ohne flat → Members */
     omp_set_num_threads(aa.threadN);
 
     /* ── Single matrix or multi-member? ────────────────────────── */

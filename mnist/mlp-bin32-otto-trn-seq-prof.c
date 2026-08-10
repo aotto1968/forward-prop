@@ -1,4 +1,18 @@
 /*
+ * ── FINAL ARCHITECTURE (2026-08-08) ────────────────────────────────────────
+ * otto-score-ifc/mnist/mlp-bin32-otto-trn-seq-prof.c — PRF trainer.
+ * Runs N members in parallel, each with 1 thread (distributed simulation:
+ * N members × 1 thread instead of 1 member × N threads). Evolved from the
+ * cache-blocking study (plans/plan-2026-08-07-sweep-cache-blocking.md);
+ * the old sequential trainer is archived as mlp-bin32-otto-trn-seq.c
+ * (still buildable via the -seq-8-* Makefile targets for A/B testing).
+ * Verified: ~2× faster than the sequential trainer at same thread count,
+ * int32 results bit-identical (integer addition is associative → no
+ * thread-order drift; the DRAM chip accumulates popcounts in integer
+ * arithmetic). --threadN N = parallel member width; per-member progress
+ * line is the default, W0/MIN/MAX/pxz only with explicit --debug-member.
+ * ──────────────────────────────────────────────────────────────────────────
+ *
  * otto-score-ifc/mnist/mlp-bin32-otto-trn-seq.c — SEQUENTIAL MEMBER TRAINING
  * ==========================================================================
  *
@@ -266,6 +280,43 @@ typedef struct ki_Member ki_Member;
 /* ── --debug-epoch flag (local, not in ki-common.h) ── */
 static int debug_epoch = 0;
 
+/* ── [PROF] phase profiling (local, prof trainer only, 2026-08-08) ──
+ * --prof: time the per-member phases (CEX-load / gb-train / gb-eval /
+ * target / train / eval) and print one [PROF] line per member plus a
+ * summed summary. Off by default → the binary stays A/B-identical to
+ * the production flt32 trainer without the flag. */
+static int g_prof = 0;
+
+/* ── [DBG] explicit --debug-member (local, prof trainer only) ──
+ * Per-member progress (mem=... id:...) is ALWAYS printed (PRF default,
+ * visual feedback). The extra fields W0 / MIN / MAX / pxz are only shown
+ * when the user passes --debug-member explicitly — g_dbg_member tracks
+ * that explicit request (aa.debug_member is forced to 1 in main). */
+static int g_dbg_member = 0;
+
+/* ── [PRF] parallel member execution (prof trainer ONLY mode) ──
+ * The prof trainer runs N members in parallel, each with 1 thread
+ * (simulates distributed computing: N members × 1 thread instead of
+ * 1 member × N threads). This is the ONLY mode of the prof trainer —
+ * the production trainer (mlp-bin32-otto-trn-seq.c) remains the
+ * sequential baseline for A/B comparisons. OpenMP nested parallelism is
+ * disabled by default, so inner per-sample regions must NOT spawn their
+ * own teams — see the if(!g_prf) removals below (g_prf is constant 1). */
+static const int g_prf = 1;         /* always on in the prof trainer */
+static int g_prf_width = 0;        /* --threadN: parallel member width
+                                     (num_threads for the OUTER member loop).
+                                     Defaults to the number of HW threads;
+                                     --threadN N caps it. */
+static int g_parallel_members = 0; /* EXCLUSIVE parallelism (2026-08-09):
+                                     1 = member loop parallel (active >= width)
+                                        → sample loops single
+                                     0 = member loop single (few members)
+                                        → sample loops use all cores.
+                                     Never both at once → no nested OpenMP,
+                                     no deadlock (bug 2026-08-09: 1 member ran
+                                     single-threaded = 13.6s vs 3.6s). */
+static int g_user_threadn = 0;     /* 1 = user passed --threadN explicitly */
+
 ki_Args aa = {
     .hidden             = 64,
     .epochs             = 1,
@@ -274,7 +325,14 @@ ki_Args aa = {
     .evalN              = 0,      /* auto: set from dataset default */
     .seed               = 42,
     .lr                 = KI_DEFAULT_LR,
-    .threadN            = 8,
+    .threadN            = 0,      /* PRF: 0 = auto (all HW threads) = parallel
+                                     member width; --threadN N changes it.
+                                     The INNER training parallelism is capped
+                                     at 8 separately (ki_batch_correct with
+                                     batch=64 does NOT scale beyond 8, bug
+                                     2026-08-10) — so the effective 1-member
+                                     behavior matches the historical seq
+                                     default of 8 threads. */
     .warmup_epochs      = 2,
     .step_power         = KI_DEFAULT_STEP_POWER,
     .gap_k              = 0.0f,
@@ -408,20 +466,37 @@ static int active_chans[KI_ENC_MAX];    /* Mapping: seq_idx → Bit-Position (0.
  */
 static uint32_t __attribute__((unused)) h0_neuron(const uint32_t *in, const uint32_t *W0_row, int nc_local, int half __attribute__((unused))) {
     (void)half; /* suppress -Wunused-parameter (half used only in KI_MAJ_1/1R) */
-    uint32_t match[4096] = {0}; /* max nc_local */
+    /* THREAD-LOCAL match buffer (was uint32_t match[4096] on the stack = 16KB,
+     * then heap-malloc per call). The inner per-sample loops call h0_neuron
+     * H_local× per sample — 512×60000 = 30M calls. malloc per call was 6.5s
+     * (gb phase). A static __thread buffer is allocated ONCE per thread and
+     * reused: no stack overflow (16KB × threads is fine) and no malloc storm.
+     * Size: nc_local ≤ 4096 (CIFAR worst case). */
+    static __thread uint32_t *t_match = NULL;
+    static __thread int t_match_sz = 0;
+    if (!t_match || t_match_sz < nc_local) {
+        free(t_match);
+        t_match = (uint32_t *)malloc((size_t)nc_local * sizeof(uint32_t));
+        if (!t_match) { fprintf(stderr, "[FATAL] h0_neuron OOM\n"); exit(1); }
+        t_match_sz = nc_local;
+    }
+    uint32_t *match = t_match;
+    uint32_t _result;
     switch (aa.maj_mode) {
         case KI_MAJ_1: {
             /* Container-level flat (original majority_tree1) */
             for (int c = 0; c < nc_local; c++)
                 match[c] = H0_MATCH(in, W0_row, c);
-            return majority_tree1(match, nc_local, half);
+            _result = majority_tree1(match, nc_local, half);
+            break;
         }
         case KI_MAJ_1R: {
             /* Container-level row-wise (old rowwise) */
             for (int c = 0; c < nc_local; c++)
                 match[c] = H0_MATCH(in, W0_row, c);
             int cpr = KI_COLS / KI_PX_PER_CONT;
-            return majority_tree1_rowwise(match, nc_local, cpr, half);
+            _result = majority_tree1_rowwise(match, nc_local, cpr, half);
+            break;
         }
         case KI_MAJ_1P: {
             /* Pixel-accurate flat */
@@ -432,7 +507,8 @@ static uint32_t __attribute__((unused)) h0_neuron(const uint32_t *in, const uint
                     match[c] = H0_MATCH(in, W0_row + g * nc_local, c);
                 r |= (majority_tree1_pixel(match, nc_local, pix_half) << (g * KI_BIT_POS));
             }
-            return r;
+            _result = r;
+            break;
         }
         case KI_MAJ_1RP: {
             /* Pixel-accurate row-wise: per-row pixel-accurate, then cross-row majority */
@@ -453,12 +529,14 @@ static uint32_t __attribute__((unused)) h0_neuron(const uint32_t *in, const uint
                 uint32_t cross = majority_tree1(row_results, rows, rows / 2);
                 result |= (cross << (g * KI_BIT_POS));
             }
-            return result;
+            _result = result;
+            break;
         }
         case KI_MAJ_7: {
             for (int c = 0; c < nc_local; c++)
                 match[c] = H0_MATCH(in, W0_row, c);
-            return majority_tree7(match, nc_local);
+            _result = majority_tree7(match, nc_local);
+            break;
         }
         default: {
             for (int c = 0; c < nc_local; c++)
@@ -468,17 +546,19 @@ static uint32_t __attribute__((unused)) h0_neuron(const uint32_t *in, const uint
             if (_step == 0) _step = KI_PX_PER_CONT;
             /* --debug-maj overrides auto-detection */
             if (aa.debug_maj == 1) {
-                return majority_tree3(match, nc_local);
+                _result = majority_tree3(match, nc_local);
             } else if (aa.debug_maj == 2) {
-                return majority_tree3_pixel_step(match, nc_local, _step);
+                _result = majority_tree3_pixel_step(match, nc_local, _step);
+            } else if (_step == KI_PX_PER_CONT) {
+                /* Default auto: fast path for container-aligned steps */
+                _result = majority_tree3(match, nc_local);
+            } else {
+                _result = majority_tree3_pixel_step(match, nc_local, _step);
             }
-            /* Default auto: fast path for container-aligned steps, pixel for others */
-            if (_step == KI_PX_PER_CONT) {
-                return majority_tree3(match, nc_local);
-            }
-            return majority_tree3_pixel_step(match, nc_local, _step);
+            break;
         }
     }
+    return _result;
 }
 
 /* ── H0/GB value for neuron h of a member ──────────────────────────
@@ -1441,7 +1521,8 @@ static int export_one_member_ens(ki_Member *mem, int member_idx,
     int member_ok = 0;
     if (mem->gb_buf_te) {
         /* Fast path: use cached gb_buf_te */
-        #pragma omp parallel for schedule(static) reduction(+:member_ok)
+        #pragma omp parallel for schedule(static) reduction(+:member_ok) \
+            if(!g_parallel_members)
         for (int s = 0; s < N; s++) {
             SCORE_TYPE scc[KI_NCLASSES];
             scores_otto_from_gb(s, mem->H_local, mem->gb_buf_te,
@@ -1455,7 +1536,8 @@ static int export_one_member_ens(ki_Member *mem, int member_idx,
         }
     } else {
         /* Fallback: raw pixel path */
-        #pragma omp parallel for schedule(static) reduction(+:member_ok)
+        #pragma omp parallel for schedule(static) reduction(+:member_ok) \
+            if(!g_parallel_members)
         for (int s = 0; s < N; s++) {
             SCORE_TYPE scc[KI_NCLASSES];
             scores_otto(mem->input_buf_te + (size_t)s * (size_t)mem->NC_slice + mem->slc_off,
@@ -1687,7 +1769,14 @@ static void ki_member_compute_gb_te(ki_Member *m, const uint32_t *X,
                                      int N, int n_cont) {
     if (!m->gb_buf_te || N <= 0) return;
     const uint32_t *in_base = X + (size_t)m->slc_off;
-    #pragma omp parallel for schedule(static)
+    /* PRE-COMPUTE phase: runs OUTSIDE the PRF member loop (sequentially over
+     * members) — safe to parallelize the inner sample loop with all cores.
+     * Only when the member loop is single (few members): gate on
+     * !g_parallel_members, thread count = g_prf_width locally (the global
+     * limit stays 1 for the member loop). Bug 2026-08-09: 1 member was
+     * single-threaded = 13.6s vs 3.6s. */
+    #pragma omp parallel for schedule(static) num_threads(g_prf_width) \
+        if(!g_parallel_members)
     for (int s = 0; s < N; s++) {
         const uint32_t *in = in_base + (size_t)s * (size_t)n_cont;
         for (int h = 0; h < m->H_local; h++) {
@@ -1703,7 +1792,10 @@ static void ki_member_compute_gb_te(ki_Member *m, const uint32_t *X,
 static void ki_member_compute_h0(ki_Member *m, const uint32_t *X, int N,
                                   int n_cont) {
     const uint32_t *in_base = X + (size_t)m->slc_off;
-    #pragma omp parallel for schedule(static)
+    /* PRE-COMPUTE phase: outside the PRF member loop — sample-parallel with
+     * all cores only when the member loop is single (g_parallel_members==0) */
+    #pragma omp parallel for schedule(static) num_threads(g_prf_width) \
+        if(!g_parallel_members)
     for (int s = 0; s < N; s++) {
         const uint32_t *in = in_base + (size_t)s * (size_t)n_cont;
         for (int h = 0; h < m->H_local; h++) {
@@ -1893,8 +1985,22 @@ static int ki_evaluate_member(const uint32_t *X, const uint8_t *y, int N,
 {
     if (N <= 0) return 0;
 
-    /* Votes-Accumulator: N Samples × KI_NCLASSES Klassen */
-    SCORE_TYPE (*votes)[KI_NCLASSES] = (SCORE_TYPE (*)[KI_NCLASSES])calloc((size_t)N, sizeof(SCORE_TYPE[KI_NCLASSES]));
+    /* EXCLUSIVE PARALLELISM (bug 2026-08-10) — SAME logic as the training
+     * member loop: members parallel XOR samples parallel, never nested.
+     * With 3+ members the MEMBER loop runs parallel (1 thread per member)
+     * and each member-thread accumulates into its OWN vote block (no race);
+     * with 1-2 members the member loop runs single and the SAMPLE loop
+     * uses all cores (each s writes a disjoint votes[s] row). */
+    g_parallel_members = (active_members >= 3) ? 1 : 0;
+    int n_threads_mem = g_parallel_members
+        ? (active_members < g_prf_width ? active_members : g_prf_width) : 1;
+    if (n_threads_mem < 1) n_threads_mem = 1;
+
+    /* Votes-Accumulator: n_threads_mem blocks of N × KI_NCLASSES.
+     * Block 0 is the merge target; in the member-parallel case blocks
+     * 1..n_threads_mem-1 hold the other threads' partial votes. */
+    SCORE_TYPE (*votes)[KI_NCLASSES] = (SCORE_TYPE (*)[KI_NCLASSES])calloc(
+        (size_t)n_threads_mem * (size_t)N, sizeof(SCORE_TYPE[KI_NCLASSES]));
     if (!votes) { fprintf(stderr, "[FATAL] evaluate: votes OOM\n"); exit(1); }
 
     /* Each member gets equal voting power: Scale sc.*so that
@@ -1906,15 +2012,18 @@ static int ki_evaluate_member(const uint32_t *X, const uint8_t *y, int N,
     #define VOTE_SCALE ((SCORE_TYPE)16777216)
 
     /* Members outer: target.*stays warm in L1 cache */
-    //#pragma omp parallel for schedule(static) if(active_members > 8)
+    #pragma omp parallel for schedule(static) if(g_parallel_members) \
+        num_threads(n_threads_mem)
     for (int m = 0; m < active_members; m++) {
         ki_Member *mem = members[m];
+        int tid = g_parallel_members ? omp_get_thread_num() : 0;
+        SCORE_TYPE (*votes_m)[KI_NCLASSES] = votes + (size_t)tid * (size_t)N;
 
         /* ── Skip members below accuracy threshold ────────────── */
         if (aa.member_threshold > 0 && mem->trn_acc < (float)aa.member_threshold)
             continue;
 
-        #pragma omp parallel for schedule(static)
+        #pragma omp parallel for schedule(static) if(!g_parallel_members)
         for (int s = 0; s < N; s++) {
             SCORE_TYPE sc[KI_NCLASSES];
             if (use_gb == 2) {
@@ -1949,18 +2058,26 @@ static int ki_evaluate_member(const uint32_t *X, const uint8_t *y, int N,
                 }
                 if (max_abs > 0) {
                     for (int k = 0; k < KI_NCLASSES; k++)
-                        votes[s][k] += sc[k] * VOTE_SCALE / max_abs;
+                        votes_m[s][k] += sc[k] * VOTE_SCALE / max_abs;
                 } else {
                     for (int k = 0; k < KI_NCLASSES; k++)
-                        votes[s][k] += sc[k];
+                        votes_m[s][k] += sc[k];
                 }
             } else {
                 for (int k = 0; k < KI_NCLASSES; k++)
-                    votes[s][k] += sc[k];
+                    votes_m[s][k] += sc[k];
             }
         }
     }
     #undef VOTE_SCALE
+
+    /* Merge partial vote blocks (member-parallel case) into block 0 */
+    for (int t = 1; t < n_threads_mem; t++) {
+        SCORE_TYPE (*vt)[KI_NCLASSES] = votes + (size_t)t * (size_t)N;
+        for (int s = 0; s < N; s++)
+            for (int k = 0; k < KI_NCLASSES; k++)
+                votes[s][k] += vt[s][k];
+    }
 
     /* Merge: argmax per sample (pred=-1 when all votes=0, counted as wrong) */
     int ok = 0;
@@ -2321,16 +2438,45 @@ static int ifc_load_model(const char *path,
  * MAIN
  * ═══════════════════════════════════════════════════════════════════ */
 int main(int argc, char *argv[]) {
-    /* Filter out --debug-epoch before ki_parse_args */
+    /* Filter out --debug-epoch and --prof before ki_parse_args.
+     * NOTE: no --prf / --seq handling — the prof trainer runs in PRF mode
+     * (N members × 1 thread) ALWAYS; the production trainer is the
+     * sequential baseline. A stray --prf is left for ki_parse_args to
+     * reject (it is not a known option there), keeping the CLI honest. */
     const char **debug_av = (const char **)malloc((size_t)(argc + 1) * sizeof(char *));
     int debug_ac = 0;
     debug_av[debug_ac++] = argv[0];
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--debug-epoch") == 0) { debug_epoch = 1; }
+        else if (strcmp(argv[i], "--prof") == 0) { g_prof = 1; }
+        else if (strcmp(argv[i], "--debug-member") == 0) { g_dbg_member = 1; }
+        else if (strcmp(argv[i], "--threadN") == 0 && i + 1 < argc) {
+            /* PRF: --threadN N = parallel member width (N members at once,
+             * each on 1 thread). Keep the arg for ki_parse_args (it also
+             * sets aa.threadN which we overwrite to 1 per member later). */
+            g_user_threadn = 1;
+            debug_av[debug_ac++] = argv[i];
+            debug_av[debug_ac++] = argv[++i];
+        }
         else { debug_av[debug_ac++] = argv[i]; }
     }
     debug_av[debug_ac] = NULL;
     aa.lr_step = (int)round(aa.lr * (1<<OT_PRECISION));
+    /* ROUNDTRIP (feature 2026-08-10): adopt ensemble DEFAULTS from the
+     * --member-file META header BEFORE the CLI parse, so the file sets the
+     * defaults and explicit user options still win (they are applied by
+     * ki_parse_args afterwards). The path must be extracted from argv here
+     * because ki_parse_args has not run yet — it sets aa.member_file itself
+     * (ki-common.h:1491), which is why the parse happens after it. */
+    {
+        for (int _ai = 1; _ai + 1 < argc; _ai++)
+            if (strcmp(argv[_ai], "--member-file") == 0) {
+                strncpy(aa.member_file, argv[_ai + 1], sizeof(aa.member_file) - 1);
+                aa.member_file[sizeof(aa.member_file) - 1] = '\0';
+                ki_member_file_apply_meta();
+                break;
+            }
+    }
     ki_parse_args(debug_ac, (char **)debug_av);
     free(debug_av);
     aa.no_precompute = 1;  /* sequential: compute gb per-member */
@@ -2409,7 +2555,30 @@ int main(int argc, char *argv[]) {
             }
         }
     }
-    omp_set_num_threads(aa.threadN);
+    /* PRF mode (always on): N members in parallel, each with 1 thread — the
+     * member loop below gets num_threads(min(active_members, g_prf_width)).
+     * g_prf_width is the PARALLEL MEMBER WIDTH: --threadN N changes it;
+     * without --threadN it defaults to the number of HW threads. The INNER
+     * training parallelism is capped at 8 (see the member-loop comment) so
+     * the 1-member case matches the historical seq default of 8 threads. */
+    int _hw = omp_get_max_threads();   /* BEFORE omp_set_num_threads */
+    g_prf_width = aa.threadN > 0 ? aa.threadN : _hw;
+    if (g_prf_width < 1) g_prf_width = 1;
+    printf("  [PRF] parallel members (distributed simulation, width=%d)%s\n",
+           g_prf_width,
+           g_user_threadn ? "  (--threadN)" : "  (auto)");
+    /* PRF default: per-member progress (mem=... id:...) always on — visual
+     * feedback for the user. The extra W0/MIN/MAX/pxz fields only appear
+     * with an explicit --debug-member (tracked by g_dbg_member). */
+    aa.debug_member = 1;
+    /* PRF threads: the global limit stays 1 (per-member) — the OUTER member
+     * loop caps itself via num_threads(min(active, g_prf_width)). The PRE-COMPUTE
+     * functions (compute_h0/gb_te, outside the member loop) set their own
+     * num_threads(g_prf_width) locally — sample-parallel only when the member
+     * loop is single (few members). Never nested: the member loop and the
+     * precompute loops are disjoint in time (bug 2026-08-09: 1 member ran
+     * single-threaded = 13.6s vs 3.6s). */
+    omp_set_num_threads(1);
 
 #ifdef KI_BITVOTING
     /* ── BIT-VOTING mode: direct pixel-bit → class voting ──────────
@@ -2694,24 +2863,41 @@ int main(int argc, char *argv[]) {
                ki_score_type_str(),
            ki_counter_type_str(),
                ki_score_type_str());
-        /* Show member details */
+        /* Show member details — from the MODEL metadata, not the CLI args:
+         * in IFC mode the ensemble specs live in ifc_meta (channel/enc/wid/
+         * xform per member), the CLI enc_array/xform_list are empty defaults
+         * and would print wrong data (bug 2026-08-10: showed "exp"/"id"
+         * although the members are gamma8/sqrt8 + rot90@colswap-1-4 etc.). */
         printf("  Members:     %d\n", n_mifc);
         printf("  Channels:    %s\n", color_str());
         {
             char en_buf[256] = "";
-            for (int ei = 0; ei < aa.enc_count && ei < KI_ENC_MAX; ei++) {
+            for (int mi = 0; mi < n_mifc && ifc_meta; mi++) {
                 if (en_buf[0]) strncat(en_buf, ",", sizeof(en_buf) - strlen(en_buf) - 1);
-                strncat(en_buf, ki_enc_name_short((int)aa.enc_array[ei].type),
-                        sizeof(en_buf) - strlen(en_buf) - 1);
+                strncat(en_buf, ifc_meta[mi][1], sizeof(en_buf) - strlen(en_buf) - 1);
+                strncat(en_buf, ifc_meta[mi][2], sizeof(en_buf) - strlen(en_buf) - 1);
+            }
+            if (!en_buf[0]) {
+                for (int ei = 0; ei < aa.enc_count && ei < KI_ENC_MAX; ei++) {
+                    if (en_buf[0]) strncat(en_buf, ",", sizeof(en_buf) - strlen(en_buf) - 1);
+                    strncat(en_buf, ki_enc_name_short((int)aa.enc_array[ei].type),
+                            sizeof(en_buf) - strlen(en_buf) - 1);
+                }
             }
             printf("  Encodings:   %s\n", en_buf[0] ? en_buf : "-");
         }
         {
             char xf_buf[256] = "";
-            for (int xi = 0; xi < aa.xform_list_count; xi++) {
+            for (int mi = 0; mi < n_mifc && ifc_meta; mi++) {
                 if (xf_buf[0]) strncat(xf_buf, ", ", sizeof(xf_buf) - strlen(xf_buf) - 1);
-                const char *n = ki_xform_str(aa.xform_list[xi]);
-                strncat(xf_buf, n, sizeof(xf_buf) - strlen(xf_buf) - 1);
+                strncat(xf_buf, ifc_meta[mi][3], sizeof(xf_buf) - strlen(xf_buf) - 1);
+            }
+            if (!xf_buf[0]) {
+                for (int xi = 0; xi < aa.xform_list_count; xi++) {
+                    if (xf_buf[0]) strncat(xf_buf, ", ", sizeof(xf_buf) - strlen(xf_buf) - 1);
+                    const char *n = ki_xform_str(aa.xform_list[xi]);
+                    strncat(xf_buf, n, sizeof(xf_buf) - strlen(xf_buf) - 1);
+                }
             }
             printf("  Xform:       %s\n", xf_buf[0] ? xf_buf : "id");
         }
@@ -2719,6 +2905,21 @@ int main(int argc, char *argv[]) {
         int K = KI_NCLASSES, V = 32;
         ki_Member **mems = (ki_Member **)malloc((size_t)n_mifc * sizeof(ki_Member *));
         int shared_input = (ifc_meta == NULL);   /* v6: shared CLI-config buffer */
+        /* --dry-run (debugging): no pixel data is loaded (data.X_raw == NULL,
+         * ki-local.h:151) — the per-member input buffers CANNOT be built. Show
+         * the SETUP (members/metadata above) and return; the actual inference
+         * is skipped. Without this guard load_input_cex_cached() SEGV'd on the
+         * NULL X_raw (bug 2026-08-09). Frees the model buffers exactly like the
+         * normal path (Z.2894-2895) — no leak on the early return. */
+        if (aa.dry_run) {
+            printf("  Dry-run:      setup only (no pixel data loaded, inference skipped)\n");
+            printf("  Members:     %d  H=%d  NC=%d  mode=%s\n",
+                   n_mifc, hl_ifc, ns_ifc, ki_xform_str(aa.xform_list_count ? aa.xform_list[0] : KI_XFORM_ID));
+            free(mems);
+            free(W0_ifc); free(tgt_ifc); free(off_ifc); free(ifc_meta);
+            ki_dataset_free(&data);
+            return 1;
+        }
         for (int i = 0; i < n_mifc; i++) {
             size_t w0_off = (size_t)i * (size_t)hl_ifc * (size_t)ns_ifc;
             mems[i] = ki_member_create(hl_ifc, ns_ifc,
@@ -2759,13 +2960,14 @@ int main(int argc, char *argv[]) {
         struct timeval tv0, tv1; gettimeofday(&tv0, NULL);
         int evl_ok = 0;
         if (total_eval > 0 && !aa.dry_run) {
-            /* IFC inference: restore the OpenMP thread count. The trainer may
-             * have forced omp_set_num_threads(1); the import evaluates ALL
-             * members in ONE parallel pass (ki_evaluate_member parallelizes
-             * over samples). omp_get_max_threads() returns 1 after the limit,
-             * so use omp_get_num_procs(). Without this reset the inference ran
-             * single-threaded (bug 2026-08-09). */
-            int _ifc_hw = omp_get_num_procs();
+            /* IFC inference: restore the OpenMP thread count. The PRF trainer
+             * forced omp_set_num_threads(1) (per-member threads) — but the
+             * import evaluates ALL members in ONE parallel pass (ki_evaluate_member
+             * parallelizes over samples). omp_get_max_threads() returns 1 after
+             * the PRF limit, so use g_prf_width (the saved HW width). Without
+             * this reset the inference ran single-threaded: 17.8s vs ~2s at 16
+             * threads (bug 2026-08-09). */
+            int _ifc_hw = g_prf_width > 0 ? g_prf_width : omp_get_num_procs();
             if (_ifc_hw < 1) _ifc_hw = 1;
             omp_set_num_threads(_ifc_hw);
             aa.threadN = _ifc_hw;
@@ -2783,17 +2985,35 @@ int main(int argc, char *argv[]) {
                                             (int)n_cont, pred_eval, 0);
             }
         }
-        /* Per-member evals (--debug-member, v7 path) — lets us see whether
-         * the reconstructed per-member inputs match the training members.
-         * Shows the running ensemble accuracy (ens=) as members are added,
-         * plus each member's individual accuracy (mem=) and its spec. */
-        if (aa.debug_member && !shared_input && total_eval > 0 && !aa.dry_run) {
+        /* Per-member evals (explicit --debug-member, v7 path) — lets us see
+         * whether the reconstructed per-member inputs match the training
+         * members. Shows the running ensemble accuracy (ens=) as members
+         * are added, plus each member's individual accuracy (mem=) and its
+         * spec. Gate on g_dbg_member (the EXPLICIT flag), NOT aa.debug_member
+         * which the PRF trainer forces to 1 for the training progress line
+         * (bug 2026-08-10: without --debug-member this loop still ran and
+         * doubled the eval work — 16 members × 10000 samples). */
+        if (g_dbg_member && !shared_input && total_eval > 0 && !aa.dry_run) {
             printf("  Per-member evals (v7 reconstructed inputs):\n");
             SCORE_TYPE (*run_votes)[KI_NCLASSES] = (SCORE_TYPE (*)[KI_NCLASSES])
                 calloc((size_t)total_eval, sizeof(SCORE_TYPE[KI_NCLASSES]));
             if (!run_votes) { fprintf(stderr, "[FATAL] OOM\n"); exit(1); }
             for (int i = 0; i < n_mifc; i++) {
                 int ok = 0, cum_ok = 0;
+                /* EXCLUSIVE PARALLELISM (bug 2026-08-10): this per-member
+                 * debug eval was fully SEQUENTIAL (16 members × 10000
+                 * samples) → +6.6s on top of the parallel ki_evaluate_member.
+                 * The MEMBER loop must stay sequential (run_votes is an
+                 * incremental ensemble accumulator), but the sample loop is
+                 * data-parallel: each s writes its OWN run_votes[s] row
+                 * (disjoint), ok/cum_ok are reductions. No race.
+                 * NOTE: no if(!g_parallel_members) gate here — this block
+                 * runs at TOP LEVEL (no enclosing parallel region), so the
+                 * sample loop can ALWAYS use all cores regardless of how
+                 * ki_evaluate_member set g_parallel_members (bug 2026-08-10:
+                 * the gate made this loop serial again after the member-
+                 * parallel eval → 6.9s vs 1.4s). */
+                #pragma omp parallel for schedule(static) reduction(+:ok,cum_ok)
                 for (int s = 0; s < total_eval; s++) {
                     SCORE_TYPE sc[KI_NCLASSES];
                     scores_otto(mems[i]->input_buf + (size_t)s * (size_t)mems[i]->NC_slice,
@@ -2857,6 +3077,19 @@ int main(int argc, char *argv[]) {
 
     print_setup(H, aa.epochs, total_train, total_eval, aa.threadN, aa.seed, aa.batchN,
                 splitVN, splitHN, NC_slice, H_local, ensembleN, aa.channel, nc_blk, (int)n_cont);
+
+    /* ── gb-cache status (GUARANTEED message, bug 2026-08-10): the STATUS
+     * line is always shown — without it, --debug-cache logged nothing when
+     * data/gb/ did not exist, silently hiding that the gb_buf (h0→gb, the
+     * dominant phase at H=512, ~785ms) is recomputed every run. The
+     * detailed hit/miss/saved lines below stay behind --debug-cache. */
+    if (!aa.import_gb && !aa.export_gb) {
+        printf("  gb-cache: DISABLED  (use --export-gb once to write data/gb/, then --import-gb to load)\n");
+    } else if (aa.import_gb) {
+        printf("  gb-cache: enabled    (import: data/gb/*.gb)\n");
+    } else {
+        printf("  gb-cache: enabled    (export: data/gb/*.gb)\n");
+    }
 
     /* ── W0: random uint32[total_members][H_local][NC_slice*pixel_groups] (frozen) ── */
     int uses_pixel = (aa.maj_mode == KI_MAJ_1P || aa.maj_mode == KI_MAJ_1RP);
@@ -3003,6 +3236,42 @@ int main(int argc, char *argv[]) {
     /* ── Create member array: each member manages itself ─── */
     /* ── All specs are active (no channel filtering needed with member_spec) ─── */
     int active_members = total_members;  /* = aa.member_spec_count * ensembleN * rows_factor */
+    /* Exclusive parallelism switch: many members → member loop parallel;
+     * few members → sample loops use all cores (bug 2026-08-09).
+     * FIXED threshold of 3 members (bug 2026-08-10): even width/2 was too
+     * strict — 4 members on width=16 ran sequential (8648ms) but parallel
+     * (--threadN 4) took 6565ms (cifar-1 2026-08-10_00-59-28 vs 00-59-52).
+     * With 3+ members the member loop parallelizes (1 thread per member);
+     * with 1-2 members the sample loops use all cores (cap 8) instead. */
+    g_parallel_members = (active_members >= 3) ? 1 : 0;
+    /* EXCLUSIVE PARALLELISM (bug 2026-08-10): when the member loop runs
+     * SINGLE (few members, g_parallel_members==0), ALL inner sample loops
+     * must run with all cores. ki_batch_correct (the training loop) has
+     * `#pragma omp parallel for` WITHOUT num_threads (ki-train.h:85) and
+     * inherits the GLOBAL team — with the old omp_set_num_threads(1) the
+     * training ran on 1 thread: prof 5920ms vs seq 3682ms for the same job
+     * (logs 2026-08-10_00-14-47 vs 00-09-35). aa.threadN must match the
+     * team (it sizes the dc[] thread buffers in ki_batch_correct).
+     * With many members (g_parallel_members==1) the outer loop owns the
+     * parallelism: aa.threadN is forced to 1 (per-member thread count, the
+     * PRF design) so ki_batch_correct allocates a SINGLE dc[] buffer —
+     * otherwise the serial merge cost O(n_threads × tgt_sz) per batch
+     * explodes (16 members with threadN=8 → 25s, bug 2026-08-10). */
+    int _save_threadn = aa.threadN;
+    if (!g_parallel_members) {
+        /* Few members: use all cores inside the member — capped at 8
+         * because ki_batch_correct (batch=64) does NOT scale beyond 8
+         * (16 threads → 4 samples/thread + spawn overhead = 13s, measured
+         * 2026-08-10). seq's historical default was 8 (aa.threadN=8). */
+        int _inner = g_prf_width > 8 ? 8 : g_prf_width;
+        aa.threadN = _inner;
+        omp_set_num_threads(_inner);
+    } else {
+        /* Many members: 1 thread per member, member loop is the parallel
+         * dimension. Matches the old auto default (aa.threadN=0 → 1). */
+        aa.threadN = 1;
+        omp_set_num_threads(1);
+    }
     ki_Member **members = (ki_Member **)malloc((size_t)active_members * sizeof(ki_Member *));
     if (!members) { fprintf(stderr, "[FATAL] members OOM\n"); return 1; }
 
@@ -3214,18 +3483,9 @@ int main(int argc, char *argv[]) {
         : NULL;
     int final_trn_ok = 0, final_evl_ok = 0, best_evl_ok = 0;
 
-    /* Member stats for --debug-member-stats */
-    typedef struct {
-        int   mb_idx, vi, color_bit, xform_id, enc_type, enc_width;
-        float mem_trn, mem_evl;       /* standalone accuracy */
-        float ens_before_trn, ens_before_evl; /* ensemble accuracy before this member */
-        float gain_trn, gain_evl;     /* delta */
-        float agree_trn, disagree_trn; /* member corrects / introduces errors (train) */
-        float agree_evl, disagree_evl; /* member corrects / introduces errors (eval) */
-    } _MemberStat;
-    _MemberStat *_member_stats = NULL;
-    int _member_stats_n = 0;
-    float _ens_before_trn = 0.0f, _ens_before_evl = 0.0f;
+    /* Member stats for --debug-member-stats — the collection block was
+     * removed in PRF mode (member order undefined); only the per-member
+     * agree/disagree counters remain (filled during Phase 2 eval). */
     int _agree_trn = 0, _disagree_trn = 0, _agree_evl = 0, _disagree_evl = 0;
 
     /* Export buffers for per-member data (filled during member loop) */
@@ -3282,8 +3542,36 @@ int main(int argc, char *argv[]) {
 
     int _sweep_trained = 0, _sweep_skipped = 0;
     int _last_xf = -1;   /* xform of the previously processed member (cache clear) */
+
+    /* [PROF] phase accumulators (--prof, prof trainer only, 2026-08-08) */
+    double _prof_cex = 0, _prof_gb = 0, _prof_target = 0, _prof_train = 0, _prof_eval = 0;
+    int _prof_n = 0;
+
+    /* PRF: N members in parallel, each with 1 thread. omp_set_num_threads(1)
+     * above makes every inner per-sample region single-threaded; the outer
+     * loop explicitly spawns min(active_members, cores) threads. Shared
+     * state (ensemble votes, xform cache, counters) is protected with
+     * critical/atomic sections — the vote phase is only ~1.6% of runtime,
+     * so serializing it costs almost nothing. The cumulative `ens=`
+     * progress line is skipped in PRF mode (member order is not defined),
+     * only the final REPORT is emitted. */
+    /* EXCLUSIVE PARALLELISM (bug 2026-08-09): the member loop is parallel
+     * with 3+ members (g_parallel_members, fixed threshold 2026-08-10:
+     * width/2 was too strict, 4 members on 16 threads ran sequential =
+     * 8648ms vs parallel 6565ms, cifar-1 00-59-28 vs 00-59-52). With 1-2
+     * members this region is DISABLED (`if` false → sequential), so the
+     * inner per-sample loops (which carry `if(!g_parallel_members)`) can
+     * run with all cores — no nested OpenMP, no deadlock. The `if`-gate
+     * is the key: without it, the outer region was still "parallel" with
+     * 1 thread and the inner loops could not spawn. */
+    #pragma omp parallel for schedule(dynamic,1) \
+        if(g_parallel_members) \
+        num_threads(active_members > 0 && active_members < g_prf_width \
+                    ? active_members : g_prf_width)
     for (int mb = 0; mb < active_members; mb++) {
         ki_Member *mem = members[mb];
+        struct timeval _pt0, _pt1;
+        double _p_cex = 0, _p_gb = 0, _p_target = 0, _p_train = 0, _p_eval = 0;
 
         /* Xform-group switch (all modes): release the single-slot in-memory
          * xform cache (ki-load.h) of the previous group. Members are sorted
@@ -3293,11 +3581,13 @@ int main(int argc, char *argv[]) {
          * next group that is fully skipped/disk-hit). Plain int comparison —
          * never touches member structs (avoids the f8007d4 prev_mem
          * use-after-free pattern, bug-2026-08-05-sweep-prev-mem-double-free).
-         * See: plans/plan-2026-08-05-xform-cache.md */
-        if (mem->xform_id != _last_xf) {
-            ki_clear_cache(_last_xf);
-            _last_xf = mem->xform_id;
-        }
+         * See: plans/plan-2026-08-05-xform-cache.md
+         * PRF: the xform cache is a GLOBAL single slot — clearing it here
+         * while another parallel member reads it is a race. The cache is
+         * protected by the critical(cex) section around load_input_cex_cached
+         * below; the explicit early clear is skipped (RAM stays slightly
+         * higher, correctness first). */
+        (void)_last_xf;   /* xform-group clear is disabled in PRF mode */
 
         /* Sweep memory control happens at the END of each member's own
          * iteration (ki_member_destroy below, incl. free(m)), so every sweep
@@ -3317,6 +3607,7 @@ int main(int argc, char *argv[]) {
             if (!aa.force && access(ens_path, F_OK) == 0) {
                 printf("  [%3d/%d] SKIP  %s\n", mb+1, active_members, ens_path);
                 fflush(stdout);
+                #pragma omp atomic
                 _sweep_skipped++;
                 /* Free the skipped member immediately. Without this every
                  * skipped member keeps its target/best buffers (allocated
@@ -3344,7 +3635,7 @@ int main(int argc, char *argv[]) {
         int gb_loaded = 0;
         uint32_t gb_key = 0;
         char gb_path[512] = "";
-        {
+        if (aa.import_gb || aa.export_gb) {
             const char *_cn = ki_color_name(mem->color_bit);
             const char *_en = ki_enc_name_short((int)aa.enc_array[mem->vi].type);
             int _ew = (int)aa.enc_array[mem->vi].width;
@@ -3355,8 +3646,8 @@ int main(int argc, char *argv[]) {
             snprintf(gb_path, sizeof(gb_path), "data/gb/%08x_%dx%dx%d.gb",
                      gb_key, total_train, total_eval, H_local);
         }
-        FILE *gb_f = aa.import_gb ? fopen(gb_path, "rb") : NULL;
-        if (gb_f) {
+        if (aa.import_gb) {
+            FILE *gb_f = fopen(gb_path, "rb");
             uint32_t magic, ver, chk_key, chk_Ntr, chk_Nev, chk_H;
             if (fread(&magic, 4, 1, gb_f) == 1 && magic == 0x47425F50 &&
                 fread(&ver,   4, 1, gb_f) == 1 && ver == 1 &&
@@ -3393,16 +3684,34 @@ int main(int argc, char *argv[]) {
                 /* CEX input: the cache function handles the xform transform
                  * INTERNALLY and only on cache MISS. On hit it just loads the
                  * narrow file — no redundant per-member transformation
-                 * (~20% slower with warm cache, 2026-08-04). */
-                uint32_t *Xcex = load_input_cex_cached(
-                        data.X_raw, total_all,
-                        mem->color_bit, mem->enc_type, mem->enc_width, mem->xform_id);
+                 * (~20% slower with warm cache, 2026-08-04).
+                 * PRF: the xform/channel caches in ki-load.h are GLOBAL
+                 * single slots — serialize the load (0.9% of runtime) to
+                 * avoid races between parallel members. */
+                if (g_prof) gettimeofday(&_pt0, NULL);
+                uint32_t *Xcex;
+                #pragma omp critical(cex)
+                {
+                    Xcex = load_input_cex_cached(
+                            data.X_raw, total_all,
+                            mem->color_bit, mem->enc_type, mem->enc_width, mem->xform_id);
+                }
+                if (g_prof) { gettimeofday(&_pt1, NULL);
+                    _p_cex += (double)(_pt1.tv_sec - _pt0.tv_sec) * 1000.0
+                            + (double)(_pt1.tv_usec - _pt0.tv_usec) / 1000.0; }
                 mem->input_buf    = Xcex;
                 mem->input_buf_te = Xcex + (size_t)total_train * (size_t)mem->NC_slice;
                 mem->slc_off = 0;   /* buffer is exactly this member's slice */
             }
+            if (g_prof) gettimeofday(&_pt0, NULL);
             mem->gb_buf = (uint32_t *)malloc(gb_sz * sizeof(uint32_t));
-            #pragma omp parallel for schedule(static)
+            /* EXCLUSIVE PARALLELISM (bug 2026-08-09): this gb loop is the
+             * dominant cost (88% at H=512, 1 member). It parallelizes over
+             * samples ONLY when the member loop is single (few members,
+             * g_parallel_members==0). With many members the outer loop does
+             * the parallel and this stays single. */
+            #pragma omp parallel for schedule(static) num_threads(g_prf_width) \
+                if(!g_parallel_members)
             for (int s = 0; s < total_train; s++) {
                 const uint32_t *in = mem->input_buf + (size_t)s * (size_t)mem->NC_slice + mem->slc_off;
                 for (int h = 0; h < mem->H_local; h++) {
@@ -3413,7 +3722,8 @@ int main(int argc, char *argv[]) {
             mem->gb_buf_te = NULL;
             if (total_eval > 0) {
                 mem->gb_buf_te = (uint32_t *)malloc(te_sz * sizeof(uint32_t));
-                #pragma omp parallel for schedule(static)
+                #pragma omp parallel for schedule(static) num_threads(g_prf_width) \
+                    if(!g_parallel_members)
                 for (int s = 0; s < total_eval; s++) {
                     const uint32_t *in = mem->input_buf_te + (size_t)s * (size_t)mem->NC_slice + mem->slc_off;
                     for (int h = 0; h < mem->H_local; h++) {
@@ -3422,6 +3732,9 @@ int main(int argc, char *argv[]) {
                     }
                 }
             }
+            if (g_prof) { gettimeofday(&_pt1, NULL);
+                _p_gb += (double)(_pt1.tv_sec - _pt0.tv_sec) * 1000.0
+                       + (double)(_pt1.tv_usec - _pt0.tv_usec) / 1000.0; }
 
             /* Save to cache if --export-gb */
             if (aa.export_gb) {
@@ -3446,6 +3759,7 @@ int main(int argc, char *argv[]) {
         }
 
         /* ── Build target from gb ── */
+        if (g_prof) gettimeofday(&_pt0, NULL);
         if (!aa.dry_run && V > 1) {
             COUNTER_TYPE *tgt = ki_build_target_from_gb(y_tr, total_train,
                 mem->gb_buf, mem->H_local, V, class_counts);
@@ -3467,8 +3781,12 @@ int main(int argc, char *argv[]) {
                 memcpy(mem->err_offset, mem->offset, KI_NCLASSES * sizeof(SCORE_TYPE));
             }
         }
+        if (g_prof) { gettimeofday(&_pt1, NULL);
+            _p_target += (double)(_pt1.tv_sec - _pt0.tv_sec) * 1000.0
+                       + (double)(_pt1.tv_usec - _pt0.tv_usec) / 1000.0; }
 
         /* ── Train all epochs for this member ── */
+        if (g_prof) gettimeofday(&_pt0, NULL);
         int member_best_err = total_train;
         COUNTER_TYPE step_init_local = step_init;  /* per-member step, reduced by rollbacks */
         int rb_depth = 0;  /* rollback counter per member */
@@ -3506,7 +3824,6 @@ int main(int argc, char *argv[]) {
             int _evl_err = -1;
             if (aa.gap_k > 0.0f && total_eval > 0 && mem->gb_buf_te) {
                 _evl_err = 0;
-                #pragma omp parallel for firstprivate(_gap_sc) reduction(+:_evl_err) schedule(static)
                 for (int s = 0; s < total_eval; s++) {
                     scores_otto_from_gb(s, mem->H_local, mem->gb_buf_te,
                                        mem->target, mem->offset, _gap_sc);
@@ -3527,7 +3844,6 @@ int main(int argc, char *argv[]) {
                 int _dep_evl = 0;
                 if (total_eval > 0 && mem->gb_buf_te) {
                     SCORE_TYPE _dep_sc[KI_NCLASSES];
-                    #pragma omp parallel for firstprivate(_dep_sc) reduction(+:_dep_evl) schedule(static)
                     for (int s = 0; s < total_eval; s++) {
                         scores_otto_from_gb(s, mem->H_local, mem->gb_buf_te,
                                            mem->target, mem->offset, _dep_sc);
@@ -3583,6 +3899,10 @@ int main(int argc, char *argv[]) {
                 memcpy(mem->err_offset, mem->offset, KI_NCLASSES * sizeof(SCORE_TYPE));
             }
         }
+        if (g_prof) { gettimeofday(&_pt1, NULL);
+            _p_train += (double)(_pt1.tv_sec - _pt0.tv_sec) * 1000.0
+                      + (double)(_pt1.tv_usec - _pt0.tv_usec) / 1000.0;
+            gettimeofday(&_pt0, NULL); }
 
         /* ── Phase 1: Pre-Eval — member accuracy (needed for threshold) ── */
         int _member_trn = 0, _member_evl = 0;
@@ -3611,6 +3931,13 @@ int main(int argc, char *argv[]) {
         if (!_skip_member) {
             /* Reset _member_trn if Phase 1 already set it (avoid double-count) */
             _member_trn = 0; _member_evl = 0;
+            /* PRF: the vote accumulation writes SHARED state (acc_votes_tr/te,
+             * final_trn_ok, final_evl_ok, best_evl_ok, _agree_* etc.) and the
+             * inner omp-parallel-for reduction targets global variables —
+             * a race with parallel members. The vote phase is ~1.6% of the
+             * runtime, so serializing it costs almost nothing; the heavy
+             * phases (gb, train) stay fully parallel. */
+            #pragma omp critical(votes)
             {   SCORE_TYPE sc[KI_NCLASSES];
                 /* score range (--debug-member): type-generic limits —
                  * float/double → ±INFINITY, int64 → INT64 extremes.
@@ -3623,7 +3950,16 @@ int main(int argc, char *argv[]) {
                 _scr_max = _Generic((SCORE_TYPE)0,
                     int64_t: (SCORE_TYPE)INT64_MIN,
                     default: (SCORE_TYPE)-INFINITY);
-                #pragma omp parallel for firstprivate(sc) reduction(+:final_trn_ok,final_evl_ok,_member_trn,_member_evl,_agree_trn,_disagree_trn,_agree_evl,_disagree_evl) reduction(min:_scr_min) reduction(max:_scr_max) schedule(static)
+                /* EXCLUSIVE PARALLELISM (bug 2026-08-10): with FEW members
+                 * (!g_parallel_members) this eval runs with all cores — the
+                 * seq trainer already did (Z.3626), the prof was serial in
+                 * the critical(votes) block → +400ms (4059 vs 3655ms).
+                 * acc_votes[s] is written by exactly one thread (disjoint s),
+                 * agree/disagree and member counters are reduction targets.
+                 * With MANY members the `if` disables the parallel region →
+                 * the outer critical(votes) still serializes the shared
+                 * counters. */
+                #pragma omp parallel for schedule(static) if(!g_parallel_members) firstprivate(sc) reduction(+:_member_trn,_member_evl,_agree_trn,_disagree_trn,_agree_evl,_disagree_evl) reduction(min:_scr_min) reduction(max:_scr_max)
                 for (int s = 0; s < total_train + total_eval; s++) {
                     int is_eval = (s >= total_train);
                     int ns = is_eval ? s - total_train : s;
@@ -3631,7 +3967,7 @@ int main(int argc, char *argv[]) {
                     SCORE_TYPE *acc = is_eval ? acc_votes_te[ns] : acc_votes_tr[s];
                     if (!gb) continue;
                     scores_otto_from_gb(ns, mem->H_local, gb, mem->target, mem->offset, sc);
-                    if (aa.debug_member && is_eval) {
+                    if (g_dbg_member && is_eval) {   /* W0/MIN/MAX/pxz only */
                         for (int k = 0; k < KI_NCLASSES; k++) {
                             if (sc[k] < _scr_min) _scr_min = sc[k];
                             if (sc[k] > _scr_max) _scr_max = sc[k];
@@ -3660,141 +3996,97 @@ int main(int argc, char *argv[]) {
                     }
                 }
             }
-        }
+        }   /* end if !_skip_member; the SCORE_TYPE sc block above is the
+             * critical(votes) body, no extra closing brace. */
 
         /* DEBUG REMOVED */
 
-        /* ── Ensemble voting + progress (skipped in --sweep) ── */
-        if (!aa.sweep) {
-        /* ── Compute cumulative accuracy ── */
-        {   int _trn_ok = 0, _evl_ok = 0;
-            for (int s = 0; s < total_train; s++) {
-                int pred = -1;
-                for (int k = 0; k < KI_NCLASSES; k++)
-                    if ((acc_votes_tr[s][k] > 0 || acc_votes_tr[s][k] < 0) && (pred < 0 || acc_votes_tr[s][k] > acc_votes_tr[s][pred]))
-                        pred = k;
-                if (pred >= 0 && pred == (int)y_tr[s]) _trn_ok++;
-            }
-            for (int s = 0; s < total_eval; s++) {
-                int pred = -1;
-                for (int k = 0; k < KI_NCLASSES; k++)
-                    if ((acc_votes_te[s][k] > 0 || acc_votes_te[s][k] < 0) && (pred < 0 || acc_votes_te[s][k] > acc_votes_te[s][pred]))
-                        pred = k;
-                if (pred >= 0 && pred == (int)y_te[s]) _evl_ok++;
-            }
-            final_trn_ok = _trn_ok;
-            final_evl_ok = _evl_ok;
-            if (_evl_ok > best_evl_ok) best_evl_ok = _evl_ok;
-
-            /* ══ Collect member stats for --debug-member-stats ══ */
-            if (aa.debug_member_stats) {
-                _MemberStat _ms;
-                memset(&_ms, 0, sizeof(_ms));
-                _ms.mb_idx = mb;
-                _ms.vi = mem->vi;
-                _ms.color_bit = mem->color_bit;
-                _ms.xform_id = mem->xform_id;
-                if (mem->vi >= 0 && mem->vi < aa.enc_count) {
-                    _ms.enc_type = aa.enc_array[mem->vi].type;
-                    _ms.enc_width = aa.enc_array[mem->vi].width;
-                }
-                _ms.mem_trn = (float)_member_trn * 100.0f / (float)total_train;
-                _ms.mem_evl = (float)_member_evl * 100.0f / (float)(total_eval > 0 ? total_eval : 1);
-                _ms.ens_before_trn = _ens_before_trn;
-                _ms.ens_before_evl = _ens_before_evl;
-                _ms.gain_trn = (float)_trn_ok * 100.0f / (float)total_train - _ens_before_trn;
-                _ms.gain_evl = (float)_evl_ok * 100.0f / (float)(total_eval > 0 ? total_eval : 1) - _ens_before_evl;
-                /* Compute agreement/disagreement from accumulator sample data */
-                /* We compute this inline during evaluation: see above */
-                _ms.agree_trn = (float)_agree_trn; _ms.disagree_trn = (float)_disagree_trn;
-                _ms.agree_evl = (float)_agree_evl; _ms.disagree_evl = (float)_disagree_evl;
-
-                _MemberStat *_new = realloc(_member_stats, (size_t)(_member_stats_n + 1) * sizeof(_MemberStat));
-                if (_new) { _member_stats = _new; _member_stats[_member_stats_n++] = _ms; }
-            }
-            /* Save current ensemble accuracy as "before" for NEXT member */
-            _ens_before_trn = (float)_trn_ok * 100.0f / (float)total_train;
-            _ens_before_evl = (float)_evl_ok * 100.0f / (float)(total_eval > 0 ? total_eval : 1);
-            gettimeofday(&tv_end, NULL);
-            int _el = (int)((tv_end.tv_sec - tv_start.tv_sec) * 1000 + (tv_end.tv_usec - tv_start.tv_usec) / 1000);
-            /* Print progress with cumulative + per-member accuracy */
-            int _last_mb = (mb == active_members - 1);
-            if (_report_int > 0 && ((mb + 1) % _report_int == 0 || _last_mb)) {
-                /* Build member info (xform, channel, encoding) for debug output.
-                 * MIN/MAX is printed by the progress line below (type-matched) —
-                 * NOT here, to avoid the duplicated display. */
-                char _info[128] = "";
-                if (aa.debug_member || debug_epoch || (_report_int == 1 && active_members > 1)) {
-                    const char *_cn = ki_color_name(mem->color_bit >= 0 ? mem->color_bit : 0);
-                    const char *_en = ki_enc_name_short(mem->enc_type);
-                    int _ew = mem->enc_width;
-                    int _xtmp = mem->xform_id;
-                    const char *_xn = ki_xform_str(_xtmp);
-                    snprintf(_info, sizeof(_info), "  %s:%s:%s%d  W0=0x%08X",
-                             _xn, _cn, _en, _ew,
-                             mem->W0 ? mem->W0[0] : 0);   /* NULL in KI_BITVOTING (no W0) */
-                }
-                int _filtered = (aa.member_threshold > 0 && mem->trn_acc < (float)aa.member_threshold);
-                /* pxz: mean of the 4 centre ENCODED pixel values (32×32 →
-                 * pixel 495/496/527/528 = row/col 15/16). These are the REAL
-                 * values the member computes with (after CEX transform +
-                 * encoding), decoded from its own input container buffer.
-                 * Replaces the raw px0 (identical for all members). */
-                int _pxz = 0;
-                if (mem->input_buf_te && mem->enc_width > 0) {
-                    int _pack = 32 / mem->enc_width;
-                    int _cnts[4] = {495 / _pack, 496 / _pack, 527 / _pack, 528 / _pack};
-                    int _poss[4] = {495 % _pack, 496 % _pack, 527 % _pack, 528 % _pack};
-                    uint32_t _mask = (1u << mem->enc_width) - 1u;
-                    for (int _pi = 0; _pi < 4; _pi++)
-                        _pxz += (int)((mem->input_buf_te[_cnts[_pi]] >> (_poss[_pi] * mem->enc_width)) & _mask);
-                    _pxz /= 4;
-                }
-                if (aa.debug_member || debug_epoch || (_report_int == 1 && active_members > 1)) {
-                    /* NOTE: no trailing \n here — the line is closed either by
-                     * ki_print_scr_minmax (--debug-member, MIN/MAX/pxz inline)
-                     * or by the explicit printf("\n") below. This keeps the
-                     * per-member debug output on ONE line (was two lines after
-                     * 2026-08-06 commit 6dc9458 split it, 2026-08-07 fix). */
-                    printf("  [%3d/%d] ens=%.1f%%/%.1f%%/E=%d  mem=%.1f%%/%.1f%%/E=%d  time=%dms%s%s",
-                           mb + 1, active_members,
-                           (float)_trn_ok * 100.0f / (float)total_train,
-                           (float)_evl_ok * 100.0f / (float)(total_eval > 0 ? total_eval : 1),
-                           total_eval - _evl_ok,
-                           (float)_member_trn * 100.0f / (float)total_train,
-                           (float)_member_evl * 100.0f / (float)(total_eval > 0 ? total_eval : 1),
-                           total_eval - _member_evl,
-                            _el, _info,
-                            _filtered ? "  S" : "");
-                     /* MIN/MAX/pxz are per-member debug values, only tracked
-                      * with --debug-member — hide them otherwise (they showed
-                      * sentinel garbage on the summed progress line, 2026-08-06). */
-                     if (aa.debug_member)
-                         ki_print_scr_minmax(_scr_min, _scr_max, _pxz);
-                     else
-                         printf("\n");
-                   } else {
-                    printf("  [%3d/%d] trn=%5.1f%%  evl=%5.1f%%/E=%d  time=%dms%s%s\n",
-                           mb + 1, active_members,
-                            (float)_trn_ok * 100.0f / (float)total_train,
-                            (float)_evl_ok * 100.0f / (float)(total_eval > 0 ? total_eval : 1),
-                            total_eval - _evl_ok,
-                            _el, _info,
-                            _filtered ? "  S" : "");
-                   }
+        /* ── [PROF] per-member phase times (--prof only) ── */
+        if (g_prof) { gettimeofday(&_pt1, NULL);
+            _p_eval += (double)(_pt1.tv_sec - _pt0.tv_sec) * 1000.0
+                     + (double)(_pt1.tv_usec - _pt0.tv_usec) / 1000.0;
+            double _ptot = _p_cex + _p_gb + _p_target + _p_train + _p_eval;
+            /* PRF: members run in parallel → serialize the print + the
+             * accumulator updates (small, one line per member). */
+            #pragma omp critical(prof)
+            {
+                printf("[PROF] mb=%d/%d  cex=%8.1fms  gb=%8.1fms  target=%7.1fms  "
+                       "train=%8.1fms  eval=%8.1fms  total=%8.1fms\n",
+                       mb + 1, active_members, _p_cex, _p_gb, _p_target, _p_train, _p_eval, _ptot);
+                _prof_cex += _p_cex; _prof_gb += _p_gb; _prof_target += _p_target;
+                _prof_train += _p_train; _prof_eval += _p_eval; _prof_n++;
                 fflush(stdout);
             }
         }
 
-        }  /* if (!aa.sweep) — end of ensemble voting + progress */
+        /* ── Per-member progress (--debug-member / --debug-epoch) ──
+         * PRF (always on): the cumulative `ens=` line depends on sequential
+         * member order and is NOT computed (the final REPORT after the loop
+         * carries the ensemble accuracy). The per-member info (mem=, member
+         * spec, MIN/MAX/pxz) is member-local and shown here, serialized via
+         * critical(prof) because members run in parallel. */
+        if (!aa.sweep && (aa.debug_member || debug_epoch)) {
+            char _info[128] = "";
+            if (aa.debug_member || debug_epoch || (_report_int == 1 && active_members > 1)) {
+                const char *_cn = ki_color_name(mem->color_bit >= 0 ? mem->color_bit : 0);
+                const char *_en = ki_enc_name_short(mem->enc_type);
+                int _ew = mem->enc_width;
+                int _xtmp = mem->xform_id;
+                const char *_xn = ki_xform_str(_xtmp);
+                /* W0 only with explicit --debug-member (PRF default shows
+                 * the spec without the weight marker, faster + less noise). */
+                if (g_dbg_member)
+                    snprintf(_info, sizeof(_info), "  %s:%s:%s%d  W0=0x%08X",
+                             _xn, _cn, _en, _ew,
+                             mem->W0 ? mem->W0[0] : 0);   /* NULL in KI_BITVOTING (no W0) */
+                else
+                    snprintf(_info, sizeof(_info), "  %s:%s:%s%d",
+                             _xn, _cn, _en, _ew);
+            }
+            int _filtered = (aa.member_threshold > 0 && mem->trn_acc < (float)aa.member_threshold);
+            /* pxz only needed for the explicit --debug-member line */
+            int _pxz = 0;
+            if (g_dbg_member && mem->input_buf_te && mem->enc_width > 0) {
+                int _pack = 32 / mem->enc_width;
+                int _cnts[4] = {495 / _pack, 496 / _pack, 527 / _pack, 528 / _pack};
+                int _poss[4] = {495 % _pack, 496 % _pack, 527 % _pack, 528 % _pack};
+                uint32_t _mask = (1u << mem->enc_width) - 1u;
+                for (int _pi = 0; _pi < 4; _pi++)
+                    _pxz += (int)((mem->input_buf_te[_cnts[_pi]] >> (_poss[_pi] * mem->enc_width)) & _mask);
+                _pxz /= 4;
+            }
+            gettimeofday(&tv_end, NULL);
+            int _el = (int)((tv_end.tv_sec - tv_start.tv_sec) * 1000 + (tv_end.tv_usec - tv_start.tv_usec) / 1000);
+            #pragma omp critical(prof)
+            {
+                if (aa.debug_member || debug_epoch || (_report_int == 1 && active_members > 1)) {
+                    /* PRF: no cumulative ens= (member order undefined); the
+                     * member-local accuracy mem= and the spec are shown.
+                     * W0/MIN/MAX/pxz only with explicit --debug-member. */
+                    printf("  [%3d/%d] mem=%.1f%%/%.1f%%/E=%d  time=%dms%s%s",
+                           mb + 1, active_members,
+                           (float)_member_trn * 100.0f / (float)total_train,
+                           (float)_member_evl * 100.0f / (float)(total_eval > 0 ? total_eval : 1),
+                           total_eval - _member_evl,
+                           _el, _info,
+                           _filtered ? "  S" : "");
+                    if (g_dbg_member)
+                        ki_print_scr_minmax(_scr_min, _scr_max, _pxz);
+                    else
+                        printf("\n");
+                    fflush(stdout);
+                }
+            }   /* end #pragma omp critical(prof) */
+        }   /* end if (!aa.sweep && (debug_member || debug_epoch)) */
 
         /* ── Export per-member data (before freeing gb_buf) ── */
-        /* --export-scores: accumulate per-member scores */
+        /* --export-scores: accumulate per-member scores.
+         * PRF: the per-member score computation is local; only the append to
+         * the global _export_scores_buf is shared → serialize the append. */
         if (aa.export_scores[0] && !aa.dry_run) {
             size_t _member_sz = (size_t)(total_train + total_eval) * KI_NCLASSES;
             SCORE_TYPE *_m_sc = (SCORE_TYPE *)calloc(_member_sz, sizeof(SCORE_TYPE));
             SCORE_TYPE sc[KI_NCLASSES];
-            #pragma omp parallel for firstprivate(sc) schedule(static)
             for (int s = 0; s < total_train; s++) {
                 scores_otto_from_gb(s, mem->H_local, mem->gb_buf,
                                    mem->target, mem->offset, sc);
@@ -3802,7 +4094,6 @@ int main(int argc, char *argv[]) {
                 for (int k = 0; k < KI_NCLASSES; k++) dst[k] = sc[k];
             }
             if (total_eval > 0) {
-                #pragma omp parallel for firstprivate(sc) schedule(static)
                 for (int s = 0; s < total_eval; s++) {
                     scores_otto_from_gb(s, mem->H_local, mem->gb_buf_te,
                                        mem->target, mem->offset, sc);
@@ -3811,6 +4102,8 @@ int main(int argc, char *argv[]) {
                 }
             }
             /* Accumulate into global export buffer */
+            #pragma omp critical(export)
+            {
             if (!_export_scores_buf) {
                 _export_scores_buf = _m_sc;
                 _export_scores_nm = 1;
@@ -3822,6 +4115,7 @@ int main(int argc, char *argv[]) {
                 _export_scores_nm++;
                 free(_m_sc);
             }
+            }   /* #pragma omp critical(export) */
         }
 
         /* --export-neurons: write gb_buf + target + offset */
@@ -3844,8 +4138,11 @@ int main(int argc, char *argv[]) {
             }
         }
 
-        /* ── Write member scores for --debug-member-stats ── */
+        /* ── Write member scores for --debug-member-stats ──
+         * PRF: _ms_fp is shared → serialize the whole block (debug-only). */
         if (_ms_fp) {
+            #pragma omp critical(msfp)
+            {
             SCORE_TYPE _ms_sc[KI_NCLASSES];
             size_t _ms_total = (size_t)(total_train + total_eval);
             for (size_t _ms_s = 0; _ms_s < _ms_total; _ms_s++) {
@@ -3865,11 +4162,17 @@ int main(int argc, char *argv[]) {
                 int _ew = aa.enc_array[_ms_vi].width;
                 int _xt = mem->xform_id;
                 const char *_xn = ki_xform_str(_xt);
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wformat-truncation"
                 snprintf(_ms_m, sizeof(_ms_m), "%s=%s%d-%s", _cn, _en, _ew, _xn);
+#pragma GCC diagnostic pop
             } else {
                 int _xt = mem->xform_id;
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wformat-truncation"
                 snprintf(_ms_m, sizeof(_ms_m), "%s=%s-%s",
                     ki_color_name(mem->color_bit), "?", ki_xform_str(_xt));
+#pragma GCC diagnostic pop
             }
             size_t _ms_namelen = strlen(_ms_m) + 1;
             uint8_t *_new = realloc(_ms_meta, (size_t)_ms_meta_n * 64 + _ms_namelen);
@@ -3878,6 +4181,7 @@ int main(int argc, char *argv[]) {
                 memcpy(_ms_meta + (size_t)_ms_meta_n * 64, _ms_m, _ms_namelen);
                 _ms_meta_n++;
             }
+            }   /* #pragma omp critical(msfp) */
         }
 
         /* ── Sweep mode: Member-Progress nach Training ── */
@@ -3890,19 +4194,28 @@ int main(int argc, char *argv[]) {
                 const char *_xn = ki_xform_str(mem->xform_id);
                 snprintf(_mi, sizeof(_mi), "  %s:%s:%s:%d", _xn, _cn, _en, _ew);
             }
-            printf("  [%3d/%d] TRAIN%s  err=%d/%d  evl=%d/%d (%.1f%%)\n",
-                   mb+1, active_members, _mi,
-                   mem->last_err, total_train,
-                   _member_evl, total_eval,
-                   (float)_member_evl * 100.0f / (float)(total_eval > 0 ? total_eval : 1));
-            fflush(stdout);
+            /* PRF: serialize the progress line (shared stdout) */
+            #pragma omp critical(progress)
+            {
+                printf("  [%3d/%d] TRAIN%s  err=%d/%d  evl=%d/%d (%.1f%%)\n",
+                       mb+1, active_members, _mi,
+                       mem->last_err, total_train,
+                       _member_evl, total_eval,
+                       (float)_member_evl * 100.0f / (float)(total_eval > 0 ? total_eval : 1));
+                fflush(stdout);
+            }
         }
 
         /* ── Per-member .ens export (immer nach Training, vor gb-free) ── */
         if (!aa.dry_run && total_eval > 0 && aa.export_merge_scores[0]) {
+            /* PRF: export writes its OWN file per member — thread-safe by
+             * construction (unique path per member), no lock needed. */
             export_one_member_ens(mem, mb, aa.export_merge_scores,
                                   y_te, total_eval, (int)n_cont);
-            if (aa.sweep) _sweep_trained++;
+            if (aa.sweep) {
+                #pragma omp atomic
+                _sweep_trained++;
+            }
         }
 
         /* ── Free per-member gb ── */
@@ -3914,6 +4227,31 @@ int main(int argc, char *argv[]) {
             ki_member_destroy(mem);
             members[mb] = NULL;
         }
+    }
+
+    /* Restore the global team (exclusive case only — see the comment before
+     * the member loop): the ensemble-vote accumulation after the loop is
+     * sequential anyway, but anything else after this point must not
+     * accidentally run nested-parallel on a stale team. */
+    if (!g_parallel_members) {
+        aa.threadN = _save_threadn;
+        omp_set_num_threads(1);
+    }
+
+    /* ── [PROF] summed phase summary (--prof only) ── */
+    if (g_prof && _prof_n > 0) {
+        double _ptot = _prof_cex + _prof_gb + _prof_target + _prof_train + _prof_eval;
+        printf("[PROF] SUM over %d members:  cex=%8.1fms (%5.1f%%)  gb=%8.1fms (%5.1f%%)  "
+               "target=%7.1fms (%5.1f%%)  train=%8.1fms (%5.1f%%)  eval=%8.1fms (%5.1f%%)  "
+               "total=%8.1fms\n",
+               _prof_n,
+               _prof_cex,   100.0 * _prof_cex    / _ptot,
+               _prof_gb,    100.0 * _prof_gb     / _ptot,
+               _prof_target,100.0 * _prof_target / _ptot,
+               _prof_train, 100.0 * _prof_train  / _ptot,
+               _prof_eval,  100.0 * _prof_eval   / _ptot,
+               _ptot);
+        fflush(stdout);
     }
     /* Final release of the single-slot xform cache (last xform group).
      * Freeing here keeps peak RAM at 1× transformed buffer even before the
@@ -3973,8 +4311,32 @@ int main(int argc, char *argv[]) {
         final_evl_ok = _ens_evl;
     }
 
+    /* ── PRF (--prf): the cumulative ens= line is skipped inside the loop
+     * (member order undefined in parallel), so the ensemble accuracy must be
+     * recomputed here from the accumulated votes — same as the sweep path. */
+    if (g_prf && !aa.sweep) {
+        int _ens_trn = 0, _ens_evl = 0;
+        for (int s = 0; s < total_train; s++) {
+            int pred = -1;
+            for (int k = 0; k < KI_NCLASSES; k++)
+                if ((acc_votes_tr[s][k] > 0 || acc_votes_tr[s][k] < 0) && (pred < 0 || acc_votes_tr[s][k] > acc_votes_tr[s][pred]))
+                    pred = k;
+            if (pred >= 0 && pred == (int)y_tr[s]) _ens_trn++;
+        }
+        for (int s = 0; s < total_eval; s++) {
+            int pred = -1;
+            for (int k = 0; k < KI_NCLASSES; k++)
+                if ((acc_votes_te[s][k] > 0 || acc_votes_te[s][k] < 0) && (pred < 0 || acc_votes_te[s][k] > acc_votes_te[s][pred]))
+                    pred = k;
+            if (pred >= 0 && pred == (int)y_te[s]) _ens_evl++;
+        }
+        final_trn_ok = _ens_trn;
+        final_evl_ok = _ens_evl;
+    }
+
     if (!aa.sweep)
-        printf("\n══╡ DONE ╞══  sequential training complete (%d members, %dms)\n",
+        printf("\n══╡ DONE ╞══  %s training complete (%d members, %dms)\n",
+               g_prf ? "parallel (PRF)" : "sequential",
                active_members, elapsed_ms);
 
     /* ── Final report ── */
@@ -4099,10 +4461,15 @@ int main(int argc, char *argv[]) {
            H, ensembleN, splitVN, splitHN, epochs, fin_trn, fin_evl, final_best,
            (double)aa.lr, elapsed_ms);
 
-    /* REPORT uses best eval across all member evaluations */
+    /* REPORT uses best eval across all member evaluations.
+     * PRF: report the REAL parallel width. With many members the outer loop
+     * uses min(active, g_prf_width) threads; with FEW members (1) the inner
+     * sample loops use g_prf_width cores (exclusive parallelism, 2026-08-09)
+     * — the effective width is g_prf_width in both cases. */
     int report_evl_ok = (best_evl_ok > 0) ? best_evl_ok : final_evl_ok;
+    int _rep_threads = g_prf_width > 0 ? g_prf_width : 1;
     ki_report_show(trn_ok, total_train, report_evl_ok, total_eval,
-                   elapsed_ms, aa.threadN, fin_err, aa.lr, active_members);
+                   elapsed_ms, _rep_threads, fin_err, aa.lr, active_members);
 
     /* ── Export per-sample predictions (eval only, for vis-errors) ─ */
     if (aa.predictions[0]) {

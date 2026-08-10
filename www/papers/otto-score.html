@@ -3,33 +3,33 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Otto Score: 99% MNIST, 58% CIFAR — DRAM-Native Status Paper</title>
-    <meta name="description" content="Status paper: Otto Score reaches 99.0% on MNIST and 58.7% on CIFAR-10 using pure &amp;|~ + int32. Thermometer encoding, per-channel encoding, cos-time step decay.">
+    <title>Otto Score — DRAM-Native Classification via Bit-Logic</title>
+    <meta name="description" content="Otto Score: DRAM-native classification using only &amp;|~ + int32 — 98.1% MNIST, 91.6% Fashion-MNIST, 64.4% CIFAR-10. Frozen random W0 projection, MAJ1 majority, trained int32 log-odds target.">
     <meta name="author" content="Andreas Otto">
     <meta name="robots" content="index, follow">
     <meta name="googlebot" content="index, follow">
     <link rel="icon" type="image/svg+xml" href="../assets/favicon.svg">
     <link rel="stylesheet" href="../style.css">
-    <link rel="canonical" href="https://forward-prop.nhi1.de/papers/otto-score-summary-2026-06.html">
-    <meta property="og:title" content="Otto Score — DRAM-Native Classification, 99% MNIST / 58% CIFAR">
-    <meta property="og:description" content="Complete status paper: thermometer encoding bridges number-world/binary-world gap. Per-channel encoding, cos-time step decay, data-limited scaling law.">
+    <link rel="canonical" href="https://forward-prop.nhi1.de/papers/otto-score.html">
+    <meta property="og:title" content="Otto Score — DRAM-Native Classification via Bit-Logic">
+    <meta property="og:description" content="Frozen random W0 projection + MAJ1 majority + trained int32 log-odds target. Pure &amp;|~ + int32 — no float, no multiply-accumulate. 98.1% MNIST, 91.6% Fashion, 64.4% CIFAR-10.">
     <meta property="og:type" content="article">
-    <meta property="og:url" content="https://forward-prop.nhi1.de/papers/otto-score-summary-2026-06.html">
+    <meta property="og:url" content="https://forward-prop.nhi1.de/papers/otto-score.html">
     <meta property="og:image" content="https://forward-prop.nhi1.de/assets/og-image.png">
     <meta property="og:site_name" content="Forward-Prop Research">
     <meta name="twitter:card" content="summary_large_image">
-    <meta name="twitter:title" content="Otto Score — 99% MNIST / 58% CIFAR — DRAM-Native Bit-Logic">
-    <meta name="twitter:description" content="Thermometer encoding, per-channel encoding, cos-time step decay. Pure &amp;|~ + int32 classification — no float, no multiply-accumulate.">
+    <meta name="twitter:title" content="Otto Score — DRAM-Native Classification via Bit-Logic">
+    <meta name="twitter:description" content="Frozen random W0 + MAJ1 majority + int32 log-odds target. Pure bit-logic classification — 98.1% MNIST, 91.6% Fashion, 64.4% CIFAR-10.">
     <meta name="twitter:image" content="https://forward-prop.nhi1.de/assets/og-image.png">
     <script type="application/ld+json">
     {
       "@context": "https://schema.org",
       "@type": "ScholarlyArticle",
-      "headline": "Otto Score: DRAM-native Classification via Bit-Logic + MAJ3",
-      "description": "Status paper June 2026. Otto Score reaches 99.0% MNIST and 58.7% CIFAR-10 using pure &amp;|~ + int32. Thermometer encoding, per-channel encoding selection, cos-time step decay.",
+      "headline": "Otto Score: DRAM-native Classification via Bit-Logic + MAJ1",
+      "description": "DRAM-native classifier using only &amp;|~ + int32. Frozen random W0 projection with MAJ1 majority, trained int32 Bayes log-Score target. 98.1% MNIST, 91.6% Fashion-MNIST, 64.4% CIFAR-10.",
       "author": { "@type": "Person", "name": "Andreas Otto" },
       "datePublished": "2026-06-14",
-      "dateModified": "2026-06-29",
+      "dateModified": "2026-08-10",
       "about": { "@type": "Thing", "name": "Otto Score DRAM-Native Classifier", "description": "DRAM-native classifier using only &amp;|~ operations and int32 Bayes log-Score." }
     }
     </script>
@@ -45,7 +45,7 @@
         <nav>
             <ul>
                 <li><a href="../index.html">Home</a></li>
-                <li><a href="otto-score-summary-2026-06.html">Status Paper</a></li>
+                <li><a href="otto-score.html">Otto Score</a></li>
             </ul>
         </nav>
     </div>
@@ -55,15 +55,15 @@
 
 <div class="container" style="max-width:900px;">
 
-<h1 style="font-size:2rem; color:var(--navy); margin-bottom:0.25rem;">Otto Score: DRAM-native Classification via Bit-Logic + MAJ3</h1>
-<p style="font-size:1rem; color:var(--mid-gray); margin-bottom:2rem;"><strong>Status Paper — June 2026</strong> &nbsp;|&nbsp; forward-prop research project</p>
+<h1 style="font-size:2rem; color:var(--navy); margin-bottom:0.25rem;">Otto Score: DRAM-native Classification via Bit-Logic + MAJ1</h1>
+<p style="font-size:1rem; color:var(--mid-gray); margin-bottom:2rem;"><strong>Architecture Paper</strong> &nbsp;|&nbsp; forward-prop research project &nbsp;|&nbsp; updated 2026-08-10</p>
 
 <!-- ── Abstract ── -->
 <h2><span class="accent-bar">&#8203;</span> Abstract</h2>
 <div class="abstract-box">
 <p>We present <strong>Otto Score</strong>, a classification method designed for DRAM inference chips that use <strong>only bit-level operations</strong> (<code>&amp;</code>, <code>|</code>, <code>~</code>, <code>XNOR</code>, <code>popcount</code>). No floating-point, no integer multiply-accumulate, no division during inference.</p>
-<p>The method achieves <strong>99.0% on MNIST</strong> and <strong>58.7% on CIFAR-10</strong> using pure <code>&amp;|~</code> + int32 at inference time. Training uses float32 SGD as a compromise (gradients need continuous values), but the trained model is exported to pure integer weights for deployment.</p>
-<p><strong>Key architectural insight:</strong> Every ensemble member is computed independently and in parallel. Adding more members increases accuracy without increasing inference latency — members simply occupy more DRAM rows running simultaneously.</p>
+<p>The method achieves <strong>98.1% on MNIST</strong> (H=128, EN=7), <strong>91.6% on Fashion-MNIST</strong> (H=512, 40 members) and <strong>64.4% on CIFAR-10</strong> (H=1024, all xforms) using pure <code>&amp;|~</code> + int32 at inference time. Training uses error-driven int32 target corrections with Bayesian log-odds scoring (no backprop, no float gradients needed for the DRAM-native path).</p>
+<p><strong>Key architectural insight:</strong> Every ensemble member is computed independently and in parallel. Adding more members increases accuracy without increasing inference latency — members simply occupy more DRAM rows running simultaneously. The frozen random projection W0 + MAJ1 majority is the critical nonlinear ingredient: without it (Bit-Voting baseline) accuracy drops 4–9pp at identical bit-mass.</p>
 </div>
 
 <!-- ── Terminology ── -->
@@ -76,8 +76,8 @@
 <tr><td>Encoding</td><td>A bit-level mapping from pixel values to thermometer patterns (e.g., <code>exp8</code>, <code>sig8</code>). Converts continuous float values to binary patterns with similar-popcount adjacency.</td></tr>
 <tr><td>Member</td><td>One independent classifier: one frozen random W0 matrix + one trained target matrix. A member sees exactly one channel with one encoding.</td></tr>
 <tr><td>Ensemble</td><td>A collection of members whose scores are summed for the final prediction. Members are <strong>parallel by design</strong> — each occupies a separate DRAM row.</td></tr>
-<tr><td>HiddenN (H)</td><td>Number of MAJ3 neurons per member. Each neuron produces 32 bits (one uint32) via bitwise majority voting. The total H0 output per member is H × 32 bits.</td></tr>
-<tr><td>MAJ3</td><td>Majority-of-3: compresses NC_slice uint32 containers into 32 bits via bitwise majority voting. A lossy but noise-robust projection.</td></tr>
+<tr><td>HiddenN (H)</td><td>Number of MAJ1 neurons per member. Each neuron produces 32 bits (one uint32) via bitwise majority voting. The total H0 output per member is H × 32 bits.</td></tr>
+<tr><td>MAJ1</td><td>Exact per-bit majority: compresses NC_slice uint32 containers into 32 bits via bitwise majority voting. A lossy but noise-robust projection.</td></tr>
 <tr><td>W0</td><td>The frozen random projection matrix (uint32 bit patterns). Never trained.</td></tr>
 <tr><td>Target</td><td>The trained log-odds correction matrix (int32 per class × neuron × bit). The only learned parameter.</td></tr>
 <tr><td>NC_slice</td><td>Number of uint32 containers per member input. Determined by <code>splitHN</code> (horizontal split factor).</td></tr>
@@ -86,7 +86,7 @@
 <tr><td>step-err</td><td>Step decay mode: <code>cos-time</code>, <code>pow</code>, <code>cos-err</code>, <code>const</code>.</td></tr>
 <tr><td>target-err</td><td>Soft convergence target: training stops when error rate drops below threshold.</td></tr>
 <tr><td>Bit-Mass</td><td>Total information capacity: <code>H × EN × 32 bits per neuron</code>.</td></tr>
-<tr><td>Container</td><td>A uint32 value packing multiple pixels (typically 4 pixels × 8 bits). The unit of MAJ3 voting.</td></tr>
+<tr><td>Container</td><td>A uint32 value packing multiple pixels (typically 4 pixels × 8 bits). The unit of MAJ1 voting.</td></tr>
 </tbody>
 </table>
 </div>
@@ -95,11 +95,11 @@
 <h2 style="margin-top:2.5rem;"><span class="accent-bar">&#8203;</span> 1. Parallelism: More Members, Same Latency</h2>
 <p>Every ensemble member is a <strong>fully independent classifier</strong>:</p>
 <pre style="background:#1a1a2e; color:#e0e0e0; padding:1rem; border-radius:8px; font-size:0.82rem;">
-Member 0: channel_0 + encoding_0  →  W0[0]  →  MAJ3  →  target[0]  →  score_0[c]
-Member 1: channel_1 + encoding_1  →  W0[1]  →  MAJ3  →  target[1]  →  score_1[c]
-Member 2: channel_2 + encoding_2  →  W0[2]  →  MAJ3  →  target[2]  →  score_2[c]  → SUM → argmax
+Member 0: channel_0 + encoding_0  →  W0[0]  →  MAJ1  →  target[0]  →  score_0[c]
+Member 1: channel_1 + encoding_1  →  W0[1]  →  MAJ1  →  target[1]  →  score_1[c]
+Member 2: channel_2 + encoding_2  →  W0[2]  →  MAJ1  →  target[2]  →  score_2[c]  → SUM → argmax
 ...
-Member N: channel_N + encoding_N  →  W0[N]  →  MAJ3  →  target[N]  →  score_N[c]</pre>
+Member N: channel_N + encoding_N  →  W0[N]  →  MAJ1  →  target[N]  →  score_N[c]</pre>
 <p>On a DRAM chip, each member occupies <strong>one row</strong> (or a small group of rows). All members compute simultaneously — the chip's row buffers activate every member's W0 in parallel. Score summing is a lightweight reduction.</p>
 <p><strong>Consequence:</strong> Accuracy is limited by <strong>data, not by compute time.</strong> Doubling the ensemble (EN: 7 → 17) costs zero additional inference latency. On MNIST, adding members from EN=1 to EN=17 gains +8pp (89.9% → 97.6%) with no runtime penalty at chip level.</p>
 
@@ -262,13 +262,13 @@ After computing <code>level</code>, the final output is always: <code>((uint32_t
 <h4>Member Definition Examples</h4>
 <pre style="background:#1a1a2e; color:#e0e0e0; padding:0.8rem 1rem; border-radius:8px; font-size:0.82rem;">
 # One member: channel=mnist, encoding=exp8
---channels mnist --encoding exp8
+--channel mnist --encoding exp8
 
 # Two members: same channel, different encodings
---channels mnist --encoding exp8,log8
+--channel mnist --encoding exp8,log8
 
 # Three members: different channels with per-channel encoding
---channels g,bl,bm --encoding g=up8,bl=down8,bm=sig
+--channel g,bl,bm --encoding g=up8,bl=down8,bm=sig
 
 # 10 members: full CIFAR best config
 --encoding g=up8,bl=down8,bm=sig,bp=sig,b=up8,al=down8,am=sig,ap=sig,h=up8,c=log8</pre>
@@ -276,12 +276,12 @@ After computing <code>level</code>, the final output is always: <code>((uint32_t
 <!-- ── 2.6 Container Width ── -->
 <h3 style="margin-top:2rem;">2.6 Container Width: 8/16/32 Does Not Help</h3>
 <p>The natural question: does widening the thermometer (8 → 16 → 32 bits) improve accuracy? Empirically: <strong>no</strong>.</p>
-<p>Each thermometer value is passed through <strong>MAJ3</strong>, which compresses NC_slice containers into exactly 32 bits via bitwise majority voting. After MAJ3, every bit-width produces exactly 32 bits. A wider container does not increase the information reaching the target.</p>
+<p>Each thermometer value is passed through <strong>MAJ1</strong>, which compresses NC_slice containers into exactly 32 bits via bitwise majority voting. After MAJ1, every bit-width produces exactly 32 bits. A wider container does not increase the information reaching the target.</p>
 <pre style="background:#1a1a2e; color:#e0e0e0; padding:0.6rem 1rem; border-radius:8px; font-size:0.82rem;">
-Width 8:   4 pixels × 8 bit  = 1 uint32 container  → MAJ3 → 32 bits
-Width 16:  2 pixels × 16 bit = 1 uint32 container  → MAJ3 → 32 bits
-Width 32:  1 pixel  × 32 bit = 1 uint32 container  → MAJ3 → 32 bits</pre>
-<p><strong>The correct lever is more members, not wider containers.</strong> Duplication (channel + encoding variants) creates independent MAJ3 projections with different random W0.</p>
+Width 8:   4 pixels × 8 bit  = 1 uint32 container  → MAJ1 → 32 bits
+Width 16:  2 pixels × 16 bit = 1 uint32 container  → MAJ1 → 32 bits
+Width 32:  1 pixel  × 32 bit = 1 uint32 container  → MAJ1 → 32 bits</pre>
+<p><strong>The correct lever is more members, not wider containers.</strong> Duplication (channel + encoding variants) creates independent MAJ1 projections with different random W0.</p>
 
 <!-- ── 2.7 Orthogonality ── -->
 <h3 style="margin-top:2rem;">2.7 Encoding Orthogonality</h3>
@@ -317,9 +317,9 @@ Width 32:  1 pixel  × 32 bit = 1 uint32 container  → MAJ3 → 32 bits</pre>
 <pre style="background:#1a1a2e; color:#e0e0e0; padding:1rem; border-radius:8px; font-size:0.82rem;">
 Input pixels → Thermometer encoding → uint32 containers
                                             ↓
-Layer 0: Frozen random projection (W0) via MAJ3
+Layer 0: Frozen random projection (W0) via MAJ1
          W0: random uint32 bit patterns (permanent, never trained)
-         MAJ3: For each of H neurons, majority-vote over NC_slice containers
+         MAJ1: For each of H neurons, majority-vote over NC_slice containers
                → 1 bit per neuron per class vote
                                             ↓
 Layer 1: Trained Target (Bayesian log-Score)
@@ -331,7 +331,7 @@ Layer 1: Trained Target (Bayesian log-Score)
 <h3>3.2 Training (float32 SGD)</h3>
 <pre style="background:#1a1a2e; color:#e0e0e0; padding:0.8rem 1rem; border-radius:8px; font-size:0.82rem;">
 for each sample (x, y_true):
-    h0 = MAJ3(W0 @ encode(x))
+    h0 = MAJ1(W0 @ encode(x))
     scores[c] = sum(target[c] * h0)
     pred = argmax(scores)
     if pred != y_true:
@@ -355,43 +355,48 @@ for each sample (x, y_true):
 <!-- ── 4. Results ── -->
 <h2 style="margin-top:2.5rem;"><span class="accent-bar">&#8203;</span> 4. Results</h2>
 
-<h3>4.1 MNIST</h3>
+<h3>4.1 MNIST (current, INT32 bit-exact)</h3>
 <div class="table-wrapper">
 <table class="compare-table">
-<thead><tr><th>evalN</th><th>Best eval</th><th>EN</th><th>H</th><th>Ep</th><th>Ratio (train:eval)</th></tr></thead>
+<thead><tr><th>Config</th><th>Eval</th><th>H</th><th>EN</th><th>Ep</th><th>Note</th></tr></thead>
 <tbody>
-<tr><td>100</td><td><strong>99.0%</strong></td><td>7</td><td>128</td><td>8</td><td><strong>599:1</strong></td></tr>
-<tr><td>1000</td><td><strong>98.1%</strong></td><td>7</td><td>128</td><td>8</td><td>59:1</td></tr>
-<tr><td>10000</td><td><strong>97.7%</strong></td><td>7</td><td>128</td><td>8</td><td>5:1</td></tr>
+<tr><td>H=128, EN=7, ep=8</td><td><strong>98.1%</strong></td><td>128</td><td>7</td><td>8</td><td>evalN=1000</td></tr>
+<tr><td>H=512, EN=1, shuffle1..6</td><td><strong>97.9%</strong></td><td>512</td><td>1</td><td>6</td><td>9.9s</td></tr>
+<tr><td>H=128, EN=7, exp8,log8,sig8</td><td>97.7%</td><td>128</td><td>7</td><td>8</td><td>evalN=10000</td></tr>
+<tr><td>evalN=100 (599:1 ratio)</td><td><strong>99.0%</strong></td><td>128</td><td>7</td><td>8</td><td>data-limited ceiling</td></tr>
 </tbody>
 </table>
 </div>
-<p><strong>The 98%-wall is data-limited, not method-limited.</strong> With 599:1 ratio we reach 99.0%. At 5:1, only 97.7%.</p>
+<p><strong>The 98%-wall is data-limited, not method-limited.</strong> With 599:1 train:eval ratio we reach 99.0%; at 5:1 only 97.7%.</p>
 
-<div class="highlight-box">
-<strong>Best known config (standard split, evalN=10000):</strong><br>
-<code>./mnist-mlp-bin32-otto-trn-xnor.exe --hiddenN 128 --ensembleN 7 --epochsN 8 --step-err cos-time --encoding exp8,log8,sig8</code>
-</div>
-
-<h3 style="margin-top:2rem;">4.2 CIFAR-10</h3>
+<h3 style="margin-top:2rem;">4.2 Fashion-MNIST (current)</h3>
 <div class="table-wrapper">
 <table class="compare-table">
-<thead><tr><th>Config</th><th>eval</th><th>EN</th><th>H</th><th>Ep</th><th>Time</th></tr></thead>
+<thead><tr><th>Config</th><th>Eval</th><th>Members</th><th>Note</th></tr></thead>
 <tbody>
-<tr><td>10-channel + Hue + Sobel C</td><td><strong>58.7%</strong></td><td>17</td><td>128</td><td>8</td><td>357s</td></tr>
-<tr><td>10-channel (no H/C)</td><td>57.2%</td><td>7</td><td>128</td><td>10</td><td>124s</td></tr>
-<tr><td>6-channel (opponent blocks)</td><td>56.9%</td><td>6</td><td>128</td><td>10</td><td>107s</td></tr>
-<tr><td>4-channel baseline</td><td>56.6%</td><td>16</td><td>128</td><td>10</td><td>193s</td></tr>
+<tr><td>H=512, m1t=105, beam10 --max</td><td><strong>91.58%</strong></td><td>40</td><td>2026-08-09, INT32 bit-exact</td></tr>
+<tr><td>H=196, m1t=105 (reference)</td><td>91.44%</td><td>36</td><td>merge=retrain=IFC, 0pp gap</td></tr>
+<tr><td>Bit-Voting (no W0)</td><td>88.94%</td><td>17</td><td>lower technology bound</td></tr>
 </tbody>
 </table>
 </div>
+<p>Fashion-MNIST is the <strong>91% trap</strong>: every search strategy lands in the 88.7–91.6% basin — an architectural ceiling (frozen W0 + maj1 voting, no convolution), not a search problem. The H dimension is fully measured and flat (H=196→512: +0.14pp).</p>
 
-<div class="highlight-box">
-<strong>Best known config:</strong><br>
-<code>./cifar-mlp-bin32-otto-trn-xnor.exe --hiddenN 128 --ensembleN 17 --epochsN 8 --encoding g=up8,bl=down8,bm=sig,bp=sig,b=up8,al=down8,am=sig,ap=sig,h=up8,c=log8 --target-err 0.4</code>
+<h3 style="margin-top:2rem;">4.3 CIFAR-10 (current)</h3>
+<div class="table-wrapper">
+<table class="compare-table">
+<thead><tr><th>Config</th><th>Eval</th><th>Note</th></tr></thead>
+<tbody>
+<tr><td>H=1024, EN=1, ep=10, all xforms</td><td><strong>64.4%</strong></td><td>621s</td></tr>
+<tr><td>H=4094, EN=3, VN=2, target-err 0.4</td><td><strong>61.0%</strong></td><td>H-sweep saturation</td></tr>
+<tr><td>H=512, 20 seeds ensemble</td><td>61.22%</td><td>ensemble overcomes single-run ceiling</td></tr>
+<tr><td>Bit-Voting (no W0, H=768)</td><td>55.2%</td><td>9.2pp gap — linearity price</td></tr>
+</tbody>
+</table>
 </div>
+<p>The 60% CIFAR barrier is <strong>architectural</strong>: H-sweep (H=16→4094) shows clear logarithmic saturation. Class-confusion is proven (single-class training reaches 100%).</p>
 
-<h3 style="margin-top:2rem;">4.3 Bit-Mass Scaling Law</h3>
+<h3 style="margin-top:2rem;">4.4 Bit-Mass Scaling Law</h3>
 <p><strong>Doubling the bit-mass yields ~0.3pp. Logarithmic scaling, as predicted by information theory.</strong></p>
 <div class="table-wrapper">
 <table class="compare-table">
@@ -404,6 +409,14 @@ for each sample (x, y_true):
 </tbody>
 </table>
 </div>
+
+<h3 style="margin-top:2rem;">4.5 The Bit-Density Trade-off (vs Bit-Voting, 2026-08-10)</h3>
+<p>Otto and Bit-Voting share the same gb dimension (H=I), but the VALUES differ
+in density: Otto's W0+majority compresses gb to <strong>~2.76 set bits/container</strong>,
+Bit-Voting's identity keeps <strong>~14.38</strong> (5.2×). The training loop iterates over
+set bits, so Otto does 5.2× less training work but pays 7.3s in the gb phase;
+Bit-Voting pays 2.4× more in training. Net: BV is only ~1.12× faster serial,
+~equal parallel. <a href="bitvoting-baseline.html">See the Bit-Voting baseline paper.</a></p>
 
 <!-- ── 5. Key Insights ── -->
 <h2 style="margin-top:2.5rem;"><span class="accent-bar">&#8203;</span> 5. Key Insights</h2>
@@ -427,8 +440,8 @@ for each sample (x, y_true):
 </div>
 <p>The opponent transformation is <strong>critical</strong>: raw R,G,B are highly correlated (all rise with brightness). Opponent channels decorrelate brightness from color.</p>
 
-<h3 style="margin-top:1.5rem;">5.3 MAJ3 Is an Information Bottleneck</h3>
-<p>MAJ3 compresses NC_slice uint32 containers → 32 bits. For MNIST (NC=196) the compression is benign. For CIFAR (NC=768), the compression loses critical shade information — hence thermometer encoding is essential.</p>
+<h3 style="margin-top:1.5rem;">5.3 MAJ1 Is an Information Bottleneck</h3>
+<p>MAJ1 compresses NC_slice uint32 containers → 32 bits. For MNIST (NC=196) the compression is benign. For CIFAR (NC=768), the compression loses critical shade information — hence thermometer encoding is essential.</p>
 
 <h3 style="margin-top:1.5rem;">5.4 Per-Member Architecture</h3>
 <p>Every member has its own W0, target matrix, step counter, and error counter. This allows members processing different channels to converge at different rates.</p>
@@ -443,22 +456,27 @@ for each sample (x, y_true):
 <p>The Otto Score is <strong>data-limited</strong>. Larger datasets (ImageNet-1K with 1.2M images, or a dedicated DRAM-scale dataset with 10M+ samples) would directly translate to higher accuracy.</p>
 
 <h3>6.2 Depth vs Ensemble</h3>
-<p>Deep MAJ3 stacks (2+ layers) lose information. The ensemble approach (parallel MAJ3 banks) is strictly better than depth at equal bit-mass.</p>
+<p>Deep MAJ1 stacks (2+ layers) lose information. The ensemble approach (parallel MAJ1 banks) is strictly better than depth at equal bit-mass.</p>
 
 <h3>6.3 CIFAR Gap to Float</h3>
-<p>Otto Score at 58.7% already matches float32 shallow nets. Deep nets (ResNet-18: 93%+) remain out of reach for the MAJ3 framework.</p>
+<p>Otto Score at 58.7% already matches float32 shallow nets. Deep nets (ResNet-18: 93%+) remain out of reach for the MAJ1 framework.</p>
 
 <!-- ── 7. Conclusion ── -->
 <h2 style="margin-top:2.5rem;"><span class="accent-bar">&#8203;</span> 7. Conclusion</h2>
-<p>Otto Score reaches <strong>99.0% on MNIST</strong> and <strong>58.7% on CIFAR-10</strong> using only <code>&amp;|~</code> + int32 at inference time. The method is data-limited: accuracy scales logarithmically with bit-mass and linearly with training data per evaluation sample.</p>
+<p>Otto Score reaches <strong>98.1% on MNIST</strong>, <strong>91.6% on Fashion-MNIST</strong> and
+<strong>64.4% on CIFAR-10</strong> using only <code>&amp;|~</code> + int32 at inference time. The
+method is data-limited: accuracy scales logarithmically with bit-mass and
+linearly with training data per evaluation sample. The frozen random W0
+projection + MAJ1 majority is the critical nonlinear ingredient — removing it
+(the Bit-Voting baseline) costs 4–9pp at identical bit-mass.</p>
 <p>The core innovations are:</p>
 <ol class="bullet-list" style="margin-left:1.5rem;">
-<li><strong>Thermometer encoding</strong> — bridges the number-world/binary-world gap</li>
-<li><strong>Per-channel encoding selection</strong> — each channel type gets its optimal binary mapping</li>
-<li><strong>cos-time step decay</strong> — gentle error-independent step reduction prevents oscillation</li>
-<li><strong>Multi-encoding ensemble</strong> — <code>exp8+log8+sig8</code> provides complementary projections</li>
-<li><strong>Target-err convergence</strong> — soft stopping criterion based on error-rate target</li>
-<li><strong>Free parallelism</strong> — ensemble members run simultaneously on separate DRAM rows</li>
+<li><strong>Frozen random W0 projection</strong> — nonlinear feature expansion at zero training cost (reservoir-computing principle)</li>
+<li><strong>MAJ1 majority</strong> — bitwise threshold that compresses the input into sparse, robust gb features</li>
+<li><strong>Thermometer encoding</strong> — bridges the number-world/binary-world gap for continuous data</li>
+<li><strong>int32 log-odds target</strong> — error-driven corrections, Bayesian gap scaling, no backprop</li>
+<li><strong>Multi-encoding / multi-xform ensemble</strong> — independent members vote in parallel</li>
+<li><strong>Free parallelism</strong> — ensemble members run simultaneously on separate DRAM rows; a full 221-member sweep runs in ~1 minute</li>
 </ol>
 
 <!-- ── Appendix A: MNIST ── -->

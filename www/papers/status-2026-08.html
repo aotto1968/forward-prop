@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Status Report August 2026 — Precision is the Feature, IFC v7</title>
+    <meta name="description" content="float32 score-accumulation drift refuted the 32-bit-is-free assumption; .ens v12/v13 export follows the internal format; IFC v7 handles heterogeneous ensembles; 4-way technology comparison.">
+    <meta name="author" content="Andreas Otto">
+    <meta name="robots" content="index, follow">
+    <meta name="googlebot" content="index, follow">
+    <link rel="icon" type="image/svg+xml" href="../assets/favicon.svg">
+    <link rel="stylesheet" href="../style.css">
+    <link rel="canonical" href="https://forward-prop.nhi1.de/papers/status-2026-08.html">
+    <meta property="og:title" content="Status Report August 2026 — Precision is the Feature, IFC v7">
+    <meta property="og:description" content="float32 score-accumulation drift; .ens v12/v13; IFC v7 heterogeneous ensembles; maj1 vs maj3, int32 vs flt32 technology comparison.">
+    <meta property="og:type" content="article">
+    <meta property="og:url" content="https://forward-prop.nhi1.de/papers/status-2026-08.html">
+    <meta property="og:image" content="https://forward-prop.nhi1.de/assets/og-image.png">
+    <meta property="og:site_name" content="Forward-Prop Research">
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="Status Report August 2026 — DRAM-Native Bit-Logic">
+    <meta name="twitter:description" content="Precision is the feature: float32 drift, .ens v12/v13, IFC v7, 4-way comparison.">
+    <meta name="twitter:image" content="https://forward-prop.nhi1.de/assets/og-image.png">
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "ScholarlyArticle",
+      "headline": "Status Report August 2026: Precision is the Feature — float32 drift, .ens v12/v13, IFC v7",
+      "description": "The float32 score accumulator drifts on large sums (scores ~1e9 > 2^24), refuting the 32-bit-is-free assumption. The export now follows the internal format (.ens v12 double / v13 int64). The IFC import (delivery tool) handles heterogeneous ensembles via model.otto v7. A 4-way maj/int32-flt32 comparison confirms maj1 > maj3 and container-format neutrality with exact accumulation.",
+      "author": { "@type": "Person", "name": "Andreas Otto" },
+      "datePublished": "2026-08-06",
+      "about": { "@type": "Thing", "name": "DRAM-native bit-logic classifier", "description": "Research on DRAM-native classification using only &amp;|~ operations." }
+    }
+    </script>
+</head>
+<body>
+
+<header>
+    <div class="header-inner">
+        <div class="header-brand">
+            <span class="header-logo">Otto Score</span>
+            <span class="header-subtitle">DRAM-Native &amp;|~ Classification</span>
+        </div>
+        <nav>
+            <ul>
+                <li><a href="../index.html">Home</a></li>
+                <li><a href="mnist-number.html">MNIST</a></li>
+                <li><a href="cifar-10.html">CIFAR-10</a></li>
+                <li><a href="mnist-fashion.html" style="color:var(--amber); font-weight:700;">Fashion</a></li>
+                <li><a href="status-2026-08.html">Status</a></li>
+                <li><a href="bitvoting-baseline.html">Bit-Voting</a></li>
+                <li><a href="https://github.com/aotto1968/forward-prop">Source</a></li>
+            </ul>
+        </nav>
+    </div>
+</header>
+
+<main>
+    <div class="container" style="max-width:900px;">
+
+<h1 style="font-size:2rem; color:var(--navy); margin-bottom:0.25rem;">Status Report — August 2026</h1>
+<p style="color:var(--mid-gray); margin-bottom:1.5rem;">DRAM-Native Bit-Logic Classification — 2026-08-09</p>
+
+<p><strong>August is the month the tooling caught up with the algorithm.</strong> One root cause
+— <strong>the float32 score accumulator drifts on large sums</strong> — explains a whole
+cluster of earlier anomalies (merge member counts, float-vs-int32 gaps, "the float tree is
+exhausted"). Fixing it (exact 64-bit accumulation, <code>SCORE_TYPE</code> default → double)
+made the merge deterministic, the archive self-describing, and the IFC — the delivery tool —
+finally able to run a heterogeneous ensemble end to end: <strong>66.36% == 66.36% == 66.36%</strong>
+(merge == retrain == IFC import).</p>
+
+<h2 style="margin-top:2.5rem;"><span class="accent-bar">&#8203;</span> 1. The float32 Accumulation Drift — Precision is the Feature</h2>
+
+<p>The ensemble scores reach <strong>~1e9</strong> — far beyond float32's exact range
+(2<sup>24</sup> ≈ 16.7M). Each addition rounds, the error grows with every member, and the
+beam's gain/argmax evaluations become noisy. The same corpus searched with different merge
+accumulators tells the story:</p>
+
+<table class="compare-table">
+    <tr><th>Merge SCORE_TYPE</th><th>members</th><th>eval</th></tr>
+    <tr><td>float32</td><td>29</td><td>66.79%</td></tr>
+    <tr><td>int64 (<code>-int32</code>)</td><td>44</td><td>67.72%</td></tr>
+    <tr><td><strong>double</strong></td><td><strong>44</strong></td><td><strong>67.72%</strong> (= int64 exactly)</td></tr>
+</table>
+
+<p><strong>The "32-bit is free / only top bits matter" assumption is refuted.</strong> The
+bit-exact algorithm is sensitive to <em>score-accumulation</em> precision — not to the
+container width. The DRAM chip accumulates popcounts exactly in integer arithmetic, so the
+int64/double behavior is <strong>chip-faithful</strong>; the float32 drift was an emulation
+artifact. <code>SCORE_TYPE</code> now defaults to <strong>double</strong>
+(<code>-DSCORE_TYPE=float</code> reproduces the legacy behavior).</p>
+
+<h3 style="margin-top:1.5rem;">Why this explains earlier puzzles</h3>
+<ul>
+    <li>The "float tree is exhausted" (28-33 members vs 88-116 historically): the historical
+        results were made with the int32 merge (pre-float-default); the float merge drifted.</li>
+    <li><code>--tries</code> seemed necessary under drift (noisy gains → false attractors);
+        with exact accumulation the single-try <code>--max</code> beam is deterministic.</li>
+    <li>The float-vs-int32 gap (68.15 vs 69.61 on int32-selected members) was a selection +
+        drift artifact, not an int32 advantage.</li>
+</ul>
+
+<h2 style="margin-top:2.5rem;"><span class="accent-bar">&#8203;</span> 2. Archive Format v12/v13 — Export Follows the Internal Format</h2>
+
+<p>The <code>.ens</code> archive used to store float32 (v11) even when the computation ran in
+double — losing precision between computation and storage. Per decision, <strong>the export now
+follows the internal format</strong>:</p>
+
+<table class="compare-table">
+    <tr><th>version</th><th>score type</th><th>bytes</th><th>note</th></tr>
+    <tr><td>v8</td><td>int32 (clamp)</td><td>4</td><td>legacy, read-only</td></tr>
+    <tr><td>v9-v11</td><td>float</td><td>4</td><td>unchanged</td></tr>
+    <tr><td><strong>v12</strong></td><td><strong>double</strong></td><td>8</td><td>double builds store losslessly</td></tr>
+    <tr><td><strong>v13</strong></td><td><strong>int64</strong></td><td>8</td><td>int64 mode, no int32 clamp</td></tr>
+</table>
+
+<ul>
+    <li>The version encodes the score type; the export picks it from <code>SCORE_TYPE</code>.</li>
+    <li>The <code>.meta</code> now records <code>COUNTER_TYPE=</code>/<code>SCORE_TYPE=</code>;
+        the trainer errors and the merge warns+skips on mixed-type corpora — a float32 archive
+        can no longer silently mix into a double corpus.</li>
+    <li>A missed version bound in one reader path caused the <strong>"0 blocks filled" SEGV</strong> —
+        fixed in all seven sites.</li>
+</ul>
+
+<h2 style="margin-top:2.5rem;"><span class="accent-bar">&#8203;</span> 3. lib/ki-ens.h — the .ens Format is Now One Module</h2>
+
+<p>All version logic was scattered across four duplicated read paths. It is now centralized in
+<code>lib/ki-ens.h</code>:</p>
+<ul>
+    <li>Single version → {metadata layout, score width, type} mapping
+        (<code>ens_score_bytes</code>, <code>ens_score_type_str</code>, <code>ens_has_*</code>,
+        <code>ens_version_for_score_type</code>).</li>
+    <li><strong>EnsReader</strong> replaces the 4 duplicated read paths in merge-ensemble
+        (read_ens_meta, load_scores_directory, --check, archive_*) — net <strong>−420 lines</strong>.</li>
+    <li><strong><code>ens_write</code> + <code>ens_verify</code></strong> (roundtrip, always-on):
+        the trainer verifies every exported member at write time — a format regression fails on
+        the first member, not after a full corpus.</li>
+</ul>
+
+<h2 style="margin-top:2.5rem;"><span class="accent-bar">&#8203;</span> 4. --max = Beam-as-a-Whole — Deterministic with Exact Accumulation</h2>
+
+<p><code>--max</code> (alone) now activates the <strong>old tolerant formalism</strong> (stop only
+after <code>beam_width</code> consecutive dry steps) instead of zeroing <code>--min-gain</code>;
+<code>--union</code> was removed. With exact accumulation the single-try <code>--max</code> beam is
+deterministic:</p>
+
+<table class="compare-table">
+    <tr><th>corpus</th><th>single-try</th><th>--tries 10</th><th>Δ</th></tr>
+    <tr><td>M1-INT32</td><td>66.36% (51)</td><td>66.36% (51)</td><td>0</td></tr>
+    <tr><td>M3-INT32</td><td>65.25% (88)</td><td>65.25% (81)</td><td>0</td></tr>
+    <tr><td>M1-FLT32</td><td>66.88% (92)</td><td>66.88% (92)</td><td>0</td></tr>
+    <tr><td>M3-FLT32</td><td>65.44% (55)</td><td>65.44% (55)</td><td>0</td></tr>
+</table>
+
+<h2 style="margin-top:2.5rem;"><span class="accent-bar">&#8203;</span> 5. IFC v7 — the Delivery Tool Handles Heterogeneous Ensembles</h2>
+
+<p><code>model.otto</code> v6 stored only W0/target/offset — it could <strong>not</strong>
+represent a heterogeneous ensemble (CIFAR import gave <strong>12.81%</strong> = garbage; MNIST
+worked only because it is single-config). <strong>v7</strong> adds a per-member section
+(channel, encoding, width, xform strings) after the header. A second bug was the missing
+<strong>enc-LUT initialization</strong> in the import (gave exactly <strong>10.0%</strong> =
+random; <code>enc_lut_get</code> returned garbage). Both fixed:</p>
+
+<div class="brain-equation" style="font-size:1rem; padding:1.2rem; text-align:left;">
+Merge 51 members: 66.36% &nbsp;==&nbsp; Retrain: 66.36% &nbsp;==&nbsp; IFC import: 66.36%
+</div>
+
+<p><code>--debug-member</code> on the import prints per-member evals for verification
+(<code>[ 3/51] ens=42.1% mem=32.4% G:sig8 xf=id</code>).</p>
+
+<h2 style="margin-top:2.5rem;"><span class="accent-bar">&#8203;</span> 6. --no-ens-cache — Real-Live Inference on New Data</h2>
+
+<p>The IFC's purpose is inference on new data, so the file cache
+(<code>data/prepped/cex_*.pre</code>) is a research/dev feature. <strong><code>--no-ens-cache</code></strong>
+skips the file cache (read AND write) — inputs are computed from raw data every run; the
+in-memory xform cache stays (it builds from the run's data). Validated:</p>
+
+<table class="compare-table">
+    <tr><th>run</th><th>eval</th><th>time</th></tr>
+    <tr><td><code>--import member.exp</code> (cache)</td><td>66.36%</td><td>5690ms</td></tr>
+    <tr><td><code>--import member.exp --no-ens-cache</code> (real-live)</td><td>66.36%</td><td>6504ms</td></tr>
+</table>
+
+<p>Only +814ms — the h0 scoring dominates, so <strong>the real-live performance IS the
+performance</strong>.</p>
+
+<h2 style="margin-top:2.5rem;"><span class="accent-bar">&#8203;</span> 7. The 4-Way Technology Comparison (xform=id, 377 members)</h2>
+
+<p>Four corpora built identically (H=256, EP=10, seed 42, uniform W0, <code>.meta</code>
+type-bound), selection via <code>--beam 10 --max</code>:</p>
+
+<table class="compare-table">
+    <tr><th>corpus</th><th>cumulative (best-en)</th><th>beam-selected</th></tr>
+    <tr><td>M1-INT32 (maj1, int32)</td><td>62.63%</td><td><strong>66.36%</strong> (51)</td></tr>
+    <tr><td>M3-INT32 (maj3, int32)</td><td>61.94%</td><td>65.25% (88)</td></tr>
+    <tr><td>M1-FLT32 (maj1, float+double)</td><td>62.70%</td><td><strong>66.88%</strong> (92)</td></tr>
+    <tr><td>M3-FLT32 (maj3, float+double)</td><td>62.02%</td><td>65.44% (55)</td></tr>
+</table>
+
+<ul>
+    <li><strong>maj1 &gt; maj3 consistently</strong> (+0.68-0.69pp cumulative, +1.11-1.44pp
+        beam-selected) — the beam exploits maj1's better members more effectively.</li>
+    <li><strong>flt32-double ≈ int32</strong> (±0.07pp cumulative; flt32 slightly ahead when
+        beam-selected +0.19-0.52pp) — with exact 64-bit accumulation the container format is
+        neutral: <strong>the Container Principle holds once the drift is gone.</strong></li>
+    <li>Winner: <strong>M1-FLT32 = 66.88%</strong> (maj1 + float counters + double accumulation).</li>
+</ul>
+
+<h2 style="margin-top:2.5rem;"><span class="accent-bar">&#8203;</span> 8. Member Lists are Setup- &amp; Arithmetic-Bound</h2>
+
+<p>There is <strong>no universal member list</strong>. A selection is only valid for the exact
+setup it was made under (maj, H, EP, VN/HN, seed, W0) <em>and</em> the arithmetic it was scored
+with:</p>
+
+<table class="compare-table">
+    <tr><th>selection → retrain</th><th>eval</th><th>Δ</th></tr>
+    <tr><td>float-selected → float</td><td>67.85%</td><td>—</td></tr>
+    <tr><td>float-selected → int32</td><td>67.12%</td><td>−0.73pp</td></tr>
+    <tr><td>int32-selected → int32</td><td>69.61%</td><td>—</td></tr>
+    <tr><td>int32-selected → float</td><td>68.15%</td><td>−1.46pp</td></tr>
+</table>
+
+<p>Each arithmetic performs best on its own selection; the coupling is asymmetric (int32-selected
+members hurt float more than the reverse). Always retrain with the corpus' exact flags — the
+<code>.meta</code> type binding now enforces the arithmetic side.</p>
+
+<h2 style="margin-top:2.5rem;"><span class="accent-bar">&#8203;</span> 9. Fashion-MNIST: The 91% Trap</h2>
+
+<p><a href="mnist-fashion.html" style="color:var(--amber); font-weight:700;">→ Fashion-MNIST paper</a> —
+a second, independent dataset that sharpened the August findings. The DRAM-native bit-logic
+stack (Otto Score + maj1, frozen random W0) reaches a <strong>91.6% ceiling</strong> on
+Fashion-MNIST — and cannot break out of the <strong>88.7–91.6% basin</strong>, no matter the
+search strategy:</p>
+
+<table class="compare-table">
+    <tr><th>Strategy</th><th>eval range</th><th>Finding</th></tr>
+    <tr><td><code>--beam 10 --max</code>, H32..512, m1t 98..108</td><td>90.8–91.6%</td><td>H is flat (+0.14pp from H196→H512); the ceiling is architectural</td></tr>
+    <tr><td><code>--tries N --tries-no-lock</code></td><td>91.3–91.6%</td><td>full-pool search; MORE members ≠ better (pool-monotonicity disproven)</td></tr>
+    <tr><td><code>--tries 3</code> + <code>--beam-bestN</code> 1/2/3</td><td>91.4–91.5%</td><td>breaking the 1st-best fixation moves the attractor by ~0.1pp</td></tr>
+    <tr><td><code>--expansion-sort clarity</code></td><td>86.8–89.2%</td><td>member clarity alone is WORSE — diversity beats strength</td></tr>
+    <tr><td>Bit-Voting (no W0, no maj1)</td><td>88.7–89.0%</td><td>lower technology bound; the W0+maj1 advantage is maj1-driven</td></tr>
+</table>
+
+<p><strong>The 3.4pp gap to CNN SOTA (94–96%) is architectural</strong> — frozen random W0,
+no convolution, no trainable features. Every search lever moves the needle by tenths of a
+percent only. What speaks for the approach: <strong>speed</strong> — a 221-member sweep runs
+in ~1 minute (PRF trainer), orders of magnitude faster than CNN training. For a DRAM-native
+chip the question is not "can we reach 95%" but "how little hardware do we need for 91.6%".</p>
+
+<p><strong>Two real bugs surfaced along the way</strong> (both fixed): the IFC import started
+with CLI-default maj1-thresh (107) while the model was trained with 104 → every h0 bit
+differed → <strong>36.6% instead of 91.1%</strong>. The <code>model.otto</code> format is now
+<strong>v8 (self-describing)</strong>: it carries maj_mode, maj1-thresh, splitVN and splitHN,
+so <code>--import</code> needs no CLI flags. The <code>--dry-run</code> import also SEGV'd on
+the unloaded pixel buffer — now a clean "setup only" exit. See the
+<a href="mnist-fashion.html" style="color:var(--amber); font-weight:700;">Fashion-MNIST paper</a>
+for the full leaderboard and the end-to-end 91.10% = 91.10% = 91.10% (merge = retrain = IFC)
+verification.</p>
+
+<h2 style="margin-top:2.5rem;"><span class="accent-bar">&#8203;</span> Summary</h2>
+
+<table class="compare-table">
+    <tr><th>topic</th><th>result</th></tr>
+    <tr><td>float32 score accumulation</td><td>drifts at ~1e9 → refuted "32-bit is free"; SCORE_TYPE default → double</td></tr>
+    <tr><td>.ens archive</td><td>v12 (double) / v13 (int64); export follows the internal format</td></tr>
+    <tr><td>format code</td><td>centralized in lib/ki-ens.h; EnsReader + ens_write + ens_verify (−420 lines)</td></tr>
+    <tr><td>beam scan</td><td>--max = beam-as-a-whole, deterministic; --tries adds nothing; --union removed</td></tr>
+    <tr><td>IFC (delivery)</td><td>model.otto v7 (per-member metadata) + enc-LUT fix → heterogeneous 66.36% end-to-end</td></tr>
+    <tr><td>IFC self-describing</td><td>v8 carries maj_mode/maj1-thresh/splitVN/splitHN → import needs no CLI flags (Fashion 36.6% bug fixed)</td></tr>
+    <tr><td>real-live IFC</td><td>--no-ens-cache: compute from raw data, +814ms</td></tr>
+    <tr><td>technology comparison</td><td>maj1 &gt; maj3; flt32-double ≈ int32; winner M1-FLT32 66.88%</td></tr>
+    <tr><td>Fashion-MNIST</td><td>91.6% ceiling / 88.7–91.6% basin — architectural, not search-limited; 91.10% end-to-end (merge = retrain = IFC), see <a href="mnist-fashion.html">Fashion paper</a></td></tr>
+</table>
+
+    </div>
+</main>
+
+<footer>
+    <div class="container" style="text-align:center; padding:2rem 0; font-size:0.8rem; color:var(--mid-gray);">
+        <p>BitNeuron Research — Andreas Otto — August 2026</p>
+        <p><a href="https://forward-prop.nhi1.de/">forward-prop.nhi1.de</a> &nbsp;|&nbsp; <a href="https://github.com/aotto1968/forward-prop" target="_blank">GitHub</a></p>
+    </div>
+</footer>
+
+</body>
+</html>

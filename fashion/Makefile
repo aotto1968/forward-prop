@@ -20,14 +20,18 @@ CFLAGS   = -O3 -g -march=native -fopenmp -Wall -Wextra -Werror \
            -I. -I../lib -I..
 LDLIBS   = -lm -lz
 
-HDRS = $(wildcard *.h) $(wildcard ../lib/*.h) Makefile
+HDRS = $(wildcard *.h) $(wildcard ../lib/*.h)
 
 MODEL_DIR = ../models
 
-.PHONY: all otto hebbian adam ensemble vis-errors clean setup \
-        model-otto model-hebbian model-adam test test-otto test-adam test-hebbian
+.PHONY: all clean setup
+all: otto hebbian adam bitvote  
 
-all: otto hebbian adam ensemble vis-errors
+.PHONY: model 
+model: model-otto model-hebbian model-adam model-bitvote
+
+.PHONY: model-debug 
+model-debug: model-otto-debug model-hebbian-debug model-adam-debug model-bitvote-debug
 
 # ── Dataset ────────────────────────────────────────────────
 setup:
@@ -37,28 +41,47 @@ setup:
 # ═══════════════════════════════════════════════════════════
 # Otto Score Trainer
 # ═══════════════════════════════════════════════════════════
-OTTO_SRC = mlp-bin32-otto-trn-seq.c
+.PHONY: otto model-otto model-otto-debug
+# PRF trainer (seq-prof.c) — the FINAL architecture (N members × 1 thread,
+# distributed simulation). The old sequential seq.c is archived.
+# MODE_INT32: bit-exact integer counters/scores — the chip-faithful default
+# (float32 counters reach 90.78 vs 91.10 on the 16-member ensemble, 2026-08-09).
+OTTO_SRC = mlp-bin32-otto-trn-seq-prof.c
+OTTO_MODE = -DMODE_INT32
 
-otto: fashion-mlp-bin32-otto-trn-xnor.exe fashion-mlp-bin32-otto-trn-xor.exe
+# Ensemble member file — the 16-member subset selected by the merge beam
+# search (91.10% on the m1t=105 corpus, `--beam 5 --filter @`).
+# Trained with --member-file + --maj1-thresh 105 (the corpus' calibration)
+# → ~90.8-91.1% (vs 86.7% for the single --encoding latest member).
+# See: mnist-fashion/README.md, www/papers/mnist-fashion.html
+FASHION_MEMBER = fashion-105.member
+FASHION_M1T   = 105
+
+otto: fashion-mlp-bin32-otto-trn-xnor.exe
 
 fashion-mlp-bin32-otto-trn-xnor.exe: $(OTTO_SRC) $(HDRS)
-	$(CC) $(CFLAGS) \
+	$(CC) $(CFLAGS) $(OTTO_MODE) \
 	  -Wno-sign-conversion -Wno-unused-parameter -Wno-unused-variable \
 	  -o $@ $< $(LDLIBS)
 
 fashion-mlp-bin32-otto-trn-xor.exe: $(OTTO_SRC) $(HDRS)
-	$(CC) $(CFLAGS) \
+	$(CC) $(CFLAGS) $(OTTO_MODE) \
 	  -Wno-sign-conversion -Wno-unused-parameter -Wno-unused-variable \
 	  -DH0_XOR -o $@ $< $(LDLIBS)
 
-model-otto: fashion-mlp-bin32-otto-trn-xnor.exe
-	@mkdir -p $(MODEL_DIR)/fashion-otto-h512-e10
-	@./fashion-mlp-bin32-otto-trn-xnor.exe --hiddenN 512 --epochsN 10 \
-	  --encoding latest --export $(MODEL_DIR)/fashion-otto-h512-e10 2>&1 | grep '^REPORT'
+model-otto: fashion-mlp-bin32-otto-trn-xnor.exe $(FASHION_MEMBER)
+	@mkdir -p $(MODEL_DIR)/fashion-otto-h196-e10
+	@echo -n $(@) ": "
+	@./fashion-mlp-bin32-otto-trn-xnor.exe --member-file $(FASHION_MEMBER) --export $(MODEL_DIR)/fashion-otto-h196-e10 --threadN 8 2>&1 | grep '^REPORT'
+
+model-otto-debug: fashion-mlp-bin32-otto-trn-xnor.exe $(FASHION_MEMBER)
+	@mkdir -p $(MODEL_DIR)/fashion-otto-h196-e10
+	./fashion-mlp-bin32-otto-trn-xnor.exe --member-file $(FASHION_MEMBER) --export $(MODEL_DIR)/fashion-otto-h196-e10
 
 # ═══════════════════════════════════════════════════════════
 # Hebbian Trainer (unified: via symlink to mnist)
 # ═══════════════════════════════════════════════════════════
+.PHONY: hebbian model-hebbian model-hebbian-debug
 HEBB_SRC = mlp-bin32-hebbian-trn.c
 
 hebbian: fashion-mlp-bin32-hebbian-trn-xnor.exe fashion-mlp-bin32-hebbian-trn-xor.exe
@@ -77,12 +100,19 @@ fashion-mlp-bin32-hebbian-trn-xor.exe: $(HEBB_SRC) $(HDRS)
 
 model-hebbian: fashion-mlp-bin32-hebbian-trn-xnor.exe
 	@mkdir -p $(MODEL_DIR)/fashion-hebbian-h512-e10
+	@echo -n $(@) ": "
 	@./fashion-mlp-bin32-hebbian-trn-xnor.exe --hiddenN 512 --epochsN 10 \
 	  --encoding latest --export $(MODEL_DIR)/fashion-hebbian-h512-e10 2>&1 | grep '^REPORT'
+
+model-hebbian-debug: fashion-mlp-bin32-hebbian-trn-xnor.exe
+	@mkdir -p $(MODEL_DIR)/fashion-hebbian-h512-e10
+	./fashion-mlp-bin32-hebbian-trn-xnor.exe --hiddenN 512 --epochsN 10 \
+	  --encoding latest --export $(MODEL_DIR)/fashion-hebbian-h512-e10
 
 # ═══════════════════════════════════════════════════════════
 # Float32 AdamW Trainer
 # ═══════════════════════════════════════════════════════════
+.PHONY: adam model-adam model-adam-debug
 ADAM_SRC = mlp-flt32-adam-trn.c
 
 adam: fashion-mlp-flt32-adam-trn.exe
@@ -94,15 +124,45 @@ fashion-mlp-flt32-adam-trn.exe: $(ADAM_SRC) $(HDRS)
 
 model-adam: fashion-mlp-flt32-adam-trn.exe
 	@mkdir -p $(MODEL_DIR)/fashion-adam-h512-e10
+	@echo -n $(@) ": "
 	@./fashion-mlp-flt32-adam-trn.exe --hiddenN 512 --epochsN 10 \
 	  --export $(MODEL_DIR)/fashion-adam-h512-e10 2>&1 | grep '^REPORT'
+
+model-adam-debug: fashion-mlp-flt32-adam-trn.exe
+	@mkdir -p $(MODEL_DIR)/fashion-adam-h512-e10
+	@echo -n $(@) ": "
+	./fashion-mlp-flt32-adam-trn.exe --hiddenN 512 --epochsN 10 \
+	  --export $(MODEL_DIR)/fashion-adam-h512-e10
+
+# ═══════════════════════════════════════════════════════════
+# Bit-Voting (identity W0, I=H width; via -DKI_BITVOTING on seq-prof.c)
+# ═══════════════════════════════════════════════════════════
+.PHONY: bitvote model-bitvote model-bitvote-debug
+# Bit-Voting = Otto with identity W0 (gb = input) and I=H width,
+# enabled via -DKI_BITVOTING on the shared seq.c trainer.
+
+bitvote: fashion-mlp-bin32-otto-trn-bitvoting.exe
+
+fashion-mlp-bin32-otto-trn-bitvoting.exe: mlp-bin32-otto-trn-seq-prof.c $(HDRS)
+	$(CC) $(CFLAGS) -Wno-sign-conversion -Wno-unused-parameter -Wno-unused-variable -DKI_BITVOTING -DMODE_INT32 -o $@ $< $(LDLIBS)
+
+model-bitvote: fashion-mlp-bin32-otto-trn-bitvoting.exe
+	@mkdir -p $(MODEL_DIR)/fashion-bitvoting-e10
+	@echo -n $(@) ": "
+	@./fashion-mlp-bin32-otto-trn-bitvoting.exe --member-file fashion-bv.member --export $(MODEL_DIR)/fashion-bitvoting-e10 2>&1 | grep '^REPORT'
+
+model-bitvote-debug: fashion-mlp-bin32-otto-trn-bitvoting.exe
+	@mkdir -p $(MODEL_DIR)/fashion-bitvoting-e10
+	@echo -n $(@) ": "
+	./fashion-mlp-bin32-otto-trn-bitvoting.exe --member-file fashion-bv.member --export $(MODEL_DIR)/fashion-bitvoting-e10
 
 # ═══════════════════════════════════════════════════════════
 # merge-ensemble (public score archive merger)
 # ═══════════════════════════════════════════════════════════
+.PHONY: merge-ensemble
 MERGE_SRC = merge-ensemble.c
 
-ensemble: fashion-merge-ensemble.exe
+merge-ensemble: fashion-merge-ensemble.exe
 
 fashion-merge-ensemble.exe: $(MERGE_SRC) $(HDRS)
 	$(CC) $(CFLAGS) -Wno-sign-conversion -Wno-unused-parameter -o $@ $< $(LDLIBS)
@@ -110,6 +170,7 @@ fashion-merge-ensemble.exe: $(MERGE_SRC) $(HDRS)
 # ═══════════════════════════════════════════════════════════
 # Visual Error Inspector
 # ═══════════════════════════════════════════════════════════
+.PHONY: vis-errors
 VIS_SRC = mlp-otto-vis-errors.c
 
 vis-errors: fashion-mlp-otto-vis-errors.exe
@@ -120,36 +181,51 @@ fashion-mlp-otto-vis-errors.exe: $(VIS_SRC) $(HDRS)
 # ═══════════════════════════════════════════════════════════
 # Tests — reuse cached model from model-* if available
 # ═══════════════════════════════════════════════════════════
+.PHONY: test test-otto test-adam test-hebbian test-bitvoting \
+        test-debug test-otto-debug test-adam-debug test-hebbian-debug test-bitvoting-debug
+
 test-otto: fashion-mlp-bin32-otto-trn-xnor.exe
-	@test -f $(MODEL_DIR)/fashion-otto-h512-e10/model.otto || $(MAKE) model-otto
-	@echo -e "\n=== Otto Score Fashion (H=512, 10 ep, latest) ==="
-	@./fashion-mlp-bin32-otto-trn-xnor.exe \
-	  --import $(MODEL_DIR)/fashion-otto-h512-e10 --evalN 10000 --encoding latest 2>&1 | grep '^REPORT'
+	@test -f $(MODEL_DIR)/fashion-otto-h196-e10/model.otto || $(MAKE) model-otto
+	@echo -n $(@) ": "
+	@./fashion-mlp-bin32-otto-trn-xnor.exe --import $(MODEL_DIR)/fashion-otto-h196-e10 --evalN 10000 --threadN 8 2>&1 | grep '^REPORT'
 
 test-hebbian: fashion-mlp-bin32-hebbian-trn-xnor.exe
 	@test -f $(MODEL_DIR)/fashion-hebbian-h512-e10/weights-0.meta || $(MAKE) model-hebbian
-	@echo -e "\n=== Bin32 Hebbian Fashion (H=512, 10 ep, latest) ==="
-	@./fashion-mlp-bin32-hebbian-trn-xnor.exe \
-	  --import $(MODEL_DIR)/fashion-hebbian-h512-e10 --evalN 10000 --encoding latest 2>&1 | grep '^REPORT'
+	@echo -n $(@) ": "
+	@./fashion-mlp-bin32-hebbian-trn-xnor.exe --import $(MODEL_DIR)/fashion-hebbian-h512-e10 --evalN 10000 --encoding latest 2>&1 | grep '^REPORT'
 
 test-adam: fashion-mlp-flt32-adam-trn.exe
 	@test -f $(MODEL_DIR)/fashion-adam-h512-e10/weights-0.meta || $(MAKE) model-adam
-	@echo -e "\n=== Float32 AdamW Fashion (H=512, 10 ep) ==="
-	@./fashion-mlp-flt32-adam-trn.exe \
-	  --import $(MODEL_DIR)/fashion-adam-h512-e10 --evalN 10000 2>&1 | grep '^REPORT'
+	@echo -n $(@) ": "
+	@./fashion-mlp-flt32-adam-trn.exe --import $(MODEL_DIR)/fashion-adam-h512-e10 --evalN 10000 2>&1 | grep '^REPORT'
 
-test: test-otto test-adam test-hebbian
+test-bitvoting: fashion-mlp-bin32-otto-trn-bitvoting.exe
+	@test -f $(MODEL_DIR)/fashion-bitvoting-e10/model.otto || $(MAKE) model-bitvote
+	@echo -n $(@) ": "
+	@./fashion-mlp-bin32-otto-trn-bitvoting.exe --import $(MODEL_DIR)/fashion-bitvoting-e10 --evalN 10000 2>&1 | grep '^REPORT'
 
-# ═══════════════════════════════════════════════════════════════
-# Bit-Voting Baseline (experiment)
-# ═══════════════════════════════════════════════════════════════
+test-otto-debug: fashion-mlp-bin32-otto-trn-xnor.exe
+	@test -f $(MODEL_DIR)/fashion-otto-h196-e10/model.otto || $(MAKE) model-otto
+	@echo -n $(@) ": "
+	./fashion-mlp-bin32-otto-trn-xnor.exe --import $(MODEL_DIR)/fashion-otto-h196-e10 --evalN 10000 --threadN 8
 
-BITVOTE_SRC = mlp-bin32-otto-trn-bitvoting.c
+test-hebbian-debug: fashion-mlp-bin32-hebbian-trn-xnor.exe
+	@test -f $(MODEL_DIR)/fashion-hebbian-h512-e10/weights-0.meta || $(MAKE) model-hebbian
+	@echo -n $(@) ": "
+	./fashion-mlp-bin32-hebbian-trn-xnor.exe --import $(MODEL_DIR)/fashion-hebbian-h512-e10 --evalN 10000 --encoding latest
 
-bitvote: fashion-mlp-bin32-otto-trn-bitvoting.exe
+test-adam-debug: fashion-mlp-flt32-adam-trn.exe
+	@test -f $(MODEL_DIR)/fashion-adam-h512-e10/weights-0.meta || $(MAKE) model-adam
+	@echo -n $(@) ": "
+	./fashion-mlp-flt32-adam-trn.exe --import $(MODEL_DIR)/fashion-adam-h512-e10 --evalN 10000 --threadN 8
 
-fashion-mlp-bin32-otto-trn-bitvoting.exe: $(BITVOTE_SRC) $(HDRS)
-	$(CC) $(CFLAGS) -Wno-sign-conversion -Wno-unused-parameter -Wno-unused-variable -o $@ $< $(LDLIBS)
+test-bitvoting-debug: fashion-mlp-bin32-otto-trn-bitvoting.exe
+	@test -f $(MODEL_DIR)/fashion-bitvoting-e10/model.otto || $(MAKE) model-bitvote
+	@echo -n $(@) ": "
+	./fashion-mlp-bin32-otto-trn-bitvoting.exe --import $(MODEL_DIR)/fashion-bitvoting-e10 --evalN 10000 --threadN 8
+
+test: test-otto test-adam test-hebbian test-bitvoting
+test-debug: test-otto-debug test-adam-debug test-hebbian-debug test-bitvoting-debug
 
 # ═══════════════════════════════════════════════════════════
 # Clean

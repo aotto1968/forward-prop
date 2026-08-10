@@ -34,7 +34,7 @@ make test
 === Bin32 Hebbian Fashion (H=512, 10 ep, latest)  ===      eval=71.0%
 ```
 
-First run trains all 9 models (~5min). Subsequent runs use cached models (<1s total).
+First run trains all 12 models (~5min). Subsequent runs use cached models (<1s total).
 
 **`make models` — Train fresh models (cached):**
 ```
@@ -65,23 +65,23 @@ REPORT train=71.8% (60000) eval=71.0% (10000) ...
 
 | Command                     | What it tests                          |
 | --------------------------- | -------------------------------------- |
-| `make test-mnist`           | All 3 MNIST approaches                 |
+| `make test-mnist`           | All 4 MNIST approaches                 |
 | `make test-mnist-otto`      | Otto Score MNIST only                  |
 | `make test-mnist-adam`      | Float32 AdamW MNIST only               |
 | `make test-mnist-hebbian`   | Bin32 Hebbian MNIST only               |
-| `make test-cifar`           | All 3 CIFAR-10 approaches              |
+| `make test-mnist-bitvoting` | Bit-Voting MNIST only                  |
+| `make test-cifar`           | All 4 CIFAR-10 approaches              |
 | `make test-cifar-otto`      | Otto Score CIFAR-10 only               |
 | `make test-cifar-adam`      | Float32 AdamW CIFAR-10 only            |
 | `make test-cifar-hebbian`   | Bin32 Hebbian CIFAR-10 only            |
-| `make test-fashion`         | All 3 Fashion-MNIST approaches         |
+| `make test-cifar-bitvoting` | Bit-Voting CIFAR-10 only               |
+| `make test-fashion`         | All 4 Fashion-MNIST approaches         |
 | `make test-fashion-otto`    | Otto Score Fashion-MNIST only          |
 | `make test-fashion-adam`    | Float32 AdamW Fashion-MNIST only       |
 | `make test-fashion-hebbian` | Bin32 Hebbian Fashion-MNIST only       |
-| `make test-mnist-bitvote`   | Bit-Voting baseline MNIST only         |
-| `make test-cifar-bitvote`   | Bit-Voting baseline CIFAR-10 only      |
-| `make test-fashion-bitvote` | Bit-Voting baseline Fashion-MNIST only |
+| `make test-fashion-bitvoting` | Bit-Voting Fashion-MNIST only        |
 
-First run trains all 9 models. Subsequent runs use cached models (<1s total).
+First run trains all 12 models. Subsequent runs use cached models (<1s total).
 
 ---
 
@@ -214,6 +214,16 @@ capacity. The Bit-Voting baseline proves that the +5–7pp gap between Otto and
 linear voting is due to **nonlinear feature abstraction from W0 + majority**,
 not from more parameters or higher precision.
 
+**Precision caveat (2026-08-06):** the container is format-neutral, but the
+**score accumulation must be exact (int64/double)**. The float32 accumulator
+drifts once the ensemble scores reach ~1e9 (> 2²⁴): the same corpus selected
+with float32 vs int64/double gave 29 vs 44 members (66.79% vs 67.72%). The DRAM
+chip accumulates popcounts exactly in integer arithmetic — the exact behavior is
+chip-faithful, the float32 drift was an emulation artifact. `SCORE_TYPE`
+defaults to double; `-DSCORE_TYPE=float` reproduces the legacy behavior. The
+`.ens` archive follows the internal format (v12 double / v13 int64) and the
+`.meta` records/validates the arithmetic types.
+
 ---
 
 ```
@@ -282,7 +292,7 @@ Each trainer doubles as inference engine via `--import`. Zero code drift.
 | `--predictions FILE`               | Export per-sample predictions (for vis-errors tool)                                                                         | none            |
 | `--export-merge-scores DIR`        | Save per-member scores to archive files (ensemble)                                                                          | none            |
 | `--export-gb`                      | Cache gb_buf to data/gb/ (≥2nd run 35% faster)                                                                              | off             |
-| `--debug-gb`                       | Show gb-cache + input-cache messages                                                                                        | off             |
+| `--debug-cache`                   | Log every cache create/use (xform cache, cex *.pre, gb cache)                                                              | off             |
 | `--dry-run`                        | Print architecture and exit (metadata only, instant)                                                                        | off             |
 | `--seed N`                         | Random seed                                                                                                                 | 42              |
 | `--seed-member MODE`               | Member seed strategy (once, const, incr)                                                                                    | once            |
@@ -552,8 +562,8 @@ bash bin/run-ensemble.sh --repeat 20 ./cifar/cifar-mlp-bin32-otto-trn-xnor.exe \
   Threshold via `--maj-thresh -2` (auto per encoding), `-1` (n/2), or fixed value.
 - **--export-gb**: gb_buf caching to `data/gb/`. Hash key covers dataset, W0[0..3],
   dimensions, input pipeline (xform, channels, encoding). Second run 35% faster.
-  `--debug-gb` for cache logs.
-- **Lazy Input Loading**: xform input buffers (load_input_cached) are only loaded on
+  `--debug-cache` for cache logs.
+- **Lazy Input Loading**: xform input buffers (load_input_cex_cached) are only loaded on
   gb-cache MISS. On cache HIT, no I/O for input buffers.
 - **Xform Pipeline Chaining**: `@` syntax for sequential transforms.
   `rot90@avg4` = first rot90, then avg4. Any number of steps.

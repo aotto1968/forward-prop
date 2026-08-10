@@ -81,15 +81,28 @@
             Andreas Otto — 19 June 2026
         </p>
 
+        <div style="background:#fff8e1; border:2px solid var(--amber, #e6a817); border-radius:8px; padding:1rem 1.5rem; margin:1rem 0; font-size:0.9rem;">
+            <strong>⚠️ 2026-08 update — this page's W0-diversity claim is superseded.</strong> The
+            <code>--seed-member const</code> experiments (uniform W0 across all members) show that
+            <strong>W0 diversity is irrelevant for accuracy</strong> — const reaches the same eval as
+            per-member random seeds (const 35.9% vs incr 35.8% vs default 36.0%, H=64 CIFAR; identical
+            on MNIST). The ensemble effect comes from <strong>diverse features/views</strong> (channels,
+            encodings, xforms), not from diverse W0. The <strong>const switch is a win:</strong> one
+            shared frozen W0 instead of per-member matrices — the matrix data shrinks drastically,
+            so inference needs far less memory access. See
+            <a href="status-2026-08.html">Status Report August 2026</a>.
+        </div>
+
         <div class="abstract-box">
             <p>In the Otto Score classifier, a frozen random projection W0 followed by MAJ3 majority
             extracts 32-bit feature strings from MNIST inputs. We demonstrate that <strong>an ensemble of
-            small W0s consistently beats a single large W0 at the same total bit budget</strong>, and that
-            this effect depends critically on W0 diversity. The seed-mode experiment proves the
-            mechanism: identical W0 across members collapses the ensemble to 89.9% — barely better
-            than a single model. Independent random projections reach 95.1%. The architectural
-            implication for DRAM: <strong>many small MAJ3 banks with diverse random projections outperform
-            one large bank at lower total cost.</strong></p>
+            small W0s consistently beats a single large W0 at the same total bit budget</strong>. The
+            <em>original</em> seed-mode reading (W0 diversity as the ensemble mechanism) was revised in
+            2026-08: with <code>--seed-member const</code>, <strong>one shared W0</strong> reaches the
+            same accuracy — the ensemble effect is carried by diverse features and views, and the shared
+            W0 cuts the matrix data and memory access drastically. The architectural implication for
+            DRAM: <strong>many small MAJ3 banks over diverse views outperform one large bank at lower
+            total cost.</strong></p>
         </div>
 
         <!-- Table of Contents -->

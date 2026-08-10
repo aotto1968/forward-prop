@@ -20,40 +20,11 @@
 #include <stdlib.h>
 #include <zlib.h>
 
-/* ── Counter type for target/offset/step (overridable, default int32_t) ── */
-#ifndef COUNTER_TYPE
-#define COUNTER_TYPE float
-#endif
-
-/* ═══════════════════════════════════════════════════════════════════════
- * CONSTANTS — Fashion-MNIST
- * ═══════════════════════════════════════════════════════════════════════ */
-
-#define KI_DATASET_ID             3       /* unique for cache key (0=MNIST, 1=CIFAR, 2=CINIC) */
-#define KI_DATASET_NAME         "FASHION"
-#define KI_PX                   784
-#define KI_BIT_WIDTH            8       /* bits per pixel (8/16/24/32) */
-#define KI_PX_PER_CONT_W        (32 / KI_BIT_WIDTH)  /* 4 bei 8bit, 2 bei 16bit, 1 bei 32bit */
-#define KI_ROWS                 28
-#define KI_COLS                 28
-#define KI_NCLASSES             10
-#define KI_DEFAULT_LR           0.05f   /* → step = 0.05 × 131072 = 6554 */
-#define KI_DEFAULT_STEP_POWER   0.1f    /* higher yields smaller trn */
-#define KI_DEFAULT_STEP_MODE    STEP_COS_TIME
-#define KI_DEFAULT_BATCH_N      64      /* optimum */
-#define KI_COLORS               1       /* Fashion-MNIST is grayscale */
-#define KI_DEFAULT_COLOR        (1<<COLOR_MNIST)  /* single grayscale block */
-#define KI_NC                   (KI_PX / KI_PX_PER_CONT_W)  /* Container: 784/4=196 bei 8bit, 784/1=784 bei 32bit */
-#define KI_NC_TOTAL             (KI_NC * KI_COLORS)
-#define KI_PACK                 KI_PX_PER_CONT_W
-
-#ifndef NC
-#define NC  KI_NC
-#endif
-
-#ifndef OT_PRECISION
-#define OT_PRECISION 17
-#endif
+/* ── Static configuration (dataset-specific macros) comes from ki-config.h.
+ *    It is always included FIRST (before ki-encoding.h / ki-common.h) so the
+ *    shared headers see e.g. KI_SWEEP_PERFORMANCE_ENCODING. Symlinked into
+ *    mnist-fashion/ki-config.h. */
+#include "ki-config.h"
 
 /* ═══════════════════════════════════════════════════════════════════════
  * FASHION-MNIST DATA STRUCT + LOADER
@@ -349,6 +320,7 @@ static const char *ki_class_names[KI_NCLASSES] = {
 /* ── Encoding aliases (dataset-specific) ──────────────────────── */
 #define KI_COMMON_ALIAS_LOOKUP
 static const char *ki_encoding_alias_lookup(const char *name) {
+    if (strcasecmp(name, "sweep-performance") == 0) return KI_SWEEP_PERFORMANCE_ENCODING;
     if (strcasecmp(name, "latest") == 0) return "exp";
     return ki_encoding_alias_expand(name);
 }

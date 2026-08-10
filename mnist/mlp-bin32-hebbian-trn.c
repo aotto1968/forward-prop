@@ -18,6 +18,7 @@
  */
 #define _POSIX_C_SOURCE 200809L
 #define KI_COMMON_LOAD_INPUT
+#include "ki-config.h"
 #include "ki-common.h"
 #include "maj3.h"
 #include "w0_random.h"

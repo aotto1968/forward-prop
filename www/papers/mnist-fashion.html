@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Fashion-MNIST — The 91% Trap: DRAM-Native Bit-Logic Benchmark</title>
+    <meta name="description" content="Fashion-MNIST with DRAM-native bit-logic (Otto Score + maj1): 91.6% ceiling. Every search strategy lands in the 88.7-91.6% basin — the gap to CNN SOTA (94-96%) is architectural, not search-limited. Speed is the differentiator: 221-member sweep in ~1 minute.">
+    <meta name="author" content="Andreas Otto">
+    <meta name="robots" content="index, follow">
+    <meta name="googlebot" content="index, follow">
+    <link rel="icon" type="image/svg+xml" href="../assets/favicon.svg">
+    <link rel="stylesheet" href="../style.css">
+    <link rel="canonical" href="https://forward-prop.nhi1.de/papers/mnist-fashion.html">
+    <meta property="og:title" content="Fashion-MNIST — The 91% Trap: DRAM-Native Bit-Logic Benchmark">
+    <meta property="og:description" content="91.6% ceiling on Fashion-MNIST with DRAM-native bit-logic. The 3.4pp gap to CNN SOTA is architectural, not search-limited. Speed is the differentiator.">
+    <meta property="og:type" content="article">
+    <meta property="og:url" content="https://forward-prop.nhi1.de/papers/mnist-fashion.html">
+    <meta property="og:image" content="https://forward-prop.nhi1.de/assets/og-image.png">
+    <meta property="og:site_name" content="Forward-Prop Research">
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="Fashion-MNIST — The 91% Trap (DRAM-Native)">
+    <meta name="twitter:description" content="91.6% ceiling, 88.7-91.6% basin, architectural limit. Speed: 221-member sweep in ~1 min.">
+    <meta name="twitter:image" content="https://forward-prop.nhi1.de/assets/og-image.png">
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "ScholarlyArticle",
+      "headline": "Fashion-MNIST: The 91% Trap — DRAM-Native Bit-Logic Benchmark",
+      "description": "Otto Score + maj1 on Fashion-MNIST reaches a 91.6% ceiling. Every search strategy (beam, tries, bestN, optimal, clarity) lands in the 88.7-91.6% basin — the gap to CNN SOTA is architectural (frozen random W0, no convolution), not search-limited. The differentiator is speed: a 221-member sweep runs in ~1 minute.",
+      "author": { "@type": "Person", "name": "Andreas Otto" },
+      "datePublished": "2026-08-09",
+      "about": { "@type": "Thing", "name": "DRAM-native bit-logic classifier", "description": "Fashion-MNIST benchmark using only &amp;|~ operations + int32, DRAM-native." }
+    }
+    </script>
+</head>
+<body>
+
+<header>
+    <div class="header-inner">
+        <div class="header-brand">
+            <span class="header-logo">Otto Score</span>
+            <span class="header-subtitle">DRAM-Native &amp;|~ Classification</span>
+        </div>
+        <nav>
+            <ul>
+                <li><a href="../index.html">Home</a></li>
+                <li><a href="mnist-number.html">MNIST</a></li>
+                <li><a href="cifar-10.html">CIFAR-10</a></li>
+                <li><a href="mnist-fashion.html" style="color:var(--amber); font-weight:700;">Fashion</a></li>
+                <li><a href="status-2026-08.html">Status</a></li>
+                <li><a href="https://github.com/aotto1968/forward-prop">Source</a></li>
+            </ul>
+        </nav>
+    </div>
+</header>
+
+<main>
+    <div class="container" style="max-width:900px;">
+
+<h1 style="font-size:2rem; color:var(--navy); margin-bottom:0.25rem;">Fashion-MNIST — The 91% Trap</h1>
+<p style="color:var(--mid-gray); margin-bottom:1.5rem;">DRAM-Native Bit-Logic Benchmark — 2026-08-09</p>
+
+<p><strong>We cannot break out of the 91% basin.</strong> Every search strategy, every
+H, every diversity lever lands in the same <strong>88.7–91.6%</strong> range — the spread
+between the weakest and strongest result is ~0.1pp, effectively random noise. The ceiling is
+<strong>architectural</strong> (frozen random W0 + maj1 voting, no convolution, no trainable
+features), not a search or diversity problem. What speaks for us: <strong>speed</strong> — a
+221-member sweep runs in ~1 minute, orders of magnitude faster than CNN training.</p>
+
+<h2 style="margin-top:2.5rem;"><span class="accent-bar">&#8203;</span> 1. The 91% Trap</h2>
+
+<table class="compare-table">
+    <tr><th>Strategy</th><th>eval range</th><th>What we tried</th></tr>
+    <tr><td><code>--beam 10 --max</code> (plain)</td><td>90.8–91.6%</td><td>H32..512, maj1-thresh 98..108</td></tr>
+    <tr><td><code>--tries N --tries-no-lock</code></td><td>91.3–91.6%</td><td>full-pool search, best-of-N</td></tr>
+    <tr><td><code>--tries 3</code> + bestN 1/2/3</td><td>91.4–91.5%</td><td>per-try candidate offset</td></tr>
+    <tr><td><code>--tries-random-seed</code></td><td>91.3–91.4%</td><td>splitmix64 seeds</td></tr>
+    <tr><td><code>--optimal</code> (2-opt exchange)</td><td>—</td><td>1-swap-stable, zero gain</td></tr>
+    <tr><td><code>--expansion-sort clarity</code></td><td>86.8–89.2%</td><td>member clarity (WORSE)</td></tr>
+    <tr><td><code>--greedy</code></td><td>90.2–90.8%</td><td>single path</td></tr>
+    <tr><td>Bit-Voting (no W0, no maj1)</td><td>88.7–89.0%</td><td>lower technology bound</td></tr>
+</table>
+
+<p><strong>The honest assessment:</strong> we play in the amateur league on accuracy —
+Fashion-MNIST SOTA (CNN) is 94–96%, we sit at ~91.6%. The 3.4pp gap is architectural,
+NOT a search or diversity problem — every lever we pull moves the needle by tenths of a
+percent only.</p>
+
+<h2 style="margin-top:2.5rem;"><span class="accent-bar">&#8203;</span> 2. Leaderboard (all runs, INT32 bit-exact)</h2>
+
+<p>Top results per corpus/mode — <code>--beam 10 --max</code> unless noted. The <code>lr=</code>
+field carries the winning <code>--beam-bestN</code> (reproducibility). Differences &lt;0.1pp
+are within noise.</p>
+
+<table class="compare-table">
+    <tr><th>H</th><th>m1t</th><th>eval</th><th>err</th><th>Members</th><th>Mode</th></tr>
+    <tr class="highlight-row"><td>512</td><td>105</td><td><strong>91.58%</strong></td><td><strong>842</strong></td><td>40</td><td><code>--beam 10 --max</code></td></tr>
+    <tr><td>512</td><td>105</td><td>91.58%</td><td>842</td><td>40</td><td><code>+ --tries 5 --tries-no-lock</code></td></tr>
+    <tr><td>256</td><td>105</td><td>91.54%</td><td>846</td><td>42</td><td><code>--max --tries 3</code> (bestN=1)</td></tr>
+    <tr><td>256</td><td>105</td><td>91.52%</td><td>848</td><td>79</td><td><code>+ --tries 5 --tries-no-lock</code></td></tr>
+    <tr><td>256</td><td>105</td><td>91.48%</td><td>852</td><td>65</td><td><code>--beam 10 --max</code></td></tr>
+    <tr><td>512</td><td>105</td><td>91.48%</td><td>852</td><td>55</td><td><code>--max --tries 3</code> (bestN=1)</td></tr>
+    <tr><td>196</td><td>107</td><td>91.45%</td><td>855</td><td>59</td><td><code>+ --tries 5 --tries-no-lock</code></td></tr>
+    <tr><td>196</td><td>105</td><td>91.44%</td><td>856</td><td>36</td><td><code>--beam 10 --max</code></td></tr>
+    <tr><td>196</td><td>105</td><td>91.44%</td><td>856</td><td>36</td><td><code>+ --optimal</code></td></tr>
+    <tr><td>256</td><td>105</td><td>91.43%</td><td>857</td><td>55</td><td><code>+ --tries 5 --tries-random-seed</code></td></tr>
+    <tr><td>196</td><td>105</td><td>91.41%</td><td>859</td><td>56</td><td><code>--max --tries 3</code> (bestN=1)</td></tr>
+    <tr><td>512</td><td>105</td><td>91.38%</td><td>862</td><td>17</td><td><code>--beam 10</code> (strict)</td></tr>
+    <tr><td>196</td><td>106</td><td>91.34%</td><td>866</td><td>39</td><td><code>--beam 10 --max</code></td></tr>
+    <tr><td>196</td><td>107</td><td>91.34%</td><td>866</td><td>57</td><td><code>--max --min-gain 0</code></td></tr>
+    <tr><td>196</td><td>107</td><td>91.33%</td><td>867</td><td>56</td><td><code>--beam 10 --max</code></td></tr>
+    <tr><td>196</td><td>108</td><td>91.30%</td><td>870</td><td>57</td><td><code>--beam 10 --max</code></td></tr>
+    <tr><td>196</td><td>104</td><td>91.20%</td><td>880</td><td>58</td><td><code>--beam 10 --max</code></td></tr>
+    <tr><td>128</td><td>105</td><td>91.18%</td><td>882</td><td>43</td><td><code>--beam 10 --max</code></td></tr>
+    <tr><td>196</td><td>98</td><td>90.91%</td><td>909</td><td>35</td><td><code>--beam 10 --max</code> (true half)</td></tr>
+    <tr><td>64</td><td>105</td><td>90.82%</td><td>918</td><td>66</td><td><code>--beam 10 --max</code></td></tr>
+    <tr><td>32</td><td>105</td><td>89.70%</td><td>1030</td><td>27</td><td><code>--beam 10 --max</code></td></tr>
+    <tr><td>BV</td><td>—</td><td>88.94%</td><td>1106</td><td>17</td><td><code>--beam 10 --max</code> (no W0)</td></tr>
+</table>
+
+<p><strong>Ceiling: ~91.6%</strong> (H=512). The H dimension is fully measured and flat
+(+0.14pp from H196→H512). The 91% trap is architectural, not search-driven.</p>
+
+<h2 style="margin-top:2.5rem;"><span class="accent-bar">&#8203;</span> 3. The Speed Argument</h2>
+
+<p>The PRF trainer (<code>mlp-bin32-otto-trn-seq-prof.c</code>, N members in parallel,
+1 thread each) makes sweeping blazing fast:</p>
+
+<table class="compare-table">
+    <tr><th>Task</th><th>Time</th></tr>
+    <tr><td>Full member sweep (221 members: 17 xforms × 13 encodings)</td><td><strong>~1 min</strong></td></tr>
+    <tr><td>Merge beam search (1885–2093 archives)</td><td>3–60 s</td></tr>
+    <tr><td>Bit-Voting sweep (lower-bound research)</td><td>~1 min</td></tr>
+</table>
+
+<p>Compare: a CNN epoch on Fashion-MNIST takes minutes to hours on a GPU. The DRAM-native
+bit-logic approach trades accuracy (~91.6% vs 94–96%) for hardware simplicity + speed that no
+CNN can match on-chip. For a DRAM-native chip, the question is not "can we reach 95%" but
+"how little hardware do we need for 91.6%".</p>
+
+<h2 style="margin-top:2.5rem;"><span class="accent-bar">&#8203;</span> 4. maj1-thresh Calibration</h2>
+
+<p><code>--maj1-thresh</code> is a sharp calibration point. The auto value is 107 for
+n=196 — but the merge attractor peaks at <strong>105</strong>. Lower thresh → fewer members
+at equal/better eval: 105 gives 36 members vs 56 at 107.</p>
+
+<table class="compare-table">
+    <tr><th>m1t</th><th>beam10</th><th>beam10 --max</th><th>members</th><th>err</th></tr>
+    <tr><td>98 (=n/2)</td><td>90.73%</td><td>90.91%</td><td>35</td><td>909</td></tr>
+    <tr><td>104</td><td>90.99%</td><td>91.20%</td><td>58</td><td>880</td></tr>
+    <tr class="highlight-row"><td><strong>105</strong></td><td>91.04%</td><td><strong>91.44%</strong></td><td><strong>36</strong></td><td><strong>856</strong></td></tr>
+    <tr><td>106</td><td>91.11%</td><td>91.34%</td><td>39</td><td>866</td></tr>
+    <tr><td>107 (auto)</td><td>90.86%</td><td>91.33%</td><td>56</td><td>867</td></tr>
+    <tr><td>108</td><td>90.84%</td><td>91.30%</td><td>57</td><td>870</td></tr>
+</table>
+
+<h2 style="margin-top:2.5rem;"><span class="accent-bar">&#8203;</span> 5. Ensemble Search Findings</h2>
+
+<table class="compare-table">
+    <tr><th>Finding</th><th>Evidence</th></tr>
+    <tr><td><strong>the 91% trap</strong></td><td>every search strategy lands in 88.7–91.6% — ~0.1pp spread = noise. The ceiling is architectural, not search-limited</td></tr>
+    <tr><td><code>--tries</code> is pool partitioning</td><td>TRY 2..10 lock found members; <code>--tries 10</code> == <code>--tries 1</code></td></tr>
+    <tr><td><code>--tries-no-lock</code> enables full-pool search</td><td>each try gets a fresh pool → different seeds, same-space attractors</td></tr>
+    <tr><td><code>--beam-bestN N</code> breaks 1st-best fixation</td><td>per-level selection starts at the N-th best candidate; bestN=3 single run: 91.16 vs 90.94 (bestN=1)</td></tr>
+    <tr><td><code>--min-gain 0</code> is a real lever</td><td>867→866 (57 members) on Otto, 1106→1105 (24) on BV</td></tr>
+    <tr><td><code>--optimal</code> (2-opt) is a dead end</td><td>1-swap-stable attractor — no improving single swap</td></tr>
+    <tr><td><code>--start-member-file</code> = monotone pool extension</td><td>beam starts from a saved attractor (floor) — new members can only ADD, never redirect below it</td></tr>
+    <tr><td>clarity (class-score std-dev)</td><td><code>--expansion-sort clarity</code> + <code>--greedy-clarity</code>; DIVERSITY beats pure clarity</td></tr>
+    <tr><td><strong>beam is NOT pool-monotone</strong></td><td>adding 312 shuffle members WORSENED 6/10 corpora — MORE members ≠ better</td></tr>
+</table>
+
+<h2 style="margin-top:2.5rem;"><span class="accent-bar">&#8203;</span> 6. Reproducible Reference Run</h2>
+
+<p>The current recommended configuration — <strong>no <code>--max</code></strong> (fewer members
+= faster inference, which matters for the DRAM chip), strict beam on the m1t=105 corpus
+(<code>--beam 5 --filter @</code>, the pipeline members only). The <code>--member-out</code>
+file feeds the IFC delivery path (export → model.otto → import). The v8 model is
+<strong>self-describing</strong>: the import reads maj1-thresh=105 from the model itself
+(bugfix 2026-08-09 — before, the import fell back to CLI defaults and lost ~50pp):</p>
+
+<table class="compare-table">
+    <tr><th>Step</th><th>Config</th><th>eval</th><th>err</th><th>Members</th></tr>
+    <tr class="highlight-row"><td>Merge search</td><td><code>scores-H196-E10-M1-105-INT32 --beam 5 --filter @</code></td><td><strong>91.10%</strong></td><td>890</td><td><strong>16</strong></td></tr>
+    <tr class="highlight-row"><td>Retrain (IFC export)</td><td><code>--member-file fashion-105.member --export model/</code></td><td>91.10%</td><td>909</td><td>16</td></tr>
+    <tr class="highlight-row"><td><strong>IFC inference</strong></td><td><code>--import model/ --evalN 10000</code> (no CLI flags)</td><td><strong>91.10%</strong></td><td>890</td><td>16</td></tr>
+    <tr><td>alt.</td><td><code>scores-H196-E10-M1-104-INT32 --beam 10 --filter not shuffle</code></td><td>91.09%</td><td>891</td><td>14</td></tr>
+    <tr><td>alt.</td><td><code>scores-H196-E10-M1-106-INT32 --beam 10</code></td><td>91.11%</td><td>889</td><td>21</td></tr>
+</table>
+
+<p><strong>End-to-end: 16 members, 91.10% IFC-verified — zero train-merge gap.</strong>
+The merge search (91.10%), the retrained members (91.10%) and the IFC inference
+(91.10%) are identical: the v8 model carries the exact maj1-thresh=105
+calibration and the trainer runs MODE_INT32 (bit-exact, chip-faithful). The
+delivered chip runs the 16-member ensemble with ~18 s inference on 10k samples.</p>
+
+<h2 style="margin-top:2.5rem;"><span class="accent-bar">&#8203;</span> 7. Technology Boundary</h2>
+
+<p>Bit-Voting (<code>-DKI_BITVOTING</code>, identity W0, direct pixel-bit → class) is the
+<strong>lower technology bound</strong> for the DRAM chip: no W0, no majX. Its sweep is blazing
+fast (221 members in ~1 min with the PRF trainer).</p>
+
+<table class="compare-table">
+    <tr><th>Run</th><th>members</th><th>eval</th><th>err</th></tr>
+    <tr><td><code>--beam 10 --max</code></td><td>17</td><td>88.94%</td><td>1106</td></tr>
+    <tr class="highlight-row"><td><code>--beam 10 --max --min-gain 0</code></td><td>24</td><td><strong>88.95%</strong></td><td><strong>1105</strong></td></tr>
+</table>
+
+<footer style="margin-top:3rem; padding-top:1.5rem; border-top:1px solid #ddd; color:var(--mid-gray); font-size:0.85rem;">
+    <p>Forward-Prop Research — DRAM-native bit-logic classification. All results INT32 bit-exact, reproducible via <code>run-grep --date-start 2026-08-09 | run-sort eval</code>.</p>
+</footer>
+
+    </div>
+</main>
+
+</body>
+</html>

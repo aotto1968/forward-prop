@@ -99,7 +99,7 @@ static const char *target_init_str(void);
  * are in the shared header ausgelagert: */
 #include "../lib/ki-encoding.h"
 
-/* ── Parser: string → bit position (for --channels) ────────────
+/* ── Parser: string → bit position (for --channel) ────────────
  * Returns bit index or -1 if not a color name.
  * Handles: mnist,r,g,b,y,601,lum,l,rg,by,yl,709,auge,packed,full
  */
@@ -111,17 +111,17 @@ static inline int ki_color_parse(const char *tok) {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
- * MODE_FLOAT32 — Single computation-mode switch (before ki-local.h)
+ * MODE_FLT32 — Single computation-mode switch (before ki-local.h)
  * ═══════════════════════════════════════════════════════════════════════
- * Define -DMODE_FLOAT32 to enable IEEE 754 float counters/scores/types.
+ * Define -DMODE_FLT32 to enable IEEE 754 float counters/scores/types.
  * Derived defines (COUNTER_TYPE, COUNTER_TYPE_IS_FLOAT, SCORE_TYPE) are
  * all set centrally from this one switch.
  *
- * Default (no -DMODE_FLOAT32): int32_t counters, int64_t scores.
+ * Default (no -DMODE_FLT32): int32_t counters, int64_t scores.
  *
  * NOTE: Individual -D overrides (COUNTER_TYPE, SCORE_TYPE) still work.
  */
-#ifdef MODE_FLOAT32
+#ifdef MODE_FLT32
 /* Legacy alias — float is now the default, this is a no-op. */
 #endif
 
@@ -273,6 +273,8 @@ typedef struct {
     int    member_spec_count;
     float  lr;              			/* Step size (--lr, default: 0.05) */
     float  lr_min;          			/* Min LR fraction (--lr-min, default: 0.1) */
+    float  eff_lambda;      			/* --eff-lambda F: member-count penalty for the eff= score
+                                           (eff = eval - lambda*(members-1), default 0.02) */
     int    lr_step;         			/* round(aa.lr * (1<<OT_PRECISION)) */
     int    threadN;         			/* OpenMP threads (--threadN, default: 8) */
     int    debug_h0;        			/* --debug-h0: per-neuron debug */
@@ -292,8 +294,8 @@ typedef struct {
     int    ensembleN;       			/* --ensembleN N: independent W0 copies (default: 1) */
     int    splitVN;         			/* --splitVN N: vertical H split (default: 1) */
     int    splitHN;         			/* --splitHN N: horizontal NC split (default: 1) */
-    int    channel;        			/* --channels bitmask of selected blocks */
-    int    channel_explicit; 			/* 1=--channels was set explicitly */
+    int    channel;        			/* --channel bitmask of selected blocks */
+    int    channel_explicit; 			/* 1=--channel was set explicitly */
     int    packedB;    			        /* 1=4px/cont (256/blk), 0=1px/cont (1024/blk) */
     int    debug_flat;      			/* 1=all selected blocks in one flat array, 0=separate members */
     int    debug_binarize;  			/* 1=threshold block values at 128 → 0x00/0xFF per pixel */
@@ -319,12 +321,19 @@ typedef struct {
     int    debug_confusion_all; 		/* --debug-confusion-matrix-all: every epoch */
     int    debug_member;        		/* --debug-member: verbose member-by-member output (seq only) */
     int    debug_member_stats;  		/* --debug-member-stats: per-member quality table at end */
-    int    debug_gb;           		/* --debug-gb: show gb-cache load/save messages */
+    int    debug_cache;         		/* --debug-cache: log EVERY cache create/use (xform cache, cex *.pre, gb cache) */
+    int    no_ens_cache;        		/* --no-ens-cache: skip the cex_*.pre FILE cache —
+                                           real-live: compute inputs from raw data every run
+                                           (the in-memory xform cache stays — it builds from
+                                           the run's data, 2026-08-06) */
+    int    xform_cache_level;   		/* --xform-cache-level 1|2: 1=transform only (level 1), 2=+block cache (level 2, default) */
     char   member_scores_path[512]; 	/* --debug-member-stats PATH: scores file (default: member-scores.bin) */
     char   filter_str[128];    			/* --filter "0,1,airplan,cat": raw string */
     int    filter_mask;        			/* computed bitmask from filter_str (0 = no filter) */
     uint64_t xforms;             		/* bitmask of active transforms (--xform, default: 1<<KI_XFORM_ID, 64-bit for 34+ xforms) */
-#define KI_XFORM_LIST_MAX 128
+#define KI_XFORM_LIST_MAX 512           /* xform_list[] holds base IDs AND pipe IDs
+                                           (>= KI_XFORM_COUNT); 128 overflowed with
+                                           pipeline-heavy corpora (2026-08-09) */
     int    xform_list[KI_XFORM_LIST_MAX];/* xform IDs as entered (preserves duplicates) */
     int    xform_list_count;            /* number of entries in xform_list */
 } ki_Args;
@@ -343,6 +352,13 @@ enum ki_MajMode {
 #define KI_ARGS_EXTERN extern
 #endif
 KI_ARGS_EXTERN ki_Args aa;
+
+/* ── Cache debug logging gate ──────────────────────────────────
+ * --debug-cache (2026-08-05) logs EVERY cache event: the in-memory
+ * xform cache (ki-load.h), the cex_*.pre file cache (disk load/save) and
+ * the gb cache (data/gb). Replaced the old --debug-gb flag (removed
+ * 2026-08-05). */
+static inline int ki_debug_cache(void) { return aa.debug_cache; }
 
 /* ── Unified encoding display (reads aa.enc_array directly) ───────── */
 static inline void ki_print_encodings(void) {
@@ -400,6 +416,33 @@ static inline void rebuild_enc_array(void) {
             aa.enc_count++;
         }
     }
+    /* ── STABLE ENCODING ORDER (bug 2026-08-02) ──────────────
+     * enc_array order defines multi_enc_blk_off[] → each member's container
+     * offset (slc_off) in the shared input buffer. Without sorting, the order
+     * depends on the member-spec ARRIVAL order (--member-file order vs
+     * --xform/--encoding product order) — the SAME member spec then points to
+     * DIFFERENT containers depending on which other members are loaded, i.e.
+     * a member is not autonomous: its score changed 95.77% (.ens from sweep)
+     * vs 95.3% (retrain from --member-file) for identical specs.
+     * Sort deterministically by (type-name, width, color) so the buffer layout
+     * is independent of the member list order. */
+    if (aa.enc_count > 1) {
+        /* insertion sort (stable, small N) by encoding name then width */
+        for (int i = 1; i < aa.enc_count; i++) {
+            ki_EncSlot key = aa.enc_array[i];
+            int j = i - 1;
+            while (j >= 0) {
+                const char *a = ki_enc_name_short((int)aa.enc_array[j].type);
+                const char *b = ki_enc_name_short((int)key.type);
+                int c = strcmp(a, b);
+                if (c > 0 || (c == 0 && aa.enc_array[j].width > key.width)) {
+                    aa.enc_array[j + 1] = aa.enc_array[j];
+                    j--;
+                } else break;
+            }
+            aa.enc_array[j + 1] = key;
+        }
+    }
     /* Fallback: kein member_spec → ein Default-Encoding */
     if (aa.enc_count == 0 && aa.member_spec_count == 0) {
         int def_enc = aa.debug_binarize ? KI_ENC_LIN7 : KI_ENC_RAW;
@@ -445,8 +488,8 @@ static const struct _comp_entry _comp_table[] = {
     {"--seed-file",                     "file",  NULL},
     {"--seed-splitmix",                 "none",  NULL},
     {"--seed-member",                   "token", "once const incr"},
-    {"--channels",                      "token", "all packed full flat auge diff rgb grey h s c edge bin lbp dog var dir range lbp-rg lbp-rb lbp-gb mnist r g b"},
-    {"--encoding",                      "token", "all performance performance-maj1 performance-1 latest latest-2 raw lin7 lin8 down up mid log exp sig sqrt cbrt gamma tri inv-exp"},
+    {"--channel",                      "token", "@color"},
+    {"--encoding",                      "token", "@enc"},
     {"--encoding-sizeN",                "token", "0 8 12 16 24 32"},
     {"--export-merge-scores",           "dir",   NULL},
     {"--export-scores",                 "file",  NULL},
@@ -475,10 +518,12 @@ static const struct _comp_entry _comp_table[] = {
     {"--debug-epoch",                       "none",  NULL},
     {"--debug-member",                      "none",  NULL},
     {"--debug-member-stats",                "file",  NULL},
-    {"--debug-gb",                          "none",  NULL},
+    {"--debug-cache",                       "none",  NULL},
+    {"--no-ens-cache",                      "none",  NULL},
+    {"--xform-cache-level",                 "token", "1 2"},
     {"--sweep",                             "none",  NULL},
     {"--force",                             "none",  NULL},
-    {"--xform",              "token", "all shift augmentation performance performance-2 id hflip vflip dflip1 dflip2 rot90 rot22 rot67 rot45 spiral colswap-3-4 colswap-2-4 colswap-1-4 avg2 avg3 avg4 sft-u1 sft-u2 sft-u3 sft-d1 sft-d2 sft-d3 sft-l1 sft-l2 sft-l3 sft-r1 sft-r2 sft-r3 shuffle shuffle1 shuffle2 shuffle3 shuffle4 shuffle5 shuffle6 shuffle7 shuffle8 shuffle9 shuffle10"},
+    {"--xform",              "token", "@xform"},
     {"--filter",                        "token", NULL},
     {"--shuffle",                       "none",  NULL},
     {"--help",                          "none",  NULL},
@@ -490,10 +535,117 @@ static const struct _comp_entry _comp_table[] = {
     {NULL, NULL, NULL}
 };
 
+/* ── Dynamic token lists for --completion ─────────────────────────
+ * Values are built from the *_table structures (single source of
+ * truth) instead of hand-maintained strings that drift out of sync.
+ * Markers used in _comp_table values:
+ *   "@color" → control tokens + ki_color_table + ki_color_alias_table
+ *   "@enc"   → control tokens + ki_enc_table + ki_enc_alias_table
+ *   "@xform" → control tokens + ki_xform_table + ki_xform_alias_table
+ * Duplicates (case-insensitive, e.g. "y" vs "Y") are dropped. */
+static int comp_name_exists(const char *buf, const char *name) {
+    size_t nl = strlen(name);
+    for (const char *p = buf; *p; ) {
+        const char *sp = p;
+        while (*sp && *sp != ' ') sp++;
+        if ((size_t)(sp - p) == nl && strncasecmp(p, name, nl) == 0) return 1;
+        p = (*sp) ? sp + 1 : sp;
+    }
+    return 0;
+}
+
+/* Append name lower-cased (table names like "Y"/"AL" → "y"/"al") so the
+ * completion list matches what users type (bash matches case-sensitively). */
+static void comp_add_lower(char *buf, size_t *used, size_t sz, const char *name) {
+    if (comp_name_exists(buf, name)) return;  /* case-insensitive dedup */
+    size_t l = strlen(name);
+    if (*used + l + 2 >= sz) return;
+    if (*used) buf[(*used)++] = ' ';
+    for (size_t i = 0; i < l; i++)
+        buf[(*used)++] = (char)tolower((unsigned char)name[i]);
+    buf[*used] = '\0';
+}
+
+static void comp_tokens_build(const char *marker, char *buf, size_t sz) {
+    buf[0] = '\0';
+    size_t used = 0;
+#define COMP_ADD(_s) comp_add_lower(buf, &used, sz, (_s))
+    if (strcmp(marker, "@color") == 0) {
+        COMP_ADD("all"); COMP_ADD("packed"); COMP_ADD("full"); COMP_ADD("flat");
+        for (size_t _i = 0; _i < sizeof(ki_color_table)/sizeof(ki_color_table[0]); _i++)
+            COMP_ADD(ki_color_table[_i].name);
+        for (size_t _i = 0; _i < sizeof(ki_color_alias_table)/sizeof(ki_color_alias_table[0]); _i++)
+            COMP_ADD(ki_color_alias_table[_i].name);
+    } else if (strcmp(marker, "@enc") == 0) {
+        COMP_ADD("all"); COMP_ADD("latest");
+        for (size_t _i = 0; _i < sizeof(ki_enc_table)/sizeof(ki_enc_table[0]); _i++)
+            COMP_ADD(ki_enc_table[_i].name);
+        for (size_t _i = 0; _i < sizeof(ki_enc_alias_table)/sizeof(ki_enc_alias_table[0]); _i++)
+            COMP_ADD(ki_enc_alias_table[_i].name);
+    } else if (strcmp(marker, "@xform") == 0) {
+        COMP_ADD("all");
+        for (size_t _i = 0; _i < sizeof(ki_xform_table)/sizeof(ki_xform_table[0]); _i++)
+            COMP_ADD(ki_xform_table[_i].name);
+        for (size_t _i = 0; _i < sizeof(ki_xform_alias_table)/sizeof(ki_xform_alias_table[0]); _i++)
+            COMP_ADD(ki_xform_alias_table[_i].name);
+    }
+#undef COMP_ADD
+}
+
+/* ── Completion handler ───────────────────────────────────────────
+ * --completion [--<flag>] — the decision which source answers lives
+ * HERE, not in the arg parser:
+ *   - flags with an "@" marker in _comp_table → token list built
+ *     dynamically from the *_table / *_alias_table structures
+ *     (--channel, --encoding, --xform; single source of truth)
+ *   - all other flags → static values from _comp_table            */
+static void ki_completion_print(const char *target) {
+    const struct _comp_entry *e;
+    for (e = _comp_table; e->flag; e++) {
+        if (strcmp(e->flag, target) != 0) continue;
+        if (e->values && e->values[0] == '@') {
+            char _tb[2048];
+            comp_tokens_build(e->values, _tb, sizeof(_tb));
+            printf("%s %s\n", e->type, _tb);
+        } else if (e->values) {
+            printf("%s %s\n", e->type, e->values);
+        } else {
+            printf("%s\n", e->type);
+        }
+        return;
+    }
+    fprintf(stderr, "[ERROR] --completion: unknown flag '%s'\n", target);
+}
+
+static void ki_completion_dispatch(int argc, char **argv, int *pi) {
+    /* argv[*pi] == "--completion"; an optional next arg is the target flag */
+    if (*pi + 1 < argc && argv[*pi + 1][0] == '-' && argv[*pi + 1][1] == '-') {
+        ki_completion_print(argv[++(*pi)]);
+        exit(0);
+    }
+    /* --completion alone → all valid flag names */
+    for (const struct _comp_entry *e = _comp_table; e->flag; e++)
+        puts(e->flag);
+    exit(0);
+}
+
 /* ── Xform list insertion (preserves duplicates) ───────────────── */
 static inline void ki_xform_list_add(int xf) {
     if (aa.xform_list_count < KI_XFORM_LIST_MAX)
         aa.xform_list[aa.xform_list_count++] = xf;
+}
+
+/* ── Xform bitmask set — SAFE for pipe IDs >= 64 ──────────────────
+ * aa.xforms is uint64_t, but pipe IDs run up to KI_XFORM_COUNT +
+ * KI_XFORM_PIPE_MAX-1 (41 + 511 = 552) — `1ull << xf` with xf >= 64 is
+ * undefined behavior. The bitmask is only used for the SETUP display
+ * ("show_xform", "xform_str") and the empty-check; the actual xform
+ * selection runs through aa.xform_list[]. So a pipe ID beyond bit 63 is
+ * simply NOT set in the bitmask — the list still carries it. The
+ * empty-check must then use xform_list_count, not the bitmask.
+ * Fix 2026-08-09 (too many pipelines overflow, ki-common.h). */
+static inline void ki_xform_bit_set(int xf) {
+    if (xf >= 0 && xf < 64) aa.xforms |= (1ull << (unsigned)xf);
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
@@ -501,10 +653,21 @@ static inline void ki_xform_list_add(int xf) {
  * ═══════════════════════════════════════════════════════════════════════
  * Pipelines are stored as virtual xform IDs >= KI_XFORM_COUNT.
  * The bitmask aa.xforms uses bits up to KI_XFORM_COUNT + pipe_count - 1.
- * KI_XFORM_BUF_MAX: max slots for xform/pipe data buffers (must cover pipes). */
+ * KI_XFORM_BUF_MAX: max slots for xform/pipe data buffers (must cover pipes).
+ * DIMENSIONING (2026-08-09): 128 pipes overflowed on real sweep corpora —
+ * the run-sweep "@"-cross-product (sweep@X = 16 base xforms × N suffixes)
+ * produced 144 distinct pipelines in scores-H196-E10-M1-106-INT32, breaking
+ * the merge with "[ERROR] too many pipelines". 512 covers 16 base × 32
+ * suffixes; BUF_MAX and LIST_MAX grow in lockstep. */
 #define KI_XFORM_PIPE_MAX_STEPS 8
-#define KI_XFORM_PIPE_MAX 128
-#define KI_XFORM_BUF_MAX 64
+#define KI_XFORM_PIPE_MAX 512
+/* X_xform data-buffer slots must cover ALL xforms: table xforms (0..KI_XFORM_COUNT-1)
+ * PLUS up to KI_XFORM_PIPE_MAX pipe IDs (KI_XFORM_COUNT .. KI_XFORM_COUNT+511).
+ * 64 was too small — member files with many @-pipes (e.g. 129 distinct xforms in
+ * a top-50% MNIST list) produced pipe IDs >= 64, making the lazy-load gate
+ * `xf < KI_XFORM_BUF_MAX` skip loading while `X_xform[xf]` was read out of bounds
+ * → garbage input_buf → SIGSEGV in h0_neuron (bug 2026-08-01). */
+#define KI_XFORM_BUF_MAX 1024
 
 static int _xf_pipe_steps[KI_XFORM_PIPE_MAX][KI_XFORM_PIPE_MAX_STEPS];
 static int _xf_pipe_nsteps[KI_XFORM_PIPE_MAX];
@@ -614,7 +777,46 @@ static inline int ki_member_spec_add_raw(int col, int enc_type, int enc_width,
     return 0;
 }
 
-/* ── Generate member specs from --xform × --encoding × --channels product.
+/* ── Stable xform-major sort of member_spec[].
+ * Groups all members of one xform (incl. @-pipes, which share a pipe_id)
+ * together so the trainer can hold only ONE input buffer per xform group
+ * and free it on group switch (see mlp-bin32-otto-trn-seq.c cur_xf_buf).
+ * --member-file order is file order (unsorted); without sorting the
+ * CIFAR sweep-style runs OOM (every lazy-loaded xform buffer stays
+ * resident forever, 461 members × ~20 xforms × ~2.6 GB > 50 GB).
+ * Insertion sort is stable: within one xform group the members are ordered
+ * channel-major then encoding-major — sort key (xform_id, color, enc_type,
+ * enc_width, hn_idx). Channel-major grouping was added 2026-08-05: the bare
+ * --encoding expansion produced a mixed order (R:raw,R:lin,R:exp,G:raw,B:raw,
+ * G:lin,B:lin,...) instead of xform → channel → encoding.
+ * Called by ALL spec sources: ki_member_parse (--member),
+ * ki_member_file_parse (--member-file) and
+ * ki_member_spec_generate_from_product (--xform/--encoding product).
+ * See: plans/plan-2026-07-31-sweep-xform-memory.md
+ *      plans/plan-2026-08-05-xform-cache.md */
+static inline int ki_member_spec_less(const ki_MemberSpec *a,
+                                      const ki_MemberSpec *b) {
+    if (a->xform_id != b->xform_id) return a->xform_id < b->xform_id;
+    if (a->color    != b->color)    return a->color    < b->color;
+    if (a->enc_type != b->enc_type) return a->enc_type < b->enc_type;
+    if (a->enc_width != b->enc_width) return a->enc_width < b->enc_width;
+    return a->hn_idx < b->hn_idx;
+}
+static inline void ki_member_spec_sort_xform(void) {
+    int n = aa.member_spec_count;
+    if (n < 2) return;
+    for (int i = 1; i < n; i++) {
+        ki_MemberSpec sp = aa.member_spec[i];
+        int j = i - 1;
+        while (j >= 0 && !ki_member_spec_less(&aa.member_spec[j], &sp)) {
+            aa.member_spec[j + 1] = aa.member_spec[j];
+            j--;
+        }
+        aa.member_spec[j + 1] = sp;
+    }
+}
+
+/* ── Generate member specs from --xform × --encoding × --channel product.
  * Called AFTER ki_parse_args() when no --member/--member-file was given.
  * Populates aa.member_spec[] from aa.xform_list[], aa.enc_array[], aa.channel. */
 static inline int ki_member_spec_generate_from_product(void) {
@@ -668,6 +870,7 @@ static inline int ki_member_spec_generate_from_product(void) {
     printf("  [PRODUCT] %d members (%d xforms × %d enc × %d HN)\n",
            aa.member_spec_count,
            aa.xform_list_count, n_enc, aa.splitHN);
+    ki_member_spec_sort_xform();
     return aa.member_spec_count;
 }
 
@@ -732,6 +935,7 @@ static inline int ki_member_parse(void) {
         fprintf(stderr, "[ERROR] --member: no valid members found\n");
         return -1;
     }
+    ki_member_spec_sort_xform();  /* xform-major order (memory control, see above) */
     printf("  [MEMBER] %d explicit members\n", n);
     return n;
 }
@@ -769,8 +973,46 @@ static inline int ki_member_file_parse(void) {
     fclose(f);
     int n = aa.member_spec_count;
     if (n == 0) { fprintf(stderr, "[ERROR] --member-file: no valid members found in %s\n", aa.member_file); return -1; }
+    ki_member_spec_sort_xform();  /* xform-major order (memory control, see above) */
     printf("  [MEMBER-FILE] %s  (%d members)\n", aa.member_file, n);
     return n;
+}
+
+/* ── Adopt ensemble DEFAULTS from a --member-file META header ──────────
+ * Called BEFORE ki_parse_args so that values from the file (written by
+ * merge-ensemble --member-out) become the DEFAULTS; explicit CLI options
+ * still win because they are applied afterwards (feature 2026-08-10).
+ * Reads only the `# META: H=.. EP=.. VN=.. HN=.. MAJ=.. MAJ1_THRESH=..`
+ * line — the member spec lines are handled by ki_member_file_parse(). */
+static inline void ki_member_file_apply_meta(void) {
+    if (!aa.member_file[0]) return;
+    FILE *f = fopen(aa.member_file, "r");
+    if (!f) return;
+    char line[256];
+    while (fgets(line, sizeof(line), f)) {
+        if (strncmp(line, "# META:", 7) != 0) continue;
+        int _H = 0, _EP = 0, _VN = 0, _HN = 0, _MAJT = -999;
+        char _MAJ[8] = "";
+        if (sscanf(line, "# META: H=%d EP=%d VN=%d HN=%d MAJ=%7s MAJ1_THRESH=%d",
+                   &_H, &_EP, &_VN, &_HN, _MAJ, &_MAJT) < 4) break;
+        if (_H > 0) aa.hidden = _H;
+        if (_EP > 0) aa.epochs = _EP;
+        if (_VN > 0) aa.splitVN = _VN;
+        if (_HN > 0) aa.splitHN = _HN;
+        if (_MAJ[0] && strcmp(_MAJ, "-1") != 0) {
+            if (strcmp(_MAJ, "1r") == 0)      aa.maj_mode = KI_MAJ_1R;
+            else if (strcmp(_MAJ, "1p") == 0) aa.maj_mode = KI_MAJ_1P;
+            else if (strcmp(_MAJ, "1rp") == 0)aa.maj_mode = KI_MAJ_1RP;
+            else if (strcmp(_MAJ, "3") == 0)  aa.maj_mode = KI_MAJ_3;
+            else if (strcmp(_MAJ, "7") == 0)  aa.maj_mode = KI_MAJ_7;
+            else                               aa.maj_mode = KI_MAJ_1;
+        }
+        if (_MAJT >= -2) aa.maj1_thresh = _MAJT;
+        printf("  [MEMBER-FILE] meta defaults: H=%d EP=%d VN=%d HN=%d MAJ=%s MAJ1_THRESH=%d\n",
+               _H, _EP, _VN, _HN, _MAJ, _MAJT);
+        break;
+    }
+    fclose(f);
 }
 
 /* ── Apply xform (or pipe) to a raw image buffer ────────────────────
@@ -833,7 +1075,13 @@ static inline uint32_t gb_cache_hash(const uint32_t *w0_first4,
                                        const char *enc_name, int enc_width,
                                        const char *xf_name) {
     uint32_t h = (uint32_t)KI_DATASET_ID;
-    for (int i = 0; i < 4; i++) h = h * 31 + w0_first4[i];
+    /* w0_first4 may be NULL in KI_BITVOTING mode (no W0) — use a fixed
+     * proxy so the gb cache key stays deterministic per mode. */
+    if (w0_first4) {
+        for (int i = 0; i < 4; i++) h = h * 31 + w0_first4[i];
+    } else {
+        h = h * 31 + 0x42495654u;   /* "BIVT" — Bit-Voting marker */
+    }
     h = h * 31 + (uint32_t)total_train;
     h = h * 31 + (uint32_t)total_eval;
     h = h * 31 + (uint32_t)H_local;
@@ -912,7 +1160,7 @@ static inline void ki_parse_args(int argc, char *argv[]) {
             printf("                    const   : same W0 per ensemble (tests color diversity).\n");
             printf("                    incr    : unique seed per member.\n");
             printf("  ---------------------------------------------------------------------------------------------\n");
-            printf("  --channels [packed|full,][flat,]...                                             (default: %s)\n", color_str());
+            printf("  --channel [packed|full,][flat,]...                                             (default: %s)\n", color_str());
             printf("                    See --help-channels for details\n");
             printf("  --encoding [all|%s]  (default: latest)\n", ki_enc_names_all());
             printf("                    See --help-encoding for details\n");
@@ -943,13 +1191,14 @@ static inline void ki_parse_args(int argc, char *argv[]) {
             printf("  --debug-confusion-matrix?-all?  Confusion matrix table (end only)               (default: off)\n");
             printf("  --debug-member    Verbose member-by-member output with channel/encoding/xform     (default: off)\n");
             printf("  --debug-member-stats [FILE]  Per-member quality table (ensemble gain, diversity)     (default: off)\n");
-            printf("  --debug-gb        Show gb-cache load/save messages                               (default: off)\n");
+            printf("  --debug-cache     Log EVERY cache create/use (xform cache, cex *.pre, gb cache)   (default: off)\n");
+            printf("  --xform-cache-level N  1=transform only, 2=+block cache (CIFAR, ~2 GB slot)      (default: 2)\n");
             printf("  --filter #,#,... or name,name,...  Restrict to specific classes only            (default: none)\n");
             printf("                    See --help-filter for class names\n");
             printf("  --shuffle         Shuffle data before train/eval split                          (default: off)\n");
             exit(1);
         } else if (strcmp(argv[i], "--help-channels") == 0) {
-            printf("--channels [packed|full,][flat,]...                                             (default: %s)\n", color_str());
+            printf("--channel [packed|full,][flat,]...                                             (default: %s)\n", color_str());
 #if KI_COLORS > 1
             printf("  Channel selection (comma-sep).  Encoding via --encoding.\n");
             printf("  packed/full   : 4px/cont or 1px/cont,\n");
@@ -1090,28 +1339,7 @@ static inline void ki_parse_args(int argc, char *argv[]) {
             printf("           --xform avg4,rot45@avg4,rot90@avg4  → 3× members\n");
             exit(1);   /* INTENTIONAL: non-zero so run-research.sh suppresses logging */
         } else if (strcmp(argv[i], "--completion") == 0) {
-            if (i + 1 < argc && argv[i+1][0] == '-' && argv[i+1][1] == '-') {
-                /* --completion --<flag> → print hint for that flag */
-                const char *target = argv[++i];
-                const struct _comp_entry *e;
-                for (e = _comp_table; e->flag; e++) {
-                    if (strcmp(e->flag, target) == 0) {
-                        if (e->values)
-                            printf("%s %s\n", e->type, e->values);
-                        else
-                            printf("%s\n", e->type);
-                        exit(0);
-                    }
-                }
-                fprintf(stderr, "[ERROR] --completion: unknown flag '%s'\n", target);
-                exit(1);
-            } else {
-                /* --completion (alone) → print all valid flag names */
-                const struct _comp_entry *e;
-                for (e = _comp_table; e->flag; e++)
-                    puts(e->flag);
-                exit(0);
-            }
+            ki_completion_dispatch(argc, argv, &i);
         } else if (strcmp(argv[i], "--dry-run") == 0) {
             aa.dry_run = 1;
             aa.epochs  = 0;
@@ -1136,6 +1364,12 @@ static inline void ki_parse_args(int argc, char *argv[]) {
             aa.evalN = atoi(argv[++i]);
         } else if (strcmp(argv[i], "--lr") == 0 && i + 1 < argc) {
             aa.lr = (float)atof(argv[++i]);
+        } else if (strcmp(argv[i], "--eff-lambda") == 0 && i + 1 < argc) {
+            aa.eff_lambda = (float)atof(argv[++i]);
+            if (aa.eff_lambda < 0.0f) {
+                fprintf(stderr, "[WARN] --eff-lambda must be >= 0 — clamping to 0\n");
+                aa.eff_lambda = 0.0f;
+            }
         } else if (strcmp(argv[i], "--threadN") == 0 && i + 1 < argc) {
             aa.threadN = atoi(argv[++i]);
             if (aa.threadN < 1) aa.threadN = 1;
@@ -1276,8 +1510,17 @@ static inline void ki_parse_args(int argc, char *argv[]) {
             aa.debug_confusion_all = 1;
         } else if (strcmp(argv[i], "--debug-member") == 0) {
             aa.debug_member = 1;
-        } else if (strcmp(argv[i], "--debug-gb") == 0) {
-            aa.debug_gb = 1;
+        } else if (strcmp(argv[i], "--debug-cache") == 0) {
+            aa.debug_cache = 1;
+        } else if (strcmp(argv[i], "--no-ens-cache") == 0) {
+            aa.no_ens_cache = 1;
+        } else if (strcmp(argv[i], "--xform-cache-level") == 0 && i + 1 < argc) {
+            int lvl = atoi(argv[++i]);
+            if (lvl != 1 && lvl != 2) {
+                fprintf(stderr, "[ERROR] --xform-cache-level: expected 1 or 2, got %d\n", lvl);
+                exit(1);
+            }
+            aa.xform_cache_level = lvl;
         } else if (strcmp(argv[i], "--debug-member-stats") == 0) {
             aa.debug_member_stats = 1;
             /* Optional: next arg not starting with -- is the filename */
@@ -1382,7 +1625,7 @@ static inline void ki_parse_args(int argc, char *argv[]) {
                         while (*_t == ' ' || *_t == '\t') _t++;
                         int _x = ki_xform_parse(_t);
                         if (_x >= 0) {
-                            aa.xforms |= (1ull << _x);
+                            ki_xform_bit_set(_x);
                             ki_xform_list_add(_x);
                         }
                     }
@@ -1414,12 +1657,12 @@ static inline void ki_parse_args(int argc, char *argv[]) {
                                         _pipe_token, _pre, _suf);
                                 exit(1);
                             }
-                            aa.xforms |= (1ull << (unsigned)_pid);
+                            ki_xform_bit_set(_pid);
                             ki_xform_list_add(_pid);
                             _has_pipe = 1;
                         }
                         if (!_has_pipe) {
-                            aa.xforms |= (1ull << KI_XFORM_ID);
+                            ki_xform_bit_set(KI_XFORM_ID);
                             ki_xform_list_add(KI_XFORM_ID);
                         }
                     } else {
@@ -1429,13 +1672,13 @@ static inline void ki_parse_args(int argc, char *argv[]) {
                             fprintf(stderr, "[ERROR] --xform: bad pipeline '%s'\n", tok);
                             exit(1);
                         }
-                        aa.xforms |= (1ull << (unsigned)_pid);
+                        ki_xform_bit_set(_pid);
                         ki_xform_list_add(_pid);
                     }
                 } else {
                     int xf = ki_xform_parse(tok);
                     if (xf >= 0) {
-                        aa.xforms |= (1ull << xf);
+                        ki_xform_bit_set(xf);
                         ki_xform_list_add(xf);
                     } else {
                         fprintf(stderr, "[ERROR] --xform: unknown transform '%s'. "
@@ -1448,7 +1691,10 @@ static inline void ki_parse_args(int argc, char *argv[]) {
                     }
                 }
             }
-            if (aa.xforms == 0) {
+            /* Empty check via the LIST, not the bitmask: pipe IDs >= 64 are
+             * never set in aa.xforms (ki_xform_bit_set guard) — the list is
+             * the authoritative source. Fix 2026-08-09. */
+            if (aa.xform_list_count == 0) {
                 fprintf(stderr, "[ERROR] --xform: at least one transform required\n");
                 exit(1);
             }
@@ -1505,7 +1751,7 @@ static inline void ki_parse_args(int argc, char *argv[]) {
                         "Valid: count, random, inverse, uniform, prior, laplace, dampen\n", val);
                 exit(1);
             }
-        } else if (strcmp(argv[i], "--channels") == 0 && i + 1 < argc) {
+        } else if (strcmp(argv[i], "--channel") == 0 && i + 1 < argc) {
             const char *val = argv[++i];
             /* 5-pass iterative alias expansion (like --xform / --encoding) */
             char buf[4096];
@@ -1548,12 +1794,12 @@ static inline void ki_parse_args(int argc, char *argv[]) {
                 }
                 int bit = ki_color_parse(tok);
                 if (bit >= 0) { mask |= (1 << bit); continue; }
-                fprintf(stderr, "[ERROR] --channels: unknown '%s'. "
+                fprintf(stderr, "[ERROR] --channel: unknown '%s'. "
                         "Valid: %s\n", tok, ki_color_names_all());
                 exit(1);
             }
             if (mask == 0) {
-                fprintf(stderr, "[ERROR] --channels: at least one channel required\n");
+                fprintf(stderr, "[ERROR] --channel: at least one channel required\n");
                 exit(1);
             }
             aa.channel = mask;
@@ -1925,16 +2171,41 @@ static inline float ki_lr_schedule(int epoch, int total_epochs, int warmup,
  * Use -DMODE_INT32 for int32_t fixed-point mode.
  */
 #ifndef COUNTER_TYPE_IS_FLOAT
-#define COUNTER_TYPE_IS_FLOAT 1
+# define COUNTER_TYPE_IS_FLOAT 1
 #endif
 #ifndef COUNTER_TYPE
-#define COUNTER_TYPE float
+# define COUNTER_TYPE float
 #endif
 
-/* Score accumulator type: float by default (overflow-safe), int64_t for int32 mode. */
+/* Score accumulator type: double by default — float32 drifts on large
+ * ensemble sums (scores reach ~1e9 > 2^24; the merge selection changed
+ * 29→44 members with exact accumulation, evidence 2026-08-06).
+ * MODE_INT32 sets int64_t. Explicit -DSCORE_TYPE=float reproduces the
+ * legacy float32 behavior. */
 #ifndef SCORE_TYPE
-#define SCORE_TYPE float
+# define SCORE_TYPE double
 #endif
+
+/* ── Real-type labels (shared by trainer AND merge) ───────────────────
+ * COUNTER_TYPE / SCORE_TYPE can be overridden per build (-D…); the setup
+ * labels must reflect the REAL types, not a hardcoded 2-way assumption
+ * (float vs int32). Precision matters: float32 vs double vs int64 give
+ * different results (analysis 2026-08-05/06). */
+static inline const char *ki_counter_type_str(void) {
+    return _Generic((COUNTER_TYPE)0,
+        float:   "IEEE 754 float32",
+        double:  "IEEE 754 double",
+        int32_t: "int32_t",
+        int64_t: "int64_t",
+        default: "?");
+}
+static inline const char *ki_score_type_str(void) {
+    return _Generic((SCORE_TYPE)0,
+        float:   "IEEE 754 float32",
+        double:  "IEEE 754 double",
+        int64_t: "int64_t",
+        default: "?");
+}
 
 /* ═══════════════════════════════════════════════════════════════════════
  * OT_PRECISION / OT_F — Scaling factor for fixed-point mode
@@ -2211,11 +2482,17 @@ static inline void ki_report_show(int train_ok, int train_n,
     float tp  = (train_n > 0) ? (float)train_ok * 100.0f / (float)train_n : 0.0f;
     float ep  = (eval_n  > 0) ? (float)eval_ok  * 100.0f / (float)eval_n  : 0.0f;
     printf("\n============================================================\n");
-    printf("REPORT train=%.1f%% (%d) eval=%.1f%% (%d)"
+    printf("REPORT train=%.2f%% (%d) eval=%.2f%% (%d)"
            " err=%d lr=%.4f time=%dms threads=%d",
            tp, train_n, ep, eval_n,
            err, (double)lr, elapsed_ms, threadN);
-    if (members > 0) printf(" members=%d", members);
+    if (members > 0) {
+        /* eff = eval - lambda*(members-1): eval combined with the member-count
+         * complexity penalty (DRAM inference cost scales with member count).
+         * λ = aa.eff_lambda (--eff-lambda, default 0.02). */
+        float eff = ep - aa.eff_lambda * (float)(members - 1);
+        printf(" members=%d eff=%.2f", members, (double)eff);
+    }
     printf("\n");
      printf("============================================================\n");
 }

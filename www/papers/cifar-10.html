@@ -3,8 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>CIFAR-10 — DRAM-Native Binary Classifier (64.4%)</title>
-    <meta name="description" content="CIFAR-10 benchmark for Otto Score: 64.4% with H=1024, geometric xform ensemble (hflip,vflip,dflip1,dflip2). Frozen random projection, Bayes log-Score, DRAM-native &amp;|~+popcount.">
+            <title>CIFAR-10 — DRAM-Native Binary Classifier (69.99% ensemble search)</title>
+    <meta name="description" content="CIFAR-10 benchmark for Otto Score: 64.9% single-config (2026-07-24), 69.99% ensemble beam-search over 19,707 score archives (2026-08-01), 66.88% beam-selected 4-way comparison (2026-08-06). Frozen random projection, Bayes log-Score, DRAM-native &amp;|~+popcount.">
     <meta name="author" content="Andreas Otto">
     <meta name="robots" content="index, follow">
     <meta name="googlebot" content="index, follow">
@@ -12,24 +12,24 @@
     <link rel="preload" href="../style.css" as="style">
     <link rel="stylesheet" href="../style.css">
     <link rel="canonical" href="https://forward-prop.nhi1.de/papers/cifar-10.html">
-    <meta property="og:title" content="CIFAR-10 — DRAM-Native Binary Classifier (64.4%)">
-    <meta property="og:description" content="Otto Score reaches 64.4% on CIFAR-10 using bit-logic + geometric xform ensemble (hflip,vflip,dflip1,dflip2). 85-member ensemble, frozen random projection.">
+    <meta property="og:title" content="CIFAR-10 — DRAM-Native Binary Classifier (69.99% ensemble search)">
+    <meta property="og:description" content="Otto Score: 64.9% single-config, 69.99% ensemble beam-search, 66.88% beam-selected 4-way comparison — bit-logic + frozen random projection + Bayes log-Score.">
     <meta property="og:type" content="article">
     <meta property="og:url" content="https://forward-prop.nhi1.de/papers/cifar-10.html">
     <meta property="og:image" content="https://forward-prop.nhi1.de/assets/og-image.png">
     <meta property="og:site_name" content="Forward-Prop Research">
     <meta name="twitter:card" content="summary_large_image">
-    <meta name="twitter:title" content="CIFAR-10 DRAM-Native — 64.4%">
-    <meta name="twitter:description" content="Otto Score: frozen binary hash + geometric xform ensemble, 64.4% on CIFAR-10.">
+    <meta name="twitter:title" content="CIFAR-10 DRAM-Native — 69.99% ensemble search">
+    <meta name="twitter:description" content="Otto Score: frozen binary hash + geometric xform ensemble + beam-search selection, 69.99% on CIFAR-10.">
     <meta name="twitter:image" content="https://forward-prop.nhi1.de/assets/og-image.png">
     <script type="application/ld+json">
     {
       "@context": "https://schema.org",
       "@type": "ScholarlyArticle",
       "headline": "CIFAR-10 DRAM-Native Binary Classification via Otto Score",
-      "description": "61.3% on CIFAR-10 using frozen random binary projection (MAJ3) plus Bayes log-Score target correction — only bit-logic, no multiply-accumulate.",
+      "description": "64.9% single-config, 69.99% ensemble beam-search over stored score archives, 66.88% beam-selected 4-way comparison — frozen random binary projection (MAJ3) plus Bayes log-Score target correction, only bit-logic, no multiply-accumulate.",
       "author": { "@type": "Person", "name": "Andreas Otto" },
-      "datePublished": "2026-07-14",
+      "datePublished": "2026-08-06",
       "about": { "@type": "Thing", "name": "CIFAR-10 DRAM-native classifier" }
     }
     </script>
@@ -63,7 +63,8 @@
             <ul>
                 <li><a href="../index.html">Top</a></li>
                 <li><a href="cifar-10.html" style="color:var(--amber);">CIFAR-10</a></li>
-                <li><a href="status-2026-07.html">Status</a></li>
+                <li><a href="status-2026-08.html">Status Aug</a></li>
+                <li><a href="status-2026-07.html">Status Jul</a></li>
                 <li><a href="https://github.com/aotto1968/forward-prop">Source</a></li>
             </ul>
         </nav>
@@ -75,10 +76,12 @@
 
         <h1>CIFAR-10 — DRAM-Native Binary Classifier</h1>
         <p style="font-size: 1.1rem; color: #555; margin-bottom: 0.25rem;">
-            Best result: <strong>64.4%</strong> — H=1024, EN=1, ep=10, 85 members (latest + 5 xforms) (621s)
+            Best single-config: <strong>64.9%</strong> — H=1024, EN=1, ep=10, <code>--maj 1 --encoding-sizeN 32</code> (694s, 2026-07-24)<br>
+            Best ensemble (beam-search over 19,707 archives): <strong>69.99%</strong> — 116 members (2026-08-01)<br>
+            Best beam-selected 4-way comparison: <strong>66.88%</strong> — M1-FLT32, 92 members (2026-08-06)
         </p>
         <p style="font-size: 0.9rem; color: #888; margin-bottom: 2rem;">
-            Andreas Otto — 14 July 2026
+            Andreas Otto — 6 August 2026 · <a href="status-2026-08.html">Status Report August 2026 →</a>
         </p>
 
         <div class="abstract-box">
@@ -86,11 +89,12 @@
             A <strong>frozen random binary projection (W0)</strong> via MAJ3 (majority-of-3 random containers)
             produces binary hash bits. A <strong>trainable Bayes log-Score layer</strong> accumulates per-class
             log-odds via iterative target correction — no backprop, no multiply-accumulate.
-            On CIFAR-10, Otto Score achieves <strong>64.4%</strong> with H=1024, EN=1, ep=10,
-            latest encoding (17 channels) and a <strong>geometric transform ensemble</strong> of 5 image
-            transforms (hflip, vflip, dflip1, dflip2) via <code>--xform all</code> (621s).
-            The 65% ceiling is architectural: the corrector can only <em>reweight</em> features, not <em>change</em> them.
-            Geometric transforms add +1.3pp over the previous best with only random ensemble seeds.</p>
+            On CIFAR-10 the single-config ceiling is <strong>64.9%</strong> (2026-07-24); the <strong>ensemble
+            beam-search workflow</strong> (train all channel×encoding×xform members, export scores, select the
+            optimal subset) reaches <strong>69.99%</strong> (2026-08-01). The August precision work — exact
+            64-bit score accumulation, <code>.ens</code> v12/v13, IFC v7 — makes the whole pipeline
+            deterministic and reproducible, with a beam-selected 4-way comparison of <strong>66.88%</strong>
+            (maj1 + float counters + double accumulation).</p>
         </div>
 
         <!-- Table of Contents -->
@@ -103,6 +107,7 @@
                 <li><a href="#findings">4. Key Findings</a></li>
                 <li><a href="#xform">5. Geometric Transform Ensemble</a></li>
                 <li><a href="#ceiling">6. Why 65% is a Hard Ceiling</a></li>
+                <li><a href="#august">6b. August 2026 Update — Precision, IFC v7, 4-way Comparison</a></li>
                 <li><a href="#recommendations">7. Practical Recommendations</a></li>
             </ul>
         </div>
@@ -119,18 +124,39 @@
 
         <!-- 2. Leaderboard -->
         <section id="leaderboard" class="paper-section">
-            <h2>2. Leaderboard (2026-07-16)</h2>
+            <h2>2. Leaderboard (2026-08-06)</h2>
             <table>
-                <tr><th>#</th><th>Eval</th><th>Train</th><th>H</th><th>Ep</th><th>Members</th><th>Time</th><th>Config</th></tr>
-                <tr class="highlight-row"><td>1</td><td><strong>64.4%</strong></td><td>96.6%</td><td>1024</td><td>10</td><td>85</td><td>621s</td><td><code>--encoding latest --xform all</code> (5 tested)</td></tr>
-                <tr><td>2</td><td><strong>64.3%</strong></td><td>95.9%</td><td>512</td><td>10</td><td>85</td><td>304s</td><td><code>--encoding latest --xform all</code> (5 tested)</td></tr>
-                <tr><td>3</td><td><strong>63.7%</strong></td><td>98.7%</td><td>1024</td><td>16</td><td>51</td><td>538s</td><td><code>--encoding ey-b,ey-a,ey-h,ey-s-1,ey-s-2</code></td></tr>
-                <tr><td>4</td><td>63.5%</td><td>98.0%</td><td>512</td><td>16</td><td>51</td><td>272s</td><td>spatial channels only (ref)</td></tr>
-                <tr><td>5</td><td>63.4%</td><td>94.5%</td><td>256</td><td>10</td><td>85</td><td>148s</td><td><code>--encoding latest --xform all</code></td></tr>
-                <tr><td>6</td><td>63.2%</td><td>94.0%</td><td>256</td><td>10</td><td>85</td><td>140s</td><td>EN=5 ref (<code>--ensembleN 5</code>)</td></tr>
-                <tr><td>7</td><td>63.1%</td><td>96.1%</td><td>1024</td><td>10</td><td>85</td><td>640s</td><td>EN=5 ref (<code>--ensembleN 5</code>)</td></tr>
-                <tr><td>8</td><td>62.7%</td><td>91.8%</td><td>128</td><td>10</td><td>85</td><td>82s</td><td><code>--encoding latest --xform all</code></td></tr>
+                <tr><th>#</th><th>Eval</th><th>Type</th><th>H</th><th>Members</th><th>Time</th><th>Config</th></tr>
+                <tr class="highlight-row"><td>1</td><td><strong>69.99%</strong></td><td>ensemble beam-search</td><td>256</td><td>116</td><td>—</td><td>M3+M3.add, 19,707 archives (2026-08-01)</td></tr>
+                <tr class="highlight-row"><td>2</td><td><strong>66.88%</strong></td><td>beam-selected 4-way</td><td>256</td><td>92</td><td>—</td><td>M1-FLT32, maj1+double (2026-08-06)</td></tr>
+                <tr><td>3</td><td><strong>64.9%</strong></td><td>single-config</td><td>1024</td><td>60</td><td>694s</td><td><code>--encoding performance --xform performance --maj 1 --encoding-sizeN 32</code> (2026-07-24)</td></tr>
+                <tr><td>4</td><td><strong>64.7%</strong></td><td>single-config</td><td>512</td><td>60</td><td>296s</td><td><code>--encoding performance --xform performance --maj 1 --encoding-sizeN 16</code></td></tr>
+                <tr><td>5</td><td><strong>64.4%</strong></td><td>single-config</td><td>1024</td><td>85</td><td>621s</td><td><code>--encoding latest --xform all</code> (5 tested)</td></tr>
+                <tr><td>6</td><td>64.3%</td><td>single-config</td><td>512</td><td>85</td><td>304s</td><td><code>--encoding latest --xform all</code> (5 tested)</td></tr>
+                <tr><td>7</td><td>63.7%</td><td>single-config</td><td>1024</td><td>51</td><td>538s</td><td><code>--encoding ey-b,ey-a,ey-h,ey-s-1,ey-s-2</code></td></tr>
+                <tr><td>8</td><td>63.5%</td><td>single-config</td><td>512</td><td>51</td><td>272s</td><td>spatial channels only (ref)</td></tr>
             </table>
+            <p style="font-size: 0.85rem; color: #666;"><strong>Note:</strong> the 69.99% and 66.88% rows are
+            <em>ensemble-selection</em> results (beam-search over stored per-member score archives), not
+            single-config records. The 64.9% single-config record is the ceiling for one training run.
+            See <a href="status-2026-08.html">Status Report August 2026</a> for the 4-way comparison
+            (maj1/maj3 × int32/flt32) and the precision findings.</p>
+
+            <h3>2.1 Ensemble Search Breakthrough (2026-07-31 → 08-01)</h3>
+            <p>The stored-score beam-search workflow breaks the 64.9% training ceiling: every
+            channel×encoding×xform member is trained once and exported, then a beam search selects
+            the optimal subset. Over 19,707 archives this reaches <strong>69.99%</strong>:</p>
+            <table>
+                <tr><th>Corpus</th><th>Archives</th><th>eval</th><th>Members</th></tr>
+                <tr><td>M1 (maj1, INT32)</td><td>10,588</td><td>68.62%</td><td>36</td></tr>
+                <tr><td>M3 (maj3, FLT32)</td><td>10,561</td><td>69.36%</td><td>109</td></tr>
+                <tr class="highlight-row"><td><strong>M3 + M3.add</strong></td><td><strong>19,707</strong></td><td><strong>69.99%</strong></td><td><strong>116</strong></td></tr>
+            </table>
+            <p><strong>Important (2026-08-06):</strong> the float32 score accumulator drifts on large
+            sums (scores ~1e9 > 2²⁴) — the float merge found 29 members/66.79% where exact
+            int64/double accumulation finds 44/67.72%. With exact 64-bit accumulation the merge is
+            deterministic (<code>--max</code> beam-as-a-whole, <code>--tries</code> adds nothing) and
+            the <code>.ens</code> archive follows the internal format (v12 double / v13 int64).</p>
         </section>
 
         <!-- 3. Architecture -->
@@ -509,11 +535,13 @@ Each xform gets its OWN W0 + Target + Offset — trained independently.</pre>
 
         <!-- 6. Ceiling -->
         <section id="ceiling" class="paper-section">
-            <h2>6. Ceiling Update: 64.4% via Geometric Transforms</h2>
+            <h2>6. Ceiling Update: 64.9% Single-Config, 69.99% Ensemble Selection</h2>
             <p><strong>Ceiling progression:</strong> encoding-only 61.4% → spatial channels 63.7%
-            → geometric transforms <strong>64.4%</strong>. Each technique adds orthogonal
-            information sources that the frozen MAJ3 projection can exploit — but the returns
-            diminish with each addition.</p>
+            → geometric transforms <strong>64.4%</strong> → <code>--maj 1 --encoding-sizeN 32</code>
+            <strong>64.9%</strong> (2026-07-24) → ensemble beam-search <strong>69.99%</strong>
+            (2026-08-01). Each technique adds orthogonal information sources that the frozen MAJ3
+            projection can exploit — but the single-training ceiling is ~65%; only the stored-score
+            ensemble selection exceeds it.</p>
             <p><strong>Spatial channels (2026-07-14)</strong> break through the 62% encoding-only
             ceiling. Six spatial members (LBP, DoG, Variance, Gradient Direction, Local Range,
             Color-LBP on RG) combine with 11 color members to reach <strong>63.7%</strong>
@@ -544,6 +572,56 @@ Each xform gets its OWN W0 + Target + Offset — trained independently.</pre>
                 <li><strong>Training W0 collapses MAJ3</strong> — destroys hash distribution.</li>
                 <li><strong>Deeper layers lose information</strong> — 2-layer MAJ3 lost 4pp on MNIST.</li>
             </ol>
+        </section>
+
+        <!-- 6b. August 2026 Update -->
+        <section id="august" class="paper-section">
+            <h2>6b. August 2026 Update — Precision, IFC v7, 4-way Comparison</h2>
+
+            <h3>Precision is the feature — the float32 accumulator drifts</h3>
+            <p>Once the ensemble scores reach ~1e9 (far beyond float32's exact 2²⁴ range), the
+            float32 score accumulator rounds on every addition and the beam's gain/argmax
+            evaluations become noisy. The same corpus searched with different accumulators:</p>
+            <table>
+                <tr><th>Merge SCORE_TYPE</th><th>members</th><th>eval</th></tr>
+                <tr><td>float32</td><td>29</td><td>66.79%</td></tr>
+                <tr><td>int64 (<code>-int32</code>)</td><td>44</td><td>67.72%</td></tr>
+                <tr class="highlight-row"><td><strong>double</strong></td><td><strong>44</strong></td><td><strong>67.72%</strong> (= int64 exactly)</td></tr>
+            </table>
+            <p><strong>The "32-bit is free / only top bits matter" assumption is refuted.</strong>
+            The DRAM chip accumulates popcounts exactly in integer arithmetic — the exact behavior
+            is chip-faithful, the float32 drift was an emulation artifact. <code>SCORE_TYPE</code>
+            defaults to double. The <code>.ens</code> archive follows the internal format
+            (v12 double / v13 int64), and the <code>.meta</code> records/validates the arithmetic
+            types. All format logic is centralized in <code>lib/ki-ens.h</code> (EnsReader +
+            ens_write + ens_verify — the trainer verifies every export at write time).</p>
+
+            <h3>The 4-way technology comparison (xform=id, 377 members)</h3>
+            <p>Four corpora built identically (H=256, EP=10, seed 42, uniform W0), selection via
+            <code>--beam 10 --max</code> (deterministic with exact accumulation):</p>
+            <table>
+                <tr><th>corpus</th><th>cumulative (best-en)</th><th>beam-selected</th></tr>
+                <tr><td>M1-INT32 (maj1, int32)</td><td>62.63%</td><td><strong>66.36%</strong> (51)</td></tr>
+                <tr><td>M3-INT32 (maj3, int32)</td><td>61.94%</td><td>65.25% (88)</td></tr>
+                <tr class="highlight-row"><td>M1-FLT32 (maj1, float+double)</td><td>62.70%</td><td><strong>66.88%</strong> (92)</td></tr>
+                <tr><td>M3-FLT32 (maj3, float+double)</td><td>62.02%</td><td>65.44% (55)</td></tr>
+            </table>
+            <ul>
+                <li><strong>maj1 &gt; maj3 consistently</strong> (+0.68-0.69pp cumulative, +1.11-1.44pp beam-selected).</li>
+                <li><strong>flt32-double ≈ int32</strong> (±0.07pp cumulative) — with exact 64-bit
+                    accumulation the container format is neutral: <strong>the Container Principle holds
+                    once the drift is gone.</strong></li>
+                <li>Winner: <strong>M1-FLT32 = 66.88%</strong> (maj1 + float counters + double accumulation).</li>
+            </ul>
+
+            <h3>IFC v7 — the delivery tool handles heterogeneous ensembles</h3>
+            <p><code>model.otto</code> v6 could not represent a heterogeneous ensemble (the CIFAR
+            import gave 12.81% = garbage). <strong>v7</strong> adds per-member channel/encoding/
+            xform metadata; a second bug (missing enc-LUT init) gave exactly 10.0% = random.
+            Both fixed — the IFC now runs the 51-member ensemble end-to-end:
+            <strong>66.36% == retrain == merge</strong>. <code>--no-ens-cache</code> provides
+            real-live inference on new data (compute from raw, +814ms vs the file cache).
+            Full details: <a href="status-2026-08.html">Status Report August 2026</a>.</p>
         </section>
 
         <!-- 7. Recommendations -->

@@ -85,6 +85,17 @@ enum ki_xform {
     KI_XFORM_COUNT
 };
 
+/* ═══════════════════════════════════════════════════════════════════════
+ * XFORM IMPLEMENTATION VERSION — cache key component
+ * ═══════════════════════════════════════════════════════════════════════
+ * BUMP this whenever any ki_xform_raw() logic changes (colswap bound-check,
+ * a new transform, different rounding, ...). The CEX input cache includes it
+ * in the file name, so stale xform results are NEVER served after a code
+ * change. Without this the .pre cache reproduced old behaviour even after
+ * fixes (bug 2026-08-04: colswap cache stayed stale).
+ */
+#define KI_XFORM_IMPL_VERSION 2   /* v2: colswap OLD row-crossing default restored (2026-08-04) */
+
 /* ── Xform meta-info table — single source of truth for name + description ─── */
 typedef struct {
     int         id;
@@ -381,36 +392,61 @@ static inline void ki_xform_raw(uint8_t *restrict out,
             break;
         }
         case KI_XFORM_COLSWAP34: {
-            /* Swap col 3+4k ↔ 4+4k: majority (0,4,8) → (0,3,7) */
+            /* Swap col 3+4k ↔ 4+4k: majority (0,4,8) → (0,3,7)
+             * INTENTIONAL: the swap partner (x+1, next group's col 0) does
+             * NOT exist for the last group when w%4==0 → leave col unchanged
+             * there. Without the bound check src[ro+x+1] reads 1 past the
+             * row (last line: past the whole image) — heap overflow found by
+             * ASan 2026-08-02 in a Bit-Voting run using colswap members. */
             for (int y = 0; y < h; y++) {
                 int ro = y * w;
                 for (int x = 0; x < w; x++) {
                     int mod = x % 4;
+#ifdef KI_COLSWAP_BUG
+                    int sx = x;
+                    if (mod == 3 && x + 1 < w) sx = x + 1;
+                    else if (mod == 0 && x > 0) sx = x - 1;
+#else
                     int sx = (mod == 3) ? x + 1 : (mod == 0 && x > 0) ? x - 1 : x;
+#endif
                     dst[ro + x] = src[ro + sx];
                 }
             }
             break;
         }
         case KI_XFORM_COLSWAP24: {
-            /* Swap col 2+4k ↔ 4+4k: majority (0,4,8) → (0,2,6) */
+            /* Swap col 2+4k ↔ 4+4k: majority (0,4,8) → (0,2,6)
+             * Bound check as in COLSWAP34 (partner x+2 may not exist). */
             for (int y = 0; y < h; y++) {
                 int ro = y * w;
                 for (int x = 0; x < w; x++) {
                     int mod = x % 4;
+#ifdef KI_COLSWAP_BUG
+                    int sx = x;
+                    if (mod == 2 && x + 2 < w) sx = x + 2;
+                    else if (mod == 0 && x > 0) sx = x - 2;
+#else
                     int sx = (mod == 2) ? x + 2 : (mod == 0 && x > 0) ? x - 2 : x;
+#endif
                     dst[ro + x] = src[ro + sx];
                 }
             }
             break;
         }
         case KI_XFORM_COLSWAP14: {
-            /* Swap col 1+4k ↔ 4+4k: majority (0,4,8) → (0,1,5) */
+            /* Swap col 1+4k ↔ 4+4k: majority (0,4,8) → (0,1,5)
+             * Bound check as in COLSWAP34 (partner x+3 may not exist). */
             for (int y = 0; y < h; y++) {
                 int ro = y * w;
                 for (int x = 0; x < w; x++) {
                     int mod = x % 4;
+#ifdef KI_COLSWAP_BUG
+                    int sx = x;
+                    if (mod == 1 && x + 3 < w) sx = x + 3;
+                    else if (mod == 0 && x > 0) sx = x - 3;
+#else
                     int sx = (mod == 1) ? x + 3 : (mod == 0 && x > 0) ? x - 3 : x;
+#endif
                     dst[ro + x] = src[ro + sx];
                 }
             }
@@ -663,6 +699,10 @@ typedef struct {
     const char *desc;       /* human description */
 } ki_XformAlias;
 
+#ifndef KI_SWEEP_PERFORMANCE_XFORM
+# define KI_SWEEP_PERFORMANCE_XFORM "sweep"
+#endif
+
 static const ki_XformAlias ki_xform_alias_table[] = {
     {"all-basic",     "id,hflip,vflip,dflip1,dflip2,rot90,rot22,rot67,rot45,spiral,colswap-3-4,colswap-2-4,colswap-1-4",
                       "8 geometric + 3 colswap + spiral + rot45"},
@@ -681,6 +721,7 @@ static const ki_XformAlias ki_xform_alias_table[] = {
     {"all",           "all-basic,all-shift,all-shuffle",
                       "all available transforms"},
     {"sweep",         "id,hflip,vflip,dflip1,dflip2,rot22,rot45,rot67,rot90,shuffle,spiral,colswap-3-4,colswap-2-4,colswap-1-4,avg2,avg3,avg4", "all for sweep"},
+    {"sweep-performance", KI_SWEEP_PERFORMANCE_XFORM, "sweep performance"},
 };
 
 static inline const char *ki_xform_alias_expand(const char *name) {
@@ -872,7 +913,7 @@ enum ki_color_bit {
     COLOR_CM       ,  /* G-B opponent */
     COLOR_CP       ,  /* R-(G+B)/2 opponent */
 
-    COLOR_EDGE     ,  /* Sobel edges on Y luminance (for --channels edge) */
+    COLOR_EDGE     ,  /* Sobel edges on Y luminance (for --channel edge) */
     COLOR_BIN      ,  /* Otsu-binarized Y (filled black/white) */
     COLOR_LBP      ,  /* Local Binary Pattern (texture) */
     COLOR_DOG      ,  /* Difference of Gaussians (band-pass) */
@@ -946,13 +987,17 @@ static inline const char *ki_color_name(int id) {
  * COLOR CHANNEL ALIASES — alternative names + group expansions
  * ═══════════════════════════════════════════════════════════════════════
  * Like xform/encoding aliases: comma-separated expansion string.
- * The --channels parser expands these iteratively (5-pass).
+ * The --channel parser expands these iteratively (5-pass).
  * Single-channel alias → single name; group alias → comma list. */
 typedef struct {
     const char *name;       /* CLI token: "y", "601", "auge", "all" */
     const char *expansion;  /* comma-sep expansion: "Y", "AL,AM,AP" */
     const char *desc;       /* human description */
 } ki_ColorAlias;
+
+#ifndef KI_SWEEP_PERFORMANCE_CHANNEL
+# define KI_SWEEP_PERFORMANCE_CHANNEL "sweep"
+#endif
 
 static const ki_ColorAlias ki_color_alias_table[] = {
     {"y",     "Y",        "ITU-R BT.601 Luminance"},
@@ -965,8 +1010,8 @@ static const ki_ColorAlias ki_color_alias_table[] = {
     {"grey",  "Y,YL",     "2 ITU luminance variants"},
     {"rgb",   "R,G,B",    "3 raw RGB channels"},
     {"diff",  "RG,RB,GB", "3-channel color difference set"},
-    {"sweep", "R,G,B,Y,AL,AM,AP,RG,RB,GB,BL,BM,BP,H,S,C,CL,CM,CP,edge,bin,lbp,dog,var,dir,range,lbp-rg,lbp-rb,lbp-gb",
-        "all for sweep test"},
+    {"sweep", "R,G,B,Y,AL,AM,AP,RG,RB,GB,BL,BM,BP,H,S,C,CL,CM,CP,edge,bin,lbp,dog,var,dir,range,lbp-rg,lbp-rb,lbp-gb", "all for sweep test"},
+    {"sweep-performance", KI_SWEEP_PERFORMANCE_CHANNEL, "sweep performance"},
 };
 
 static inline const char *ki_color_alias_expand(const char *name) {
@@ -986,6 +1031,14 @@ typedef struct {
     const char *expansion;  /* comma-sep expansion: "bl:gamma,bm:down,..." */
     const char *desc;       /* human description */
 } ki_EncAlias;
+
+/* Dataset-specific preset from ki-config.h (always included FIRST):
+ * KI_SWEEP_PERFORMANCE_ENCODING holds the top-6 encodings per dataset
+ * (CIFAR: down8,mid8,cbrt8,lin8,sqrt8,gamma8; MNIST: cbrt8,exp8,inv-exp8,
+ * gamma8,log8,sqrt8). Fallback (ki-config missing) = MNIST value. */
+#ifndef KI_SWEEP_PERFORMANCE_ENCODING
+# define KI_SWEEP_PERFORMANCE_ENCODING "sweep"
+#endif
 
 static const ki_EncAlias ki_enc_alias_table[] = {
     /* CIFAR-10 specific */
@@ -1017,8 +1070,8 @@ static const ki_EncAlias ki_enc_alias_table[] = {
     {"best-mnist","exp,log,log",                               "Best MNIST encoding (reference)"},
     {"latest-2",  "g:down,bl:gamma,bm:sig,bp:sig,b:sqrt,al:down,am:sig,ap:sig,h:lin,c:cbrt,gb:sig",
                                                                 "Optimized 11-member set"},
-    {"sweep", "raw,lin,down,up,mid,log,exp,sig,sqrt,cbrt,gamma,tri,inv-exp",
-        "all for sweep test"},
+    {"sweep", "raw,lin,down,up,mid,log,exp,sig,sqrt,cbrt,gamma,tri,inv-exp", "all for sweep test"},
+    {"sweep-performance", KI_SWEEP_PERFORMANCE_ENCODING,        "optimized sweep"},
 
     {"debug", "exp", "debug sweep"},
 };

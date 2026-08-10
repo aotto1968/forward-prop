@@ -100,8 +100,13 @@
             a linear voter. The W0 also acts as a <strong>generalizer</strong>: random projection
             prevents overfitting to individual pixels by distributing each input bit across
             multiple h0-neurons, creating robust distributed features. Bit-Voting is
-            <strong>~4× faster</strong> because it processes only set bits (sparse), while
-            Otto must compute the full dense W0×I0 product (H × NC XOR+popcount per sample).</p>
+            <strong>~40× cheaper in the forward path</strong> (it processes only set bits
+            sparsely, while Otto computes the full dense W0&times;I0 product per sample),
+            <strong>but the measured runtime advantage is only ~1.1&times;</strong> (2026-08-10):
+            Otto's W0+majority compresses the gb bits from ~14.4 to ~2.76 set bits per
+            container (5.2&times; less training-loop work) at the cost of the 7.3s gb
+            phase; Bit-Voting skips the compression and pays 2.4&times; more in the
+            training loop. The two cancel — both run ~11s serial, ~4s parallel.</p>
         </div>
 
         <!-- Table of Contents -->
@@ -112,7 +117,7 @@
                 <li><a href="#architecture">2. Architecture — Identity W0</a></li>
                 <li><a href="#equivalence">3. Information Equivalence</a></li>
                 <li><a href="#results">4. Results</a></li>
-                <li><a href="#speed">5. Speed Analysis — Why Otto is 4× Slower</a></li>
+                <li><a href="#speed">5. Speed Analysis — The Bit-Density Surprise</a></li>
                 <li><a href="#generalizer">6. W0 as Generalizer</a></li>
                 <li><a href="#interpretation">7. Interpretation — The Npp Gap</a></li>
                 <li><a href="#findings">8. Key Findings</a></li>
@@ -344,33 +349,103 @@ input bits (6272)                        input bits (6272)
 
         <!-- 5. Speed Analysis -->
         <section id="speed" class="paper-section">
-            <h2>5. Speed Analysis — Why Otto is 4× Slower</h2>
+            <h2>5. Speed Analysis — The Bit-Density Surprise</h2>
 
-            <p>Otto's runtime is dominated by the <strong>dense W0 × I0 computation</strong>.
-            Bit-Voting scans only the set bits (sparse), while Otto must compute every
-            neuron-input pair:</p>
+            <h3>5.1 The raw-operation accounting (forward path)</h3>
+
+            <p>Otto's forward path is the <strong>dense W0 &times; I0 computation</strong>.
+            Bit-Voting scans only the set bits (sparse):</p>
 
             <table>
                 <tr><th>Step</th><th>Bit-Voting</th><th>Otto (H=768)</th></tr>
                 <tr><td>Per sample: scan input</td><td>~12K set bits (sparse)</td><td>—</td></tr>
-                <tr><td>Per sample: W0 × I0</td><td>0</td><td><strong>768 × 256 = 196K XOR+popcount</strong></td></tr>
+                <tr><td>Per sample: W0 &times; I0</td><td>0</td><td><strong>768 &times; 256 = 196K XOR+popcount</strong></td></tr>
                 <tr><td>Per sample: majority</td><td>0</td><td>256K popcount+threshold (maj=3)</td></tr>
                 <tr><td>Per sample: target vote</td><td>~12K adds</td><td>768 adds</td></tr>
                 <tr class="highlight-row"><td><strong>Per epoch (50K CIFAR)</strong></td><td><strong>~600M sparse ops</strong></td><td><strong>~23B dense ops</strong></td></tr>
             </table>
 
-            <p>Otto does <strong>~40× more raw operations</strong> than Bit-Voting. The actual
-            3.6× runtime gap (228s vs 64s) is smaller than 40× because:</p>
-            <ul>
-                <li>Otto's W0 computation is highly optimized (bit-parallel XOR + popcount intrinsics)</li>
-                <li>OpenMP parallelizes well over samples (8 threads in these tests)</li>
-                <li>Bit-Voting's sparse scanning has branch overhead (<code>while(v) __builtin_ctz</code> loop)</li>
-            </ul>
+            <p>That is <strong>~40&times; more raw operations in the forward path</strong> — but the
+            forward is precomputed once (gb cache), and the shared training loop dominates.</p>
+
+            <h3>5.2 The bit-density surprise (measured 2026-08-10)</h3>
+
+            <p>Both models have the <strong>same gb dimension</strong> (H=I=196 on Fashion-MNIST),
+            but the <strong>values differ in density</strong>:</p>
+
+            <table>
+                <tr><th>Model</th><th>gb value</th><th>avg bits/container</th><th>bit-iterations/sample</th></tr>
+                <tr><td><strong>Otto</strong></td><td><code>majority(XNOR(in,W0))</code></td><td><strong>2.76</strong></td><td>~540</td></tr>
+                <tr><td><strong>Bit-Voting</strong></td><td><code>in[h]</code> (identity)</td><td><strong>14.38</strong></td><td>~2820 (5.2&times;)</td></tr>
+            </table>
+
+            <p>The <code>while (_b)</code> loop in <code>KT_SCORE</code>/<code>KT_CORRECT</code>
+            iterates over <strong>every set bit</strong>. Otto's W0+majority
+            (<code>maj1.h</code>, half=107 at n=196) compresses the 32-bit containers to
+            ~2.76 set bits — a 5.2&times; reduction of the training-loop work. Bit-Voting
+            skips the compression and pays the full input density in the training loop.</p>
+
+            <h3>5.3 Measured phases (3 members, serial, --prof)</h3>
+
+            <table>
+                <tr><th>Phase</th><th>Otto</th><th>Bit-Voting</th><th>note</th></tr>
+                <tr><td>gb (precompute)</td><td>7334ms (61%)</td><td><strong>75ms</strong> (0.7%)</td><td>W0+majority vs identity</td></tr>
+                <tr><td><strong>train</strong></td><td>4246ms (35%)</td><td><strong>10009ms</strong> (92%)</td><td>2.4&times; — bit density</td></tr>
+                <tr><td>eval + rest</td><td>~525ms</td><td>~770ms</td><td></td></tr>
+                <tr class="highlight-row"><td><strong>Total</strong></td><td><strong>12104ms</strong></td><td><strong>10851ms</strong></td><td>BV still <strong>1.12&times; faster</strong></td></tr>
+            </table>
 
             <div class="insight-box">
-                <strong>DRAM hardware gap vanishes:</strong> The W0 × I0 product is a single
+                <strong>Key insight:</strong> Bit-Voting is Otto-without-W0 — but "without W0"
+                means <em>without the compression</em>, not "less work". Otto <strong>buys</strong>
+                the compression in the gb phase (7.3s), Bit-Voting <strong>pays</strong> it in
+                the training loop (5.8s more). Net: BV is only ~1.12&times; faster serially.
+                In parallel mode (PRF, 16 threads) both run in ~4s — the dominant phase
+                (gb for Otto, train for BV) sets the wall time and the two happen to match.
+            </div>
+
+            <div class="insight-box">
+                <strong>DRAM hardware gap vanishes:</strong> The W0 &times; I0 product is a single
                 bitwise-XOR between two memory rows — executed in one cycle across all bits.
                 Both architectures cost nearly the same chip area and runtime.
+            </div>
+
+            <h3>5.4 IFC inference: maj1(W0&times;I) is dominant and cannot be cached</h3>
+
+            <p><strong>In IFC (<code>--import</code>) the picture flips: Bit-Voting is
+            <strong>14.7&times; faster</strong>.</strong> Measured with the same 3-member
+            ensemble (Fashion-MNIST, H=196, 16 threads):</p>
+
+            <table>
+                <tr><th>Mode</th><th>Otto</th><th>Bit-Voting</th><th>ratio</th></tr>
+                <tr><td>TRN (<code>--member-file</code>, 3 members)</td><td>4017ms</td><td>4048ms</td><td>~1.0&times;</td></tr>
+                <tr class="highlight-row"><td><strong>IFC (<code>--import</code>, 3 members)</strong></td><td><strong>382ms</strong></td><td><strong>26ms</strong></td><td><strong>14.7&times;</strong></td></tr>
+            </table>
+
+            <p><strong>Why:</strong> the IFC evaluation path
+            (<code>ki_evaluate_member</code> with <code>use_gb=0</code>) has <strong>no gb_buf
+            cache</strong>. For every sample it calls <code>scores_otto</code>, which recomputes
+            <code>maj1(W0&times;I)</code> <strong>per h per sample</strong>:</p>
+
+            <table>
+                <tr><th>IFC step</th><th>Otto</th><th>Bit-Voting</th></tr>
+                <tr><td>per sample: gb = maj1(W0&times;I)</td><td>196 h &times; (196 XOR + majority) &asymp; 38K ops</td><td><strong>0</strong> (identity)</td></tr>
+                <tr><td>per sample: vote</td><td>196 &times; ~2.76 bits</td><td>196 &times; ~14.4 bits</td></tr>
+            </table>
+
+            <p><code>maj1(W0&times;I)</code> is the <strong>dominant cost factor in IFC — and it
+            is used exactly once per member, which allows NO caching</strong>. In training the
+            same computation runs once into <code>gb_buf</code> and is reused over all 10 epochs
+            (amortized &rarr; the ~1.0&times; result of &sect;5.2); in IFC every sample pays it
+            fresh. Bit-Voting skips it entirely, so the sparse bit-vote (~14 bits/container) is
+            the whole cost.</p>
+
+            <div class="insight-box">
+                <strong>DRAM consequence:</strong> on a real inference chip (one sample, no epoch
+                loop, no cache) the <code>maj1(W0&times;I)</code> cost is paid per sample
+                regardless of the sim amortization — the W0 row-XOR is cheap in hardware, but
+                Bit-Voting's identity needs no W0 at all. The two architectures differ most at
+                <strong>inference</strong> time, not at training time.
             </div>
         </section>
 
@@ -500,9 +575,12 @@ input bits (6272)                        input bits (6272)
             </div>
 
             <div class="key-finding">
-                <strong>3. Otto is ~4× slower in simulation</strong>
-                due to dense W0×I0 computation (196K XOR+popcount per sample vs
-                ~12K sparse adds). In DRAM hardware this gap vanishes.
+                <strong>3. The speed gap is small because of bit density, not efficiency.</strong>
+                Otto's W0+majority compresses gb from ~14.4 to ~2.76 set bits per container
+                (5.2&times; less training-loop work), but costs 7.3s to build. Bit-Voting skips
+                the compression and pays 2.4&times; more in the training loop. Net: BV is only
+                ~1.12&times; faster serially (10851 vs 12104ms, 2026-08-10); both run ~4s
+                parallel. In DRAM hardware the forward gap vanishes entirely.
             </div>
 
             <div class="key-finding">

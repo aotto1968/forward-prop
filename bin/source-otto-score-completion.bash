@@ -12,6 +12,8 @@
 #   - vis-errors
 #   - merge-ensemble
 #   - run-research.sh / run-ensemble.sh
+#   - bash aliases (any alias whose expansion points at one of the above,
+#     e.g. alias cot="run-research.sh cifar-mlp-bin32-otto-trn-xnor.exe")
 #
 # Path resolution:
 #   The script auto-detects the Otto Score project root (parent of ../../
@@ -27,6 +29,11 @@ if [[ -z "$OTTO_HOME" ]]; then
 fi
 
 # ── Add trainer directories to PATH (idempotent) ──────────────
+# _otto_add_to_path prepends each dir, so the LAST argument has the
+# HIGHEST priority. Only the LOCAL work dirs (cifar-1/mnist-1/
+# mnist-fashion) are added — the otto-score-ifc source dirs are NOT:
+# their stale binaries shadowed the freshly built ones and caused
+# bugs (e.g. old --completion lists). The local binary always wins.
 _otto_add_to_path() {
     local d
     for d in "$@"; do
@@ -36,12 +43,25 @@ _otto_add_to_path() {
     done
 }
 _otto_add_to_path \
-    "$OTTO_HOME/mnist-1" \
+    "$OTTO_HOME/bin" \
     "$OTTO_HOME/mnist-fashion" \
-    "$OTTO_HOME/cifar-1" \
-    "$OTTO_HOME/otto-score-ifc/mnist" \
-    "$OTTO_HOME/otto-score-ifc/cifar" \
-    "$OTTO_HOME/bin"
+    "$OTTO_HOME/mnist-1" \
+    "$OTTO_HOME/cifar-1"
+
+# Actively remove any otto-score-ifc source dirs from PATH: their stale
+# binaries shadow the freshly built local ones. Also works when this file
+# is re-sourced in a long-running shell (add-only would leave them behind).
+_otto_strip_path() {
+    local p out=""
+    local -a _parts
+    IFS=: read -r -a _parts <<< "$PATH"
+    for p in "${_parts[@]}"; do
+        [[ "$p" == *"/otto-score-ifc/"* ]] && continue
+        [[ -n "$p" ]] && out="${out:+$out:}$p"
+    done
+    PATH="$out"
+}
+_otto_strip_path
 
 # ═══════════════════════════════════════════════════════════════════
 # Shared helpers
@@ -280,37 +300,77 @@ complete -F _otto_run_script_complete run-research.sh run-ensemble.sh 2>/dev/nul
 _otto_merge_complete() {
     local cur="${COMP_WORDS[COMP_CWORD]}"
     local prev="${COMP_WORDS[COMP_CWORD-1]}"
-    local opts="--num --max --save --sort --filter --help"
 
+    # ── Resolve command → binary path ─────────────────────
+    local cmd="${COMP_WORDS[0]}"
+    local binpath
+    binpath=$(type -P "$cmd" 2>/dev/null)
+    [[ -z "$binpath" && -x "./$cmd" ]] && binpath="./$cmd"
+    [[ -z "$binpath" ]] && { COMPREPLY=(); return 0; }
+
+    # ── Cache: flag list from binary --completion (same
+    #    protocol as the trainer — see merge-ensemble.c) ──
+    local _otto_mtime
+    _otto_mtime=$(stat -c '%Y' "$binpath" 2>/dev/null || echo 0)
+    if [[ "${_OTTO_MERGE_FLAGS_CACHE_BIN:-}" != "$binpath" ||
+          "${_OTTO_MERGE_FLAGS_CACHE_MTIME:-0}" != "$_otto_mtime" ]]; then
+        _OTTO_MERGE_FLAGS_CACHE=$("$binpath" --completion 2>/dev/null)
+        _OTTO_MERGE_FLAGS_CACHE_BIN="$binpath"
+        _OTTO_MERGE_FLAGS_CACHE_MTIME="$_otto_mtime"
+    fi
+
+    # ── Complete flag name ──────────────────────────────
     if [[ "$cur" == --* ]]; then
         # shellcheck disable=SC2207
-        COMPREPLY=( $(compgen -W "$opts" -- "$cur") )
+        COMPREPLY=( $(compgen -W "$_OTTO_MERGE_FLAGS_CACHE" -- "$cur") )
         return 0
     fi
 
-    case "$prev" in
-        --num|--max)
-            COMPREPLY=()
-            return 0
-            ;;
-        --save)
+    # ── Complete argument after specific flag ────────────
+    local hint
+    hint=$("$binpath" --completion "$prev" 2>/dev/null)
+    local hint_type="${hint%% *}"
+    local hint_vals="${hint#* }"
+    [[ "$hint_type" == "$hint_vals" ]] && hint_vals=""
+
+    case "$hint_type" in
+        file)
             # shellcheck disable=SC2207
             COMPREPLY=( $(compgen -f -- "$cur") )
-            return 0
             ;;
-        --sort)
+        dir)
             # shellcheck disable=SC2207
-            COMPREPLY=( $(compgen -W "seed ctime" -- "$cur") )
-            return 0
+            COMPREPLY=( $(compgen -d -- "$cur") )
             ;;
-        --filter)
-            COMPREPLY=()
-            return 0
+        num|float)
+            COMPREPLY=()  # user types the number
+            ;;
+        token)
+            if [[ -n "$hint_vals" ]]; then
+                # shellcheck disable=SC2207
+                COMPREPLY=( $(compgen -W "$hint_vals" -- "$cur") )
+            else
+                COMPREPLY=()  # free-form token
+            fi
+            ;;
+        *)
+            # merge-ensemble takes DIR as its FIRST positional arg,
+            # so suggest a directory until one is present; afterwards
+            # fall back to the flag list.
+            local has_dir=0
+            local _w
+            for _w in "${COMP_WORDS[@]:1:COMP_CWORD-1}"; do
+                [[ "$_w" != -* ]] && { has_dir=1; break; }
+            done
+            if [[ $has_dir -eq 0 ]]; then
+                # shellcheck disable=SC2207
+                COMPREPLY=( $(compgen -d -- "$cur") )
+            else
+                # shellcheck disable=SC2207
+                COMPREPLY=( $(compgen -W "$_OTTO_MERGE_FLAGS_CACHE" -- "$cur") )
+            fi
             ;;
     esac
-
-    # shellcheck disable=SC2207
-    COMPREPLY=( $(compgen -d -- "$cur") )
 }
 for _otto_merge_bin in \
     mnist-merge-ensemble.exe \
@@ -318,6 +378,91 @@ for _otto_merge_bin in \
     complete -F _otto_merge_complete "$_otto_merge_bin" 2>/dev/null || true
 done
 unset _otto_merge_bin
+
+# ═══════════════════════════════════════════════════════════════════
+# Auto-Completion: bash aliases (complete -D fallback)
+# ═══════════════════════════════════════════════════════════════════
+# PROBLEM: bash does NOT expand aliases before running programmable
+# completion. When the user types `cot --hi<TAB>` with
+#   alias cot="run-research.sh cifar-mlp-bin32-otto-trn-xnor.exe"
+# COMP_WORDS[0] stays "cot", so none of the completions above fire and
+# readline falls back to plain filename completion.
+#
+# FIX: install a DEFAULT completion (complete -D). Whenever the first
+# word of the command line is an alias, we expand it via `alias`,
+# rewrite COMP_WORDS/COMP_CWORD as if the alias had been typed out,
+# and delegate to the matching completion function. Non-alias commands
+# are handed back to the PREVIOUS default handler (bash 5.3 ships
+# `_comp_complete_load` for on-demand loading), so existing behavior
+# is preserved.
+#
+# The user does NOT need to configure anything — the alias definition
+# itself is the single source of truth.
+
+_otto_alias_words() {
+    # Usage: _otto_alias_words NAME
+    # Sets _OTTO_ALIAS_WORDS to the alias expansion (quote-aware word
+    # split, mirrors bash's own alias expansion). Returns 0 when NAME
+    # is an alias, 1 otherwise.
+    local _out _body _quote
+    _out=$(alias "$1" 2>/dev/null) || return 1
+    # alias output: alias cot='run-research.sh cifar-mlp-bin32-otto-trn-xnor.exe'
+    _body="${_out#*=}"
+    _quote="${_body:0:1}"
+    if [[ "$_quote" == "'" || "$_quote" == '"' ]]; then
+        _body="${_body:1:${#_body}-2}"
+    fi
+    _OTTO_ALIAS_WORDS=()
+    eval "_OTTO_ALIAS_WORDS=($_body)"
+    return 0
+}
+
+_otto_default_complete() {
+    local cmd="${COMP_WORDS[0]}"
+    if ! _otto_alias_words "$cmd"; then
+        # Not an alias → hand over to the previous -D handler (if any).
+        # -o default (set below) keeps readline's filename fallback.
+        if [[ -n "$_OTTO_OLD_DEFAULT_COMPLETE" &&
+              "$_OTTO_OLD_DEFAULT_COMPLETE" != "_otto_default_complete" &&
+              "$(type -t "$_OTTO_OLD_DEFAULT_COMPLETE")" == "function" ]]; then
+            "$_OTTO_OLD_DEFAULT_COMPLETE"
+        else
+            COMPREPLY=()
+        fi
+        return 0
+    fi
+
+    # Rewrite COMP_WORDS as if the alias were expanded:
+    #   old: cot --hi            new: run-research.sh cifar-...exe --hi
+    local -a new_words=("${_OTTO_ALIAS_WORDS[@]}")
+    local n_exp="${#_OTTO_ALIAS_WORDS[@]}"
+    local i
+    for (( i = 1; i < ${#COMP_WORDS[@]}; i++ )); do
+        new_words+=("${COMP_WORDS[i]}")
+    done
+    COMP_WORDS=("${new_words[@]}")
+    COMP_CWORD=$(( n_exp - 1 + COMP_CWORD ))
+
+    # Route to the matching completion function (single level, no recursion).
+    case "${COMP_WORDS[0]}" in
+        *run-research*|*run-ensemble*) _otto_run_script_complete ;;
+        *merge-ensemble*)             _otto_merge_complete ;;
+        *vis-errors*)                 _otto_vis_complete ;;
+        *)                            _otto_trn_complete ;;
+    esac
+}
+
+# Preserve the pre-existing default handler (bash 5.3: _comp_complete_load)
+# so non-alias commands keep on-demand completion loading.
+_OTTO_OLD_DEFAULT_COMPLETE=""
+if [[ "$(complete -p -D 2>/dev/null)" =~ -F[[:space:]]+([^[:space:]]+) ]]; then
+    _OTTO_OLD_DEFAULT_COMPLETE="${BASH_REMATCH[1]}"
+fi
+if [[ "$_OTTO_OLD_DEFAULT_COMPLETE" != "_otto_default_complete" ]]; then
+    # Only one -D spec can exist; ours replaces it, the old one is called
+    # as fallback from _otto_default_complete above.
+    complete -D -o default -F _otto_default_complete
+fi
 
 # Cleanup helper functions from namespace
 unset -f _otto_add_to_path

@@ -21,7 +21,7 @@ CIFAR-10 images provide 3072 raw bytes (R,G,B interleaved). Our color-split
 approach packs each color independently (KI_PACK=4, KI_NC=256 per color) and
 treats R, G, B as 3 independent input vectors.
 
-**Experiment (2026-06-24):** Training only the R channel (`--channels r`)
+**Experiment (2026-06-24):** Training only the R channel (`--channel r`)
 with H=512, ens=1, 1 epoch gives ~30.3% eval. Adding more H or more ensemble
 members does NOT improve — the signal in a single color channel is intrinsically
 limited (no opponent contrast, no luminance sum).
@@ -29,9 +29,9 @@ limited (no opponent contrast, no luminance sum).
 Expected result with all 3 colors combined: significantly higher, because
 the opponent relationships (R−G, B−(R+G)) can be learned across members.
 
-## `--channels` Bitmask
+## `--channel` Bitmask
 
-The `--channels` flag accepts a bitfield string to simulate color blindness
+The `--channel` flag accepts a bitfield string to simulate color blindness
 or isolate channels:
 
 | Value         | Active colors  | Simulates                      |
@@ -70,13 +70,13 @@ Replaces raw R,G,B with biologically-inspired opponent channels:
 | 2   | by      | ✓       | BY      |
 | 3   | y       | —       | Y       |
 
-Default (no `--channels`): LUM+RG+BY (bits 0+1+2).  
-Comma-separated: `--channels lum,by` (LUM+BY only).
+Default (no `--channel`): LUM+RG+BY (bits 0+1+2).  
+Comma-separated: `--channel lum,by` (LUM+BY only).
 
 ### Data layout
 
 Default (no Y): `[LUM(0..255), RG(256..511), BY(512..767)]` stride=768.  
-With Y (e.g. `--channels lum,rg,by,y`): `[LUM, RG, BY, Y(768..1023)]` stride=1024.
+With Y (e.g. `--channel lum,rg,by,y`): `[LUM, RG, BY, Y(768..1023)]` stride=1024.
 
 ### Benchmark (2026-06-24, H=64, ens=1, 1 epoch, splitHN=2, 5000/2000)
 

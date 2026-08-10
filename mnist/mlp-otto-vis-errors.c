@@ -18,6 +18,7 @@
  *   uint32 N     = number of Samples
  *   uint8[N] preds = vorhergesagte Klassen
  */
+#include "ki-config.h"
 #include "ki-common.h"
 #include "maj3.h"
 #include <inttypes.h>

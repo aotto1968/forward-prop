@@ -19,6 +19,9 @@
 #include <errno.h>
 
 #include "ki-config.h"
+/* libtprint BEFORE ki-common.h: print_confusion_debug() in ki-common.h uses
+ * TPrint for the confusion table (2026-08-12). */
+#include "../lib/tprint.h"        /* ASCII table output (debug-class-voting + confusion) */
 /* ki-common.h with KI_COMMON_LOAD_INPUT: suppress the default raw-packing
  * load_input (ki-load.h provides the encoding-aware one). Explicit include —
  * ki-load.h does NOT pull ki-common.h in anymore (flat include level). */
@@ -265,6 +268,11 @@ typedef struct ki_Member ki_Member;
 /* ── Global args (initialisiert in main) ────────────────────── */
 /* ── --debug-epoch flag (local, not in ki-common.h) ── */
 static int debug_epoch = 0;
+
+/* Trainer executable name (basename of argv[0], set in main). Written to
+ * the --export-merge-scores dir .meta as EXE= and checked on re-export:
+ * a scores archive must not be re-populated by a DIFFERENT trainer binary. */
+static char g_exe_name[256] = "";
 
 ki_Args aa = {
     .hidden             = 64,
@@ -518,7 +526,7 @@ static __attribute__((unused)) COUNTER_TYPE *ki_build_target(const uint32_t *X, 
 
     #pragma omp parallel
     {
-        int32_t *lt = (int32_t *)ki_xcalloc(sz, sizeof(COUNTER_TYPE));
+        int32_t *lt = (int32_t *)ki_xcalloc(sz, sizeof(*lt));
         #pragma omp for schedule(static)
         for (int s = 0; s < N; s++) {
             int k = (int)Y[s];
@@ -598,7 +606,7 @@ static __attribute__((unused)) COUNTER_TYPE *ki_build_target_from_gb(const uint8
          * compute_class_offset() valid (avoids t > nk overflow). */
         #pragma omp parallel
         {
-            int32_t *lt = (int32_t *)ki_xcalloc(sz, sizeof(COUNTER_TYPE));
+            int32_t *lt = (int32_t *)ki_xcalloc(sz, sizeof(*lt));
             #pragma omp for schedule(static)
             for (int s = 0; s < N; s++) {
                 int k = (int)Y[s];
@@ -621,7 +629,7 @@ static __attribute__((unused)) COUNTER_TYPE *ki_build_target_from_gb(const uint8
          * Clamped to n_k to avoid p = 1 overflow in logit_convert. */
         #pragma omp parallel
         {
-            int32_t *lt = (int32_t *)ki_xcalloc(sz, sizeof(COUNTER_TYPE));
+            int32_t *lt = (int32_t *)ki_xcalloc(sz, sizeof(*lt));
             #pragma omp for schedule(static)
             for (int s = 0; s < N; s++) {
                 int k = (int)Y[s];
@@ -655,7 +663,7 @@ static __attribute__((unused)) COUNTER_TYPE *ki_build_target_from_gb(const uint8
          * amplitude — initial log-odds are less extreme. */
         #pragma omp parallel
         {
-            int32_t *lt = (int32_t *)ki_xcalloc(sz, sizeof(COUNTER_TYPE));
+            int32_t *lt = (int32_t *)ki_xcalloc(sz, sizeof(*lt));
             #pragma omp for schedule(static)
             for (int s = 0; s < N; s++) {
                 int k = (int)Y[s];
@@ -681,7 +689,7 @@ static __attribute__((unused)) COUNTER_TYPE *ki_build_target_from_gb(const uint8
     } else {
         #pragma omp parallel
         {
-            int32_t *lt = (int32_t *)ki_xcalloc(sz, sizeof(COUNTER_TYPE));
+            int32_t *lt = (int32_t *)ki_xcalloc(sz, sizeof(*lt));
             #pragma omp for schedule(static)
             for (int s = 0; s < N; s++) {
                 int k = (int)Y[s];
@@ -795,17 +803,24 @@ static void compute_class_offset(SCORE_TYPE class_offset[KI_NCLASSES],
                                   const int class_counts[KI_NCLASSES]) {
     int V = VN_GROUPS_;
     for (int k = 0; k < KI_NCLASSES; k++) {
-        SCORE_TYPE sum = 0;
         int nk = class_counts[k];
         if (nk <= 0) { class_offset[k] = (SCORE_TYPE)0; continue; }
+        /* INTENTIONAL (2026-08-16): accumulate in double, quantize ONCE at the
+         * end. The old code applied ot_precision() (×F + int-round) per term —
+         * H×V = 8192 separate roundings at H=256, each ±0.5 F → accumulated
+         * error ±0.06 logit (~20% of measurement noise). A double sum keeps the
+         * exact value and the single final cast loses only ±0.5 F. Same result
+         * as before for H=1 (one term, one rounding), strictly better for H>1.
+         * Verified: argmax decisions with top-2 gap < 0.06 logit are affected. */
+        double acc = 0.0;
         for (int h = 0; h < H_local; h++) {
             for (int v = 0; v < V; v++) {
                 int t = (int)target[TGT_IDX(k, h, v, H_local, V)];
                 double p1 = (double)(nk - t + 1) / (double)(nk + 2);
-                sum += (SCORE_TYPE)ot_precision(log(p1));
+                acc += log(p1);   /* volle double-Genauigkeit, keine Zwischen-Rundung */
             }
         }
-        class_offset[k] = sum;
+        class_offset[k] = (SCORE_TYPE)ot_precision(acc);   /* genau 1 Rundung */
     }
 }
 /* ═══════════════════════════════════════════════════════════════════
@@ -1285,6 +1300,23 @@ static const char *maj_mode_token(int mode) {
 #endif
 }
 
+/* ── storebackup exclusion flag (2026-08-11) ─────────────────────
+ * The scores-* directories are large, regenerable archives (thousands of
+ * .ens files). storebackup (the user's backup tool) must NOT mirror them.
+ * Every --export-merge-scores dir gets a .storebackup_dont_backup marker.
+ * Written AFTER mkdir, both on fresh creation and on existing dirs, so a
+ * directory created by an older binary is flagged on the next run too. */
+static void storebackup_flag_set(const char *dir) {
+    char flag[1024];
+    snprintf(flag, sizeof(flag), "%s/.storebackup_dont_backup", dir);
+    FILE *ff = fopen(flag, "w");
+    if (ff) {
+        fprintf(ff, "# storebackup: do not back up this directory\n"
+                    "# reason: regenerable score archive (--export-merge-scores)\n");
+        fclose(ff);
+    }
+}
+
 static int export_merge_scores_meta_check(const char *dir) {
     char meta_path[1024];
     snprintf(meta_path, sizeof(meta_path), "%s/.meta", dir);
@@ -1296,6 +1328,9 @@ static int export_merge_scores_meta_check(const char *dir) {
         int  m_majt = -999;        /* -999 = field absent */
         char m_ct[64] = "";        /* COUNTER_TYPE label (empty = absent) */
         char m_st[64] = "";        /* SCORE_TYPE label (empty = absent) */
+        char m_exe[256] = "";      /* trainer exe basename (empty = absent) */
+        int  m_bits = 0;           /* KI_BIT_WIDTH (0 = absent) */
+        int  m_otp = 0;            /* OT_PRECISION (0 = absent) */
         char line[128];
         while (fgets(line, sizeof(line), mf)) {
             if (sscanf(line, "H=%d", &m_h) == 1) continue;
@@ -1305,9 +1340,12 @@ static int export_merge_scores_meta_check(const char *dir) {
             if (sscanf(line, "SEED=%d", &m_seed) == 1) continue;
             if (sscanf(line, "MAJ=%7s", m_maj) == 1) continue;
             if (sscanf(line, "MAJ1_THRESH=%d", &m_majt) == 1) continue;
+            if (sscanf(line, "BITS=%d", &m_bits) == 1) continue;
+            if (sscanf(line, "OT_PRECISION=%d", &m_otp) == 1) continue;
             /* labels contain spaces ("IEEE 754 double") → read rest of line */
             if (sscanf(line, "COUNTER_TYPE=%63[^\n]", m_ct) == 1) continue;
             if (sscanf(line, "SCORE_TYPE=%63[^\n]", m_st) == 1) continue;
+            if (sscanf(line, "EXE=%255[^\n]", m_exe) == 1) continue;
         }
         fclose(mf);
         if (m_h != aa.hidden || m_ep != aa.epochs ||
@@ -1318,8 +1356,32 @@ static int export_merge_scores_meta_check(const char *dir) {
                     m_vn, aa.splitVN, m_hn, aa.splitHN);
             return -1;
         }
+        /* Container bit width + logit scaling precision (2026-08-12):
+         * BITS=KI_BIT_WIDTH and OT_PRECISION=F-scaling (F=1<<OT_PRECISION)
+         * both affect the stored logits — an archive must not mix them.
+         * Enforced only when present (older .meta files lack the fields). */
+        if (m_bits != 0 && m_bits != KI_BIT_WIDTH) {
+            fprintf(stderr, "[ERROR] %s: bit-width mismatch (BITS=%d/%d)\n",
+                    meta_path, m_bits, KI_BIT_WIDTH);
+            return -1;
+        }
+        if (m_otp != 0 && m_otp != OT_PRECISION) {
+            fprintf(stderr, "[ERROR] %s: OT_PRECISION mismatch (%d/%d)\n",
+                    meta_path, m_otp, OT_PRECISION);
+            return -1;
+        }
         /* Optional fields: only enforced when present in the file, so
          * directories created by older binaries still work. */
+        /* Trainer exe guard (2026-08-11): a scores archive must not be
+         * re-populated by a DIFFERENT trainer binary (e.g. 8-bit xnor vs
+         * 16-bit bitvoting with identical H/BITS meta). The exe name is
+         * basename(argv[0]) — stable across ./ prefix and paths. */
+        if (m_exe[0] && g_exe_name[0] && strcmp(m_exe, g_exe_name) != 0) {
+            fprintf(stderr, "[ERROR] %s: trainer exe mismatch "
+                    "(archive=%s, this=%s)\n",
+                    meta_path, m_exe, g_exe_name);
+            return -1;
+        }
 #ifndef KI_BITVOTING
         /* Otto: majority is a real config — must match. */
         if (m_maj[0] && strcmp(m_maj, maj_mode_token(aa.maj_mode)) != 0) {
@@ -1353,20 +1415,31 @@ static int export_merge_scores_meta_check(const char *dir) {
          * Neither is a config mismatch here. */
         (void)m_maj; (void)m_majt;
 #endif
+        /* Existing dir: ensure the storebackup exclusion flag is present
+         * (older binaries created the dir without it). */
+        storebackup_flag_set(dir);
         return 0;
     }
     /* Create .meta + directory */
     char cmd[512];
     snprintf(cmd, sizeof(cmd), "mkdir -p %s", dir);
     if (system(cmd) != 0) return -1;
+    /* Fresh dir: set the storebackup exclusion flag BEFORE any .ens files
+     * are written, so the backup tool never sees a partial archive. */
+    storebackup_flag_set(dir);
     mf = fopen(meta_path, "w");
     if (mf) {
         fprintf(mf, "H=%d\nEPOCHS=%d\nVN=%d\nHN=%d\nSEED=%d\n"
                     "MAJ=%s\nMAJ1_THRESH=%d\n"
-                    "COUNTER_TYPE=%s\nSCORE_TYPE=%s\n",
+                    "BITS=%d\n"
+                    "OT_PRECISION=%d\n"
+                    "COUNTER_TYPE=%s\nSCORE_TYPE=%s\n"
+                    "EXE=%s\n",
                 aa.hidden, aa.epochs, aa.splitVN, aa.splitHN, aa.seed,
                 maj_mode_token(aa.maj_mode), aa.maj1_thresh,
-                ki_counter_type_str(), ki_score_type_str());
+                KI_BIT_WIDTH, OT_PRECISION,
+                ki_counter_type_str(), ki_score_type_str(),
+                g_exe_name[0] ? g_exe_name : "(unknown)");
         fclose(mf);
     }
     return 0;
@@ -1427,6 +1500,12 @@ static int export_one_member_ens(ki_Member *mem, int member_idx,
     cfg.w0_marker = mem->W0 ? mem->W0[0] : 0;
     strncpy(cfg.maj_token, maj_mode_token(aa.maj_mode), sizeof(cfg.maj_token) - 1);
     cfg.maj1_thresh = aa.maj1_thresh;
+    /* v14+ precision block: how the stored logits were computed (the merge
+     * --check validates archives against these AND against the .meta). */
+    cfg.ot_precision = (int32_t)OT_PRECISION;
+    cfg.bit_width    = (int32_t)KI_BIT_WIDTH;
+    snprintf(cfg.counter_type, sizeof(cfg.counter_type), "%.23s",
+             ki_counter_type_str());
 
     char wid_str[16];
     snprintf(wid_str, sizeof(wid_str), "%d", mem->enc_width);
@@ -2091,9 +2170,10 @@ static void print_class_voting_debug(ki_Member **members, int active_members,
     int *total = (int *)calloc((size_t)KI_NCLASSES, sizeof(int));
     int (*correct)[KI_NCLASSES] = (int (*)[KI_NCLASSES])
         calloc((size_t)active_members, sizeof(int[KI_NCLASSES]));
-    if (!total || !correct) {
+    int *correct_ens = (int *)calloc((size_t)KI_NCLASSES, sizeof(int));
+    if (!total || !correct || !correct_ens) {
         fprintf(stderr, "[FATAL] print_class_voting_debug OOM\n");
-        free(total); free(correct); exit(1);
+        free(total); free(correct); free(correct_ens); exit(1);
     }
 
     /* ── First pass: count samples per class ────────────────── */
@@ -2102,14 +2182,31 @@ static void print_class_voting_debug(ki_Member **members, int active_members,
         if (k >= 0 && k < KI_NCLASSES) total[k]++;
     }
 
-    /* ── Zweiter Pass: per member Scores berechnen, argmax, vergleich ── */
-    for (int m = 0; m < active_members; m++) {
-        ki_Member *mem = members[m];
-        for (int s = 0; s < N; s++) {
+    /* ── Zweiter Pass: per Sample alle Member + ENSEMBLE (2026-08-12) ──
+     * Sample-outer loop so the per-class score SUM over all members can be
+     * accumulated — the ensemble decision is argmax of that sum, NOT the
+     * argmax of any single member (a member with low individual recall can
+     * still tip the sum, e.g. avg4@spiral:sig8 +3 Bag hits in member-8.out).
+     * The "ens-total" table row shows this ensemble recall per class.
+     * FIX (2026-08-12): in PRF mode every member has its OWN CEX input
+     * (mem->gb_buf_te) because members differ in channel/encoding width —
+     * the global X buffer (X_te) is wrong per member. That made ens-total
+     * disagree with the confusion matrix (Pullover 0% vs 81.9%). Use the
+     * member's precomputed gb when available; fall back to X (seq mode). */
+    for (int s = 0; s < N; s++) {
+        SCORE_TYPE ens_sum[KI_NCLASSES];
+        for (int k = 0; k < KI_NCLASSES; k++) ens_sum[k] = 0;
+        for (int m = 0; m < active_members; m++) {
+            ki_Member *mem = members[m];
             SCORE_TYPE sc[KI_NCLASSES];
-            scores_otto(X + (size_t)s * (size_t)n_cont + mem->slc_off,
-                        mem->W0, mem->H_local, mem->NC_slice,
-                        mem->target, mem->offset, sc);
+            if (mem->gb_buf_te) {
+                scores_otto_from_gb(s, mem->H_local, mem->gb_buf_te,
+                                    mem->target, mem->offset, sc);
+            } else {
+                scores_otto(X + (size_t)s * (size_t)n_cont + mem->slc_off,
+                            mem->W0, mem->H_local, mem->NC_slice,
+                            mem->target, mem->offset, sc);
+            }
             int pred = 0;
             for (int k = 1; k < KI_NCLASSES; k++)
                 if (sc[k] > sc[pred]) pred = k;
@@ -2118,6 +2215,16 @@ static void print_class_voting_debug(ki_Member **members, int active_members,
                 if (true_k >= 0 && true_k < KI_NCLASSES)
                     correct[m][true_k]++;
             }
+            for (int k = 0; k < KI_NCLASSES; k++)
+                ens_sum[k] += sc[k];
+        }
+        int ens_pred = 0;
+        for (int k = 1; k < KI_NCLASSES; k++)
+            if (ens_sum[k] > ens_sum[ens_pred]) ens_pred = k;
+        if (ens_pred == (int)y[s]) {
+            int true_k = (int)y[s];
+            if (true_k >= 0 && true_k < KI_NCLASSES)
+                correct_ens[true_k]++;
         }
     }
 
@@ -2129,61 +2236,90 @@ static void print_class_voting_debug(ki_Member **members, int active_members,
 
     if (n_active == 0) { free(total); free(correct); return; }
 
-    #define FORMAT_TEXT           "  %-14s"
-    #define FORMAT_FLT            "  %6.1f%%"
-    printf("\n  ── Class-voting stats (Ep %d) ──────────────────────────────\n", ep + 1);
-    printf(FORMAT_TEXT, "member");
+    /* ASCII table via libtprint (GPL-3.0, vendored otto-score-ifc/lib/
+     * tprint.c) — the library computes the per-column width from the
+     * widest header/value cell itself, so the table is ALWAYS exactly
+     * column-aligned (fix 2026-08-12: hand-rolled %-7s broke on long
+     * class names like "T-shirt/top" / "Ankle boot"). The specialist's
+     * target column(s) from "# META: ... TARGET=3,7" are marked with
+     * "*" around the name (feature 2026-08-12: "one specialist = one
+     * question" — target must beat all other specialists on its column). */
+    TPrint *tp = tprint_create(stdout, TRUE, TRUE, 2, 2);
+    tprint_set_double_fmt(tp, "%5.1f%%");
+    tprint_column_add(tp, "member", TPAlign_center, TPAlign_left);
     for (int ai = 0; ai < n_active; ai++) {
         int k = active_cols[ai];
-        printf("  %-7s", ki_class_names[k]);
+        char cap[32];
+        if (aa.member_target_mask & (1 << k))
+            snprintf(cap, sizeof(cap), "*%s*", ki_class_names[k]);
+        else
+            snprintf(cap, sizeof(cap), "%s", ki_class_names[k]);
+        tprint_column_add(tp, cap, TPAlign_center, TPAlign_right);
     }
-    printf("  %-7s\n", "avg");
-
-    /* Trennlinie */
-    printf(FORMAT_TEXT,"──────────────");
-    for (int ai = 0; ai < n_active; ai++)
-        printf("  %-7s", "───────");
-    printf("  %-7s\n", "───────");
+    tprint_column_add(tp, "avg", TPAlign_center, TPAlign_right);
 
     int *ok_member = (int *)calloc((size_t)active_members, sizeof(int));
     for (int m = 0; m < active_members; m++) {
-        /* ── Member-Label ─────────────────────────────────────── */
-        char label[24];
+        /* ── Member-Label (XF:CHAN:ENC format, fix 2026-08-12) ──
+         * Old format "#%d mnist=sig8" dropped the xform — two members with
+         * different xforms (avg4@spiral vs sft-u3@spiral) both showed as
+         * "mnist=sig8" and were indistinguishable. Now matches the
+         * --member-out spec: "#%d <xform>:<channel>:<enc><width>", e.g.
+         * "#0 avg4@spiral:mnist:sig8". Uses the debug fields that the
+         * member-file loader / xform generator fill. */
+        char label[64];
         ki_Member *mem = members[m];
-        if (aa.enc_count > 0 && mem->vi < aa.enc_count) {
-            int col = (int)aa.enc_array[mem->vi].color;
-            int typ = (int)aa.enc_array[mem->vi].type;
-            int w   = (int)aa.enc_array[mem->vi].width;
-            const char *cn = (col >= 0) ? ki_color_name(col) : "?";
-            const char *en = ki_enc_name_short((int8_t)typ);
-            snprintf(label, sizeof(label), "#%d %s=%s%d", m, cn, en, w);
-        } else {
-            snprintf(label, sizeof(label), "#%d", m);
-        }
+        const char *xn = (mem->xform_id >= 0) ? ki_xform_str(mem->xform_id) : "?";
+        const char *cn = (mem->color_bit >= 0) ? ki_color_name(mem->color_bit) : "?";
+        const char *en = ki_enc_name_short((int8_t)mem->enc_type);
+        snprintf(label, sizeof(label), "#%d %s:%s:%s%d",
+                 m, xn, cn, en, mem->enc_width);
+        tprint_data_add_str(tp, 0, label);
 
-        printf(FORMAT_TEXT, label);
         int member_ok = 0;
         for (int ai = 0; ai < n_active; ai++) {
             int k = active_cols[ai];
             if (total[k] > 0) {
                 double pct = (double)correct[m][k] * 100.0 / (double)total[k];
-                printf(FORMAT_FLT, pct);
+                tprint_data_add_double(tp, ai + 1, pct);
                 member_ok += correct[m][k];
             } else {
-                printf("       ");
+                tprint_data_add_str(tp, ai + 1, "-");
             }
         }
         ok_member[m] = member_ok;
         double avg = (double)member_ok * 100.0 / (double)N;
-        printf(FORMAT_FLT "\n", avg);
+        tprint_data_add_double(tp, n_active + 1, avg);
     }
 
-    printf("  ──────────────────────────────────────────────────────────────\n\n");
+    /* ── ENSEMBLE total row (2026-08-12): the SUM of all member scores is
+     * the ensemble decision (same semantics as merge-ensemble). Per-class
+     * recall of the ensemble — the single-member evl% values above are NOT
+     * the relevant measure for "does the ensemble win this class". */
+    {
+        int ens_ok = 0;
+        tprint_data_add_str(tp, 0, "ens-total");
+        for (int ai = 0; ai < n_active; ai++) {
+            int k = active_cols[ai];
+            if (total[k] > 0) {
+                double pct = (double)correct_ens[k] * 100.0 / (double)total[k];
+                tprint_data_add_double(tp, ai + 1, pct);
+                ens_ok += correct_ens[k];
+            } else {
+                tprint_data_add_str(tp, ai + 1, "-");
+            }
+        }
+        double avg = (double)ens_ok * 100.0 / (double)N;
+        tprint_data_add_double(tp, n_active + 1, avg);
+    }
+
+    printf("\n  ── Class-voting stats (Ep %d) ──────────────────────────────\n", ep + 1);
+    tprint_print(tp);
+    tprint_free(tp);
+    printf("\n");
     fflush(stdout);
 
-    free(total); free(correct); free(ok_member);
-    #undef FORMAT_TEXT
-    #undef FORMAT_FLT
+    free(total); free(correct); free(correct_ens); free(ok_member);
 }
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -2322,6 +2458,14 @@ static int ifc_load_model(const char *path,
  * MAIN
  * ═══════════════════════════════════════════════════════════════════ */
 int main(int argc, char *argv[]) {
+    /* Record the trainer executable basename (for the .meta EXE= guard).
+     * basename(): strips any ./ or path prefix so the same binary invoked
+     * via ./fashion-... and /abs/path/fashion-... matches. */
+    {
+        const char *b = strrchr(argv[0], '/');
+        const char *exe = b ? b + 1 : argv[0];
+        snprintf(g_exe_name, sizeof(g_exe_name), "%s", exe);
+    }
     /* Filter out --debug-epoch before ki_parse_args */
     const char **debug_av = (const char **)malloc((size_t)(argc + 1) * sizeof(char *));
     int debug_ac = 0;
@@ -2677,6 +2821,22 @@ int main(int argc, char *argv[]) {
 #endif
     int total_members = 0;  /* recomputed after member_spec generation */
 
+    /* ── Pre-flight: verify/create the --export-merge-scores dir BEFORE
+     * training. A mismatched trainer exe (or config) must abort the WHOLE
+     * run here — otherwise every member trains and only then each per-member
+     * export fails. This is the .meta EXE= guard (2026-08-11).
+     * NOTE: must run AFTER the aa.hidden repurpose above (Bit-Voting sets
+     * aa.hidden = NC_slice = the I=H container count) — before it, aa.hidden
+     * still holds the CLI default (64) and the .meta would be created with
+     * the WRONG H (bug 2026-08-11: BV32 sweep failed with
+     * "config mismatch (H=64/784)"). */
+    if (!aa.dry_run && aa.export_merge_scores[0]) {
+        if (export_merge_scores_meta_check(aa.export_merge_scores) != 0) {
+            ki_dataset_free(&data);
+            return 1;
+        }
+    }
+
     /* ── Default W0 source: splitmix64 PRNG.*no more auto search) ─── */
     /* --seed-file override → w0_rand_set_file() in W0 init.
      * With seed_splitmix=1.*splitmix64 is always used. */
@@ -2829,7 +2989,7 @@ int main(int argc, char *argv[]) {
         printf("  Eval:    %.1f%%  (%d/%d)\n", acc, evl_ok, total_eval);
         printf("  Time:    %dms\n", el);
         ki_report_show(0, 0, evl_ok, total_eval, el, aa.threadN,
-                       total_eval - evl_ok, 0.0f, n_mifc);
+                       total_eval - evl_ok, 0.0f, n_mifc, 0);
         /* ── Export per-sample predictions (for vis-errors) ─ */
         if (aa.predictions[0] && pred_eval) {
             FILE *pf = fopen(aa.predictions, "wb");
@@ -2973,9 +3133,16 @@ int main(int argc, char *argv[]) {
     fflush(stdout);
 
     {
+#if COUNTER_TYPE_IS_FLOAT
+        /* Lossless float mode (OT_F=1): the step IS the lr — an int cast
+         * would show 0 for lr=0.05. Display it as a float. 2026-08-16. */
+        printf("══╡ TRAINING ╞══  lr=%.4f  step=%.4f  mode=%s  F=%d",
+             (double)aa.lr, (double)ot_precision(aa.lr), mode_str(), OT_F);
+#else
         int step = (int)(aa.lr * (float)OT_F + 0.5f);
         printf("══╡ TRAINING ╞══  lr=%.4f  step=%d  mode=%s  F=%d",
              (double)aa.lr, step, mode_str(), OT_F);
+#endif
         printf("  tgt-init=%s", target_init_str());
         if (aa.multi_correct)
           printf("  multi-correct=on");
@@ -3282,6 +3449,7 @@ int main(int argc, char *argv[]) {
     }
 
     int _sweep_trained = 0, _sweep_skipped = 0;
+    int _sweep_done = 0; /* progress lines emitted (ETA base; sequential, no lock) */
     int _last_xf = -1;   /* xform of the previously processed member (cache clear) */
     for (int mb = 0; mb < active_members; mb++) {
         ki_Member *mem = members[mb];
@@ -3476,6 +3644,38 @@ int main(int argc, char *argv[]) {
         float member_gap = 0.0f;  /* train/eval gap for step damping */
         SCORE_TYPE _gap_sc[KI_NCLASSES];
         for (int ep = 0; ep < epochs; ep++) {
+#if COUNTER_TYPE_IS_FLOAT
+            /* Lossless float mode (2026-08-16): the correction step IS the
+             * (damped) learning rate — no int cast, no min-2 clamp. In the
+             * int32 path step_init_local = lr×F (~6554) and an int step with
+             * min 2 is fine; here step_init_local = lr (0.05) and the int
+             * cast + "s_step<2 → 2" clamp would force every correction to
+             * 2.0 → targets explode (10^300, NaN scores). */
+            COUNTER_TYPE s_step = step_init_local;
+            if (aa.warmup_epochs > 0 && mem->ep < aa.warmup_epochs) {
+                float scale = (float)(mem->ep + 1) / (float)aa.warmup_epochs;
+                s_step = (COUNTER_TYPE)((double)step_init_local * (double)scale);
+            } else {
+                float progress = (float)(mem->ep - aa.warmup_epochs) / (float)((epochs + 0) - aa.warmup_epochs);
+                if (progress > 1.0f) progress = 1.0f;
+                float cosine = (1.0f + cosf(progress * (float)3.14159265358979323846f)) / 2.0f;
+                float lr_min_f = (aa.lr_min > 0.0f) ? aa.lr_min : 0.0f;
+                s_step = (COUNTER_TYPE)((double)step_init_local *
+                          (double)(lr_min_f + (1.0f - lr_min_f) * cosine));
+            }
+            /* Gap damping: exp(-K × gap) reduces step when overfitting gap widens */
+            if (aa.gap_k > 0.0f && member_gap > 0.0f) {
+                float gap_factor = expf(-aa.gap_k * member_gap);
+                s_step = (COUNTER_TYPE)((double)s_step * (double)gap_factor);
+            }
+            if (s_step < (COUNTER_TYPE)0) s_step = (COUNTER_TYPE)0;
+            mem->step = (int)s_step;
+
+             int err = ki_batch_correct(mem->target, mem->H_local, mem->offset,
+                         mem->gb_buf, y_tr, total_train, (COUNTER_TYPE)s_step,
+                         (size_t)mem->H_local * KI_NCLASSES * 32, aa.filter_mask,
+                         mem->H_local, 0);
+#else
             int s_step;
             if (aa.warmup_epochs > 0 && mem->ep < aa.warmup_epochs) {
                 float scale = (float)(mem->ep + 1) / (float)aa.warmup_epochs;
@@ -3499,6 +3699,7 @@ int main(int argc, char *argv[]) {
                          mem->gb_buf, y_tr, total_train, (COUNTER_TYPE)s_step,
                          (size_t)mem->H_local * KI_NCLASSES * 32, aa.filter_mask,
                          mem->H_local, 0);
+#endif
             mem->last_err = err;
             /* trn_acc is set correctly AFTER evaluation (see below) */
             mem->ep++;
@@ -3891,11 +4092,31 @@ int main(int argc, char *argv[]) {
                 const char *_xn = ki_xform_str(mem->xform_id);
                 snprintf(_mi, sizeof(_mi), "  %s:%s:%s:%d", _xn, _cn, _en, _ew);
             }
-            printf("  [%3d/%d] TRAIN%s  err=%d/%d  evl=%d/%d (%.1f%%)\n",
+            _sweep_done++;
+            printf("  [%3d/%d] TRAIN%s  err=%d/%d  evl=%d/%d (%.1f%%)",
                    mb+1, active_members, _mi,
                    mem->last_err, total_train,
                    _member_evl, total_eval,
                    (float)_member_evl * 100.0f / (float)(total_eval > 0 ? total_eval : 1));
+            /* ETA from elapsed wall time and _sweep_done (2026-08-16):
+             * rate = done / elapsed → remaining / rate. Only shown once
+             * the rate is stable (>= 20 members). */
+            if (_sweep_done >= 20) {
+                struct timeval _eta_tv;
+                gettimeofday(&_eta_tv, NULL);
+                double _el = (double)(_eta_tv.tv_sec - tv_start.tv_sec)
+                           + (double)(_eta_tv.tv_usec - tv_start.tv_usec) / 1e6;
+                if (_el > 0.0) {
+                    double _rate = (double)_sweep_done / _el; /* members/s */
+                    double _eta = (double)(active_members - _sweep_done) / _rate;
+                    int _eh = (int)(_eta / 3600.0);
+                    int _em = (int)(_eta / 60.0) % 60;
+                    printf("  ETA %dh%02dm (%.1f/min)", _eh, _em, _rate * 60.0);
+                }
+            } else {
+                printf("  ETA ...");
+            }
+            printf("\n");
             fflush(stdout);
         }
 
@@ -3906,9 +4127,16 @@ int main(int argc, char *argv[]) {
             if (aa.sweep) _sweep_trained++;
         }
 
-        /* ── Free per-member gb ── */
+        /* ── Free per-member gb ──
+         * gb_buf_te is KEPT in the non-sweep case: print_class_voting_debug()
+         * runs AFTER this loop and reads mem->gb_buf_te (the member's own CEX
+         * input) to compute the ens-total row — freeing it here forced the
+         * X_te fallback, which is wrong per-member in PRF mode (Pullover 0%
+         * vs 81.9% in the confusion matrix, bug 2026-08-12). It is freed
+         * after the debug outputs. In sweep mode the debug flags are ignored
+         * and ki_member_destroy frees the member anyway. */
         free(mem->gb_buf); mem->gb_buf = NULL;
-        free(mem->gb_buf_te); mem->gb_buf_te = NULL;
+        if (aa.sweep) { free(mem->gb_buf_te); mem->gb_buf_te = NULL; }
 
         /* ── Sweep mode: Member sofort zerstören ── */
         if (aa.sweep) {
@@ -3980,7 +4208,11 @@ int main(int argc, char *argv[]) {
 
     /* ── Final report ── */
     int trn_ok = final_trn_ok, evl_ok = final_evl_ok;
-    uint8_t *pred_eval = aa.predictions[0] ?  (uint8_t *)ki_xcalloc((size_t)total_eval, sizeof(uint8_t)) : NULL ;
+    /* pred_eval: built when predictions are requested OR when the confusion
+     * matrix runs on the eval split (2026-08-12: --debug-confusion-matrix now
+     * shows evl% data, same split as --debug-class-voting). */
+    uint8_t *pred_eval = (aa.predictions[0] || (aa.debug_confusion && !aa.dry_run))
+        ? (uint8_t *)ki_xcalloc((size_t)total_eval, sizeof(uint8_t)) : NULL ;
     uint8_t *pred_tr = (aa.debug_confusion && !aa.dry_run)
         ? (uint8_t *)ki_xcalloc((size_t)total_train, sizeof(uint8_t)) : NULL ;
     if (!aa.dry_run) {
@@ -4067,13 +4299,29 @@ int main(int argc, char *argv[]) {
     }
 
     if (aa.debug_class_voting && !aa.dry_run) {
+        /* EVAL-split (evl%), not train — the specialist question is about
+         * generalisation ("does S_k beat all other specialists on class k?"),
+         * train% is meaningless for that (fix 2026-08-12: table showed trn%
+         * of freshly retrained members, which drifted far from the .ens
+         * eval-scores the merge-ensemble selection is based on). */
         print_class_voting_debug(members, active_members,
-                                 X_tr, y_tr, total_train, (int)n_cont, epochs - 1);
+                                 X_te, y_te, total_eval, (int)n_cont, epochs - 1);
     }
     if (aa.debug_confusion && !aa.dry_run) {
-        print_confusion_debug(y_tr, pred_tr, total_train, epochs - 1, 1);
+        /* EVAL split + ENSEMBLE (2026-08-12): same as seq-prof — the
+         * confusion matrix shows the ensemble decision on eval data. */
+        print_confusion_debug(y_te, pred_eval, total_eval, epochs - 1, 1);
     }
     free(pred_tr);
+    if (pred_eval && !aa.predictions[0]) free(pred_eval);
+
+    /* Free the eval-gb buffers kept for the debug outputs above
+     * (non-sweep: print_class_voting_debug read mem->gb_buf_te; see the
+     * member-loop free comment, bug 2026-08-12). */
+    if (!aa.sweep) {
+        for (int _z = 0; _z < active_members; _z++)
+            if (members[_z]) { free(members[_z]->gb_buf_te); members[_z]->gb_buf_te = NULL; }
+    }
 
     /* Export MUST happen before member destruction (liest members[b]->target/offset) */
     if (aa.exportD[0] != '\0')
@@ -4103,7 +4351,7 @@ int main(int argc, char *argv[]) {
     /* REPORT uses best eval across all member evaluations */
     int report_evl_ok = (best_evl_ok > 0) ? best_evl_ok : final_evl_ok;
     ki_report_show(trn_ok, total_train, report_evl_ok, total_eval,
-                   elapsed_ms, aa.threadN, fin_err, aa.lr, active_members);
+                   elapsed_ms, aa.threadN, fin_err, aa.lr, active_members, 0);
 
     /* ── Export per-sample predictions (eval only, for vis-errors) ─ */
     if (aa.predictions[0]) {

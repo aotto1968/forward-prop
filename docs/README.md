@@ -36,8 +36,15 @@ This directory contains all end-user-facing documentation for the
 
 | Document | Topic |
 |----------|-------|
+| [architecture.md](architecture.md) | **Internal pipeline & concurrency** — member loop, caches, parallel safety, .ens contract |
 | [ensemble.md](ensemble.md) | Ensemble workflow — train now, merge later |
 | [vision_en.md](vision_en.md) | The evolution of life and perfect randomness |
+
+## Score Archive Format
+
+| Document | Topic |
+|----------|-------|
+| [scores.md](scores.md) | **Score definition & .ens format** — exact computation chain, file layout, merge |
 
 ---
 

@@ -164,7 +164,7 @@ at equal/better eval: 105 gives 36 members vs 56 at 107.</p>
     <tr><td><code>--beam-bestN N</code> breaks 1st-best fixation</td><td>per-level selection starts at the N-th best candidate; bestN=3 single run: 91.16 vs 90.94 (bestN=1)</td></tr>
     <tr><td><code>--min-gain 0</code> is a real lever</td><td>867→866 (57 members) on Otto, 1106→1105 (24) on BV</td></tr>
     <tr><td><code>--optimal</code> (2-opt) is a dead end</td><td>1-swap-stable attractor — no improving single swap</td></tr>
-    <tr><td><code>--start-member-file</code> = monotone pool extension</td><td>beam starts from a saved attractor (floor) — new members can only ADD, never redirect below it</td></tr>
+    <tr><td><code>--member-start</code> = monotone pool extension</td><td>beam starts from a saved attractor (floor) — new members can only ADD, never redirect below it</td></tr>
     <tr><td>clarity (class-score std-dev)</td><td><code>--expansion-sort clarity</code> + <code>--greedy-clarity</code>; DIVERSITY beats pure clarity</td></tr>
     <tr><td><strong>beam is NOT pool-monotone</strong></td><td>adding 312 shuffle members WORSENED 6/10 corpora — MORE members ≠ better</td></tr>
 </table>

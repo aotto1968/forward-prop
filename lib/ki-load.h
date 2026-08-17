@@ -139,7 +139,10 @@ static __attribute__((unused)) uint32_t *load_input(const uint8_t *X_raw,
  * Replaces the broad per-xform cache: instead of one 4.4 GB buffer holding
  * ALL 71 CHAN:ENC slices, each member caches ONLY its own slice
  * (256 containers = 62 MB). File name carries the full member identity:
- *   data/prepped/cex_<chan>_<enc><w>_<xform>_v<implver>_<N>x<slice>.pre
+ *   data/prepped/cex_<chan>_<enc><w>_b<width>_<xform>_v<implver>_<N>x<slice>.pre
+ * (b<width> = KI_BIT_WIDTH, added 2026-08-11: the old name keyed only on
+ * slice count and COLLIDED across bit widths — 8-bit+exp16 and 16-bit+exp16
+ * both wrote cex_..._x392.pre, silently thrashing the cache.)
  * → any member change OR xform implementation change produces a new file
  * name → stale caches are never served (bug 2026-08-04 colswap cache).
  * --sweep never writes (each member is trained once and never re-read).
@@ -231,7 +234,18 @@ static __attribute__((unused)) void ki_sample_block_row(uint8_t *dst,
     }
     /* Need-only filters — see write-map comment above */
     switch (color) {
-    case COLOR_EDGE: case COLOR_C: ki_compute_edge(px, 32, 32); break;
+    case COLOR_EDGE:
+#if KI_COLORS == 1
+        /* Fashion/MNIST grayscale: Sobel on the single MNIST block (no
+         * COLOR_Y exists). Plan: plan-2026-08-13-fashion-edge-channel.md */
+        ki_compute_edge_gray(px, 32, 32);
+        break;
+#else
+        /* CIFAR: Sobel on Y + AL (RGB derived) */
+        ki_compute_edge(px, 32, 32);
+        break;
+#endif
+    case COLOR_C: ki_compute_edge(px, 32, 32); break;
     case COLOR_BIN:   ki_compute_binary(px, 32, 32); break;
     case COLOR_LBP:   ki_compute_lbp(px, 32, 32); break;
     case COLOR_DOG:   ki_compute_dog(px, 32, 32); break;
@@ -315,6 +329,7 @@ static __attribute__((unused)) uint32_t *load_input_cex_cached(
         h = h * 31 + (uint32_t)(uint8_t)w;
         h = h * 31 + (uint32_t)KI_XFORM_IMPL_VERSION;
         h = h * 31 + (uint32_t)KI_NC;
+        h = h * 31 + (uint32_t)KI_BIT_WIDTH;   /* FIX 2026-08-11: bit width in key */
         h = h * 31 + (uint32_t)KI_PX;
         h = h * 31 + (uint32_t)KI_COLORS;
 #ifdef KI_DATASET_ID
@@ -322,10 +337,15 @@ static __attribute__((unused)) uint32_t *load_input_cex_cached(
 #endif
     }
 
-    /* Human-readable path (names, not just hash) — easy to spot/delete */
+    /* Human-readable path (names, not just hash) — easy to spot/delete.
+     * FIX 2026-08-11: b<width> in the name — the old name keyed only on
+     * n_cont, which COLLIDED for mixed bit widths (8-bit build + exp16 and
+     * 16-bit build + exp16 both wrote cex_..._70000x392.pre). The hash
+     * already differed (KI_NC), so correctness was safe, but the file was
+     * silently overwritten → cache thrash. b8/b16 makes it explicit. */
     char path[1024];
-    snprintf(path, sizeof(path), "data/prepped/cex_%s_%s%d_%s_v%d_%dx%d.pre",
-              ki_color_name(color), ki_enc_name_short(typ), w,
+    snprintf(path, sizeof(path), "data/prepped/cex_%s_%s%d_b%d_%s_v%d_%dx%d.pre",
+              ki_color_name(color), ki_enc_name_short(typ), w, KI_BIT_WIDTH,
               ki_xform_str(xform_id), KI_XFORM_IMPL_VERSION, n_samples, n_cont);
 
     /* Cache hit — skipped entirely with --no-ens-cache (real-live: compute
@@ -425,11 +445,16 @@ static __attribute__((unused)) uint32_t *load_input_cex_cached(
     return X;
 }
 #else
-/* MNIST (KI_COLORS <= 1): single channel — the CEX slice is the whole buffer */
+/* MNIST (KI_COLORS <= 1): single channel — the CEX slice is the whole buffer.
+ * KANAL-ERWEITERUNG (2026-08-13, plan-2026-08-13-fashion-edge-channel.md):
+ * color is no longer ignored. COLOR_MNIST = raw grayscale (legacy); extra
+ * structure channels (COLOR_EDGE etc.) are computed on the transformed
+ * source BEFORE encoding, so Shirt/Pullover/Coat get an explicit edge map
+ * (button placket, sleeve hems, lapels). The cache key + filename include
+ * the channel name so mnist and edge variants never collide. */
 static __attribute__((unused)) uint32_t *load_input_cex_cached(
         const uint8_t *X_raw, int n_samples,
         int color, int enc_type, int enc_width, int xform_id) {
-    (void)color;
     int w = enc_width > 0 ? enc_width : KI_ENC_WIDTH_DEFAULT;
     int typ = enc_type >= 0 ? enc_type : KI_ENC_LIN7;
     int n_cont = NC * w / KI_BIT_WIDTH;
@@ -437,13 +462,16 @@ static __attribute__((unused)) uint32_t *load_input_cex_cached(
 
     /* Cache key: channel/encoding/xform NAMES + impl version (stable) */
     uint32_t h = 0;
-    {   const char *en = ki_enc_name_short(typ);
+    {   const char *cn = ki_color_name(color);
+        const char *en = ki_enc_name_short(typ);
         const char *xn = ki_xform_str(xform_id);
+        while (*cn) h = h * 31 + (uint8_t)*cn++;
         while (*en) h = h * 31 + (uint8_t)*en++;
         while (*xn) h = h * 31 + (uint8_t)*xn++;
         h = h * 31 + (uint32_t)(uint8_t)w;
         h = h * 31 + (uint32_t)KI_XFORM_IMPL_VERSION;
         h = h * 31 + (uint32_t)NC;
+        h = h * 31 + (uint32_t)KI_BIT_WIDTH;   /* FIX 2026-08-11: bit width in key */
         h = h * 31 + (uint32_t)KI_PX;
         h = h * 31 + (uint32_t)KI_COLORS;
 #ifdef KI_DATASET_ID
@@ -451,10 +479,15 @@ static __attribute__((unused)) uint32_t *load_input_cex_cached(
 #endif
     }
 
-    /* Human-readable path (names, not just hash) — easy to spot/delete */
+    /* Human-readable path (names, not just hash) — easy to spot/delete.
+     * FIX 2026-08-11: b<width> in the name — the old name keyed only on
+     * n_cont, which COLLIDED for mixed bit widths (8-bit build + exp16 and
+     * 16-bit build + exp16 both wrote cex_..._70000x392.pre). The hash
+     * already differed (NC), so correctness was safe, but the file was
+     * silently overwritten → cache thrash. b8/b16 makes it explicit. */
     char path[1024];
-    snprintf(path, sizeof(path), "data/prepped/cex_%s_%s%d_%s_v%d_%dx%d.pre",
-             ki_color_name(COLOR_MNIST), ki_enc_name_short(typ), w,
+    snprintf(path, sizeof(path), "data/prepped/cex_%s_%s%d_b%d_%s_v%d_%dx%d.pre",
+             ki_color_name(color), ki_enc_name_short(typ), w, KI_BIT_WIDTH,
               ki_xform_str(xform_id), KI_XFORM_IMPL_VERSION, n_samples, n_cont);
 
     /* Cache hit — skipped with --no-ens-cache (real-live compute, see above) */
@@ -480,10 +513,45 @@ static __attribute__((unused)) uint32_t *load_input_cex_cached(
     }
 
     /* Cache miss: transform only here (on miss), then encode the slice.
-     * Single-slot in-memory xform cache — see CIFAR variant above. */
+     * Single-slot in-memory xform cache — see CIFAR variant above.
+     * KANAL-ERWEITERUNG (2026-08-14): a structure channel (edge/bin/lbp/
+     * dog/var/dir/range) computes its feature map on the transformed
+     * grayscale source first, then encodes that — the member sees edges/
+     * texture instead of raw pixels (plan-2026-08-13-fashion-edge-channel.md).
+     * The compute functions are channel-agnostic via KI_EDGE_SRC (COLOR_Y
+     * for CIFAR, COLOR_MNIST for grayscale). */
     uint32_t *X = (uint32_t *)ki_xmalloc(total * sizeof(uint32_t));
     int pack = 32 / w, shift = w;
     const uint8_t *src = ki_xform_get(X_raw, n_samples, xform_id);
+    const uint8_t *enc_src = src;
+    uint8_t *chan_buf = NULL;
+    if (color == COLOR_EDGE || color == COLOR_BIN || color == COLOR_LBP ||
+        color == COLOR_DOG || color == COLOR_VAR || color == COLOR_DIR ||
+        color == COLOR_RANGE) {
+        chan_buf = (uint8_t *)ki_xmalloc((size_t)n_samples * (size_t)KI_PX);
+        uint8_t px[COLOR_NB][1024];
+        #pragma omp parallel for schedule(static) firstprivate(px)
+        for (int s = 0; s < n_samples; s++) {
+            memset(px, 0, sizeof(px));
+            for (int p = 0; p < KI_PX; p++) {
+                uint8_t g = src[(size_t)s * (size_t)KI_PX + (size_t)p];
+                /* COLOR_MNIST = grayscale (KI_COLORS==1) */
+                px[COLOR_MNIST][p] = g;
+            }
+            switch (color) {
+            case COLOR_EDGE:  ki_compute_edge_gray(px, 32, 32); break;
+            case COLOR_BIN:   ki_compute_binary(px, 32, 32); break;
+            case COLOR_LBP:   ki_compute_lbp(px, 32, 32); break;
+            case COLOR_DOG:   ki_compute_dog(px, 32, 32); break;
+            case COLOR_VAR:   ki_compute_var(px, 32, 32); break;
+            case COLOR_DIR:   ki_compute_dir(px, 32, 32); break;
+            case COLOR_RANGE: ki_compute_range(px, 32, 32); break;
+            default: break;
+            }
+            memcpy(chan_buf + (size_t)s * (size_t)KI_PX, px[color], KI_PX);
+        }
+        enc_src = chan_buf;
+    }
     #pragma omp parallel for schedule(static) firstprivate(pack, shift, typ, w, n_cont)
     for (int s = 0; s < n_samples; s++) {
         uint32_t *row = X + (size_t)s * (size_t)n_cont;
@@ -491,13 +559,14 @@ static __attribute__((unused)) uint32_t *load_input_cex_cached(
             uint32_t val = 0;
             for (int k = 0; k < pack; k++) {
                 size_t p = (size_t)s * (size_t)KI_PX + (size_t)c * (size_t)pack + (size_t)k;
-                uint8_t pv = src[p];
+                uint8_t pv = enc_src[p];
                 uint32_t ev = enc_lut_get(typ, w, pv);
                 val |= ev << (unsigned)(k * shift);
             }
             row[c] = val;
         }
     }
+    if (chan_buf) free(chan_buf);
 
     /* Save (never in --sweep: each member trained once, never re-read) */
     if (!aa.no_ens_cache && !aa.sweep && total * sizeof(uint32_t) <= KI_PREPPED_MAX_BYTES) {

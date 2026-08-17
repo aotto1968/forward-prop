@@ -10,6 +10,7 @@
  * Single source for both MNIST and CIFAR (via ki-local.h dataset aliases).
  */
 #include "ki-config.h"
+#include "../lib/tprint.h"   /* before ki-common.h: ki-common.h uses TPrint/tprint_* */
 #include "ki-common.h"
 #include "ki-adamw.h"
 
@@ -323,7 +324,7 @@ int main(int argc, char *argv[]) {
         printf("  Eval:    %.1f%%  (%d samples, %d members)\n", (double)acc, total_eval, n_loaded);
         printf("  Time:    %dms\n", el);
         int evl_ok = (int)(acc * (float)total_eval / 100.0f + 0.5f);
-        ki_report_show(0, 0, evl_ok, total_eval, el, aa.threadN, 0, 0.0f, 0);
+        ki_report_show(0, 0, evl_ok, total_eval, el, aa.threadN, 0, 0.0f, 0, 0);
         for (int i = 0; i < n_loaded; i++) { free(l0_arr[i].W); free(l1_arr[i].W); }
         ki_dataset_free(&data); free(X_all);
         return 0;
@@ -577,7 +578,7 @@ int main(int argc, char *argv[]) {
     int eval_ok = (int)(best_eval_acc * (float)total_eval / 100.0f + 0.5f);
     int train_ok = (int)(best_eval_acc * (float)total_train / 100.0f + 0.5f);
     ki_report_show(train_ok, total_train, eval_ok, total_eval,
-                   elapsed_ms, aa.threadN, 0, 0.0f, 0);
+                   elapsed_ms, aa.threadN, 0, 0.0f, 0, 0);
 
     /* ── Confusion matrix (end only) ───────────────────────────── */
     if ((aa.debug_confusion || aa.debug_confusion_all) && !aa.dry_run) {

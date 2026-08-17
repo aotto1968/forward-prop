@@ -41,7 +41,7 @@
 
 #define ENS_MAGIC 0x454E534D  /* 'ENSM' */
 #define ENS_VER_MIN 1
-#define ENS_VER_MAX 13
+#define ENS_VER_MAX 15
 
 /* ═══════════════════════════════════════════════════════════════════════
  * PART A — version → format mapping (the single source of truth)
@@ -52,13 +52,14 @@ static inline int ens_version_valid(int ver) {
 }
 
 /* Element width of one stored score (v1-7 int64, v8 int32, v9-11 float,
- * v12 double, v13 int64). */
+ * v12 double, v13 int64, v14 int64+precision, v15 double+precision). */
 static inline int ens_score_bytes(int ver) {
     return (ver >= 8 && ver <= 11) ? 4 : 8;
 }
 
 /* Human label of the STORED score type (for headers/verify messages). */
 static inline const char *ens_score_type_str(int ver) {
+    if (ver >= 14) return (ver == 15) ? "double" : "int64";
     if (ver >= 13) return "int64";
     if (ver == 12) return "double";
     if (ver >= 9)  return "float32";
@@ -73,14 +74,21 @@ static inline int ens_has_xform_list(int ver)    { return ver == 5; }   /* v5 xf
 static inline int ens_has_member_strings(int ver){ return ver >= 7; }   /* 4 length-prefixed strings */
 static inline int ens_has_w0(int ver)            { return ver >= 10; }  /* W0[0] marker */
 static inline int ens_has_maj(int ver)           { return ver >= 11; }  /* maj_token + maj1_thresh */
+/* v14+ (2026-08-12): precision block — ot_precision (F=1<<OT_PRECISION),
+ * bit_width (KI_BIT_WIDTH), counter_type label. v14 = int64 scores,
+ * v15 = double scores; both 8 bytes, distinguished by version so the
+ * reader knows whether to interpret the values as int64 or double. */
+static inline int ens_has_precision(int ver)     { return ver >= 14; }
 
 /* Version for the internal SCORE_TYPE (writer) — the export follows the
- * internal format (decision 2026-08-06). */
+ * internal format (decision 2026-08-06). v14 = int64 + precision block,
+ * v15 = double + precision block (2026-08-12). The legacy float (v11)
+ * and int32 (v8) formats are unchanged for old archives. */
 static inline int ens_version_for_score_type(void) {
     return _Generic((SCORE_TYPE)0,
+        double:  15,
+        int64_t: 14,
         float:   11,
-        double:  12,
-        int64_t: 13,
         default: 8);
 }
 
@@ -97,6 +105,11 @@ typedef struct {
     uint32_t w0_marker;       /* v>=10: W0[0] */
     char     maj_token[8];    /* v>=11: majority token */
     int32_t  maj1_thresh;     /* v>=11: maj1 threshold */
+    /* v>=14 precision block (2026-08-12): how the stored logits were
+     * computed, so --check can verify archives "fit together". */
+    int32_t  ot_precision;    /* F = 1<<OT_PRECISION (17 for int32/flt32) */
+    int32_t  bit_width;       /* KI_BIT_WIDTH (8/16/32) */
+    char     counter_type[24];/* "int32_t" | "float" (COUNTER_TYPE label) */
     const char *member_fields[4]; /* v>=7: color, enc, enc-width, xform strings */
 } EnsWriteCfg;
 
@@ -131,6 +144,12 @@ static inline int ens_write(const char *path, const EnsWriteCfg *c,
         if (fwrite(c->maj_token, 1, 8, f) != 8) goto done;
         if (fwrite(&c->maj1_thresh, 4, 1, f) != 1) goto done;
     }
+    if (ens_has_precision(ver)) {
+        int32_t _otp = c->ot_precision, _bw = c->bit_width;
+        if (fwrite(&_otp, 4, 1, f) != 1) goto done;
+        if (fwrite(&_bw, 4, 1, f) != 1) goto done;
+        if (fwrite(c->counter_type, 1, 24, f) != 24) goto done;
+    }
     if (ens_has_member_strings(ver)) {
         for (int i = 0; i < 4; i++) {
             const char *s = c->member_fields[i] ? c->member_fields[i] : "";
@@ -159,6 +178,10 @@ typedef struct {
     uint32_t    w0_marker;
     char        maj_token[8];
     int32_t     maj1_thresh;
+    /* v>=14 precision block (2026-08-12) */
+    int32_t     ot_precision;   /* 0 = absent (v<14) */
+    int32_t     bit_width;      /* 0 = absent (v<14) */
+    char        counter_type[24]; /* "" = absent (v<14) */
     int64_t     file_time;     /* 0 = absent (v1-2) */
     int         n_xforms;      /* v5: list count; else 1 */
     uint32_t    xform_ids[64]; /* v5 only */
@@ -212,6 +235,13 @@ static inline int ens_reader_open(EnsReader *rd, const char *path) {
         if (fread(rd->maj_token, 1, 8, rd->f) != 8) { fclose(rd->f); rd->f = NULL; return -1; }
         if (fread(&rd->maj1_thresh, 4, 1, rd->f) != 1) { fclose(rd->f); rd->f = NULL; return -1; }
         rd->hdr_bytes += 8 + 4;
+    }
+    if (ens_has_precision((int)rd->version)) {
+        if (fread(&rd->ot_precision, 4, 1, rd->f) != 1) { fclose(rd->f); rd->f = NULL; return -1; }
+        if (fread(&rd->bit_width, 4, 1, rd->f) != 1) { fclose(rd->f); rd->f = NULL; return -1; }
+        if (fread(rd->counter_type, 1, 24, rd->f) != 24) { fclose(rd->f); rd->f = NULL; return -1; }
+        rd->counter_type[23] = '\0';
+        rd->hdr_bytes += 4 + 4 + 24;
     }
     rd->n_xforms = 1;
     if (ens_has_xform_list((int)rd->version)) {
@@ -279,7 +309,9 @@ static inline int ens_reader_read_scores(EnsReader *rd, SCORE_TYPE *out) {
     if (ens_reader_read_raw(rd) != 0) return -1;
     size_t n = rd->score_sz;
     int ver = (int)rd->version;
-    if (ver >= 13) { for (size_t i = 0; i < n; i++) out[i] = (SCORE_TYPE)((int64_t *)rd->tmp)[i]; }
+    if (ver >= 14) { if (ver == 15) { for (size_t i = 0; i < n; i++) out[i] = (SCORE_TYPE)((double *)rd->tmp)[i]; }
+                     else           { for (size_t i = 0; i < n; i++) out[i] = (SCORE_TYPE)((int64_t *)rd->tmp)[i]; } }
+    else if (ver >= 13) { for (size_t i = 0; i < n; i++) out[i] = (SCORE_TYPE)((int64_t *)rd->tmp)[i]; }
     else if (ver == 12) { for (size_t i = 0; i < n; i++) out[i] = (SCORE_TYPE)((double *)rd->tmp)[i]; }
     else if (ver >= 9)  { if (rd->fp_scale) { for (size_t i = 0; i < n; i++) out[i] = (SCORE_TYPE)(((float *)rd->tmp)[i] * 1048576.0f); }
                           else { for (size_t i = 0; i < n; i++) out[i] = (SCORE_TYPE)((float *)rd->tmp)[i]; } }
@@ -294,7 +326,9 @@ static inline int ens_reader_read_scores_float(EnsReader *rd, float *out) {
     if (ens_reader_read_raw(rd) != 0) return -1;
     size_t n = rd->score_sz;
     int ver = (int)rd->version;
-    if (ver >= 13) { for (size_t i = 0; i < n; i++) out[i] = (float)((int64_t *)rd->tmp)[i]; }
+    if (ver >= 14) { if (ver == 15) { for (size_t i = 0; i < n; i++) out[i] = (float)((double *)rd->tmp)[i]; }
+                     else           { for (size_t i = 0; i < n; i++) out[i] = (float)((int64_t *)rd->tmp)[i]; } }
+    else if (ver >= 13) { for (size_t i = 0; i < n; i++) out[i] = (float)((int64_t *)rd->tmp)[i]; }
     else if (ver == 12) { for (size_t i = 0; i < n; i++) out[i] = (float)((double *)rd->tmp)[i]; }
     else if (ver >= 9)  { for (size_t i = 0; i < n; i++) out[i] = (float)((float *)rd->tmp)[i]; }
     else if (ver >= 8)  { for (size_t i = 0; i < n; i++) out[i] = (float)((int32_t *)rd->tmp)[i]; }
@@ -351,6 +385,17 @@ static inline int ens_verify(const char *path, const EnsWriteCfg *c,
         (strncmp(rd.maj_token, c->maj_token, 8) != 0 ||
          rd.maj1_thresh != c->maj1_thresh)) {
         fprintf(stderr, "[ens-verify] %s: maj token/threshold mismatch\n", path);
+        rc = -1;
+    }
+    if (ens_has_precision((int)rd.version) &&
+        (rd.ot_precision != c->ot_precision ||
+         rd.bit_width    != c->bit_width ||
+         strncmp(rd.counter_type, c->counter_type, 16) != 0)) {
+        fprintf(stderr, "[ens-verify] %s: precision mismatch "
+                "(otp=%d/%d bits=%d/%d ct=%.16s/%.16s)\n",
+                path, rd.ot_precision, c->ot_precision,
+                rd.bit_width, c->bit_width,
+                rd.counter_type, c->counter_type);
         rc = -1;
     }
     /* member metadata */

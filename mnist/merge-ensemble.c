@@ -16,11 +16,18 @@
  *   Score type by version: v1-7 int64, v8 int32, v9-11 float,
  *                          v12 double, v13 int64 (2026-08-06: export follows
  *                          the internal SCORE_TYPE — no precision loss).
+ *   v14 int64+precision, v15 double+precision (2026-08-12): the header adds
+ *   ot_precision(4) bit_width(4) counter_type[24] — how the stored logits
+ *   were computed, so --check can verify archives "fit together".
  *
  * Options:
  *   DIR         Directory containing .ens score archives
  *   --max N     Stop greedy/beam at N members (default: unlimited)
  *   --save FILE Save cumulative accuracy to FILE (default: DIR/merge.dat)
+ *   --target N[,M,...]  Optimize the ensemble for the given class(es) only
+ *                       (recall on target-class samples, 0-100%).
+ *   --filter-sample N[,M,...]  Restrict the EVALUATION set to samples whose
+ *                       label is in the list (sample-level filter).
  *   -h, --help  Show this help text
  *
  * Build:
@@ -41,9 +48,14 @@
 #include <sys/time.h>
 #include <regex.h>
 #include <omp.h>
+#include <carquet/carquet.h> /* --sample-index: Parquet writer (2026-08-15,
+                               replaces SQLite — see DESIGN comment below) */
 /* Define ki_Args aa in this file (make KI_ARGS_EXTERN empty) */
 #define KI_ARGS_EXTERN
 #include "ki-config.h"
+/* libtprint BEFORE ki-common.h: print_confusion_debug() in ki-common.h uses
+ * TPrint for the confusion table (2026-08-12). */
+#include "../lib/tprint.h"
 #include "../lib/ki-encoding.h"
 #include "../lib/ki-ens.h"   /* .ens format: reader (all version logic central) */
 #include "ki-common.h"
@@ -88,6 +100,22 @@ static uint64_t score_crc64(const SCORE_TYPE *scores, size_t n) {
     return h;
 }
 
+/* ── FNV-1a 64-bit — stable member ID for --sample-index (2026-08-14) ──
+ * The member_id in the sample-index Parquet files is FNV-1a over the .ens
+ * basename (the spec, e.g. "colswap-1-4@rot112:lbp:tri8"). Deterministic
+ * from the name → the same member gets the same ID across corpus changes,
+ * regardless of n_blocks order. Collision probability for ~25k names:
+ * negligible (< 1 in 2^64/25k — practically zero); on collision the caller
+ * appends a "_2" suffix and warns. */
+static uint64_t member_id_fnv1a(const char *name) {
+    uint64_t h = 1469598103934665603ULL;   /* FNV offset basis */
+    for (const unsigned char *p = (const unsigned char *)name; *p; p++) {
+        h ^= (uint64_t)*p;
+        h *= 1099511628211ULL;             /* FNV prime */
+    }
+    return h;
+}
+
 #ifndef KI_NCLASSES
 #define KI_NCLASSES 10
 #endif
@@ -96,7 +124,8 @@ static uint64_t score_crc64(const SCORE_TYPE *scores, size_t n) {
 /* Fields are read individually (size differs between versions) */
 typedef struct {
     uint32_t magic;       /* 0x454E534D ('ENSM') */
-    uint32_t version;     /* 1..13: 1-7 int64, 8 int32, 9-11 float, 12 double, 13 int64 */
+    uint32_t version;     /* 1..15: 1-7 int64, 8 int32, 9-11 float, 12 double,
+                           13 int64, 14 int64+precision, 15 double+precision */
     uint32_t n_test;      /* eval samples */
     uint32_t n_classes;   /* KI_NCLASSES */
     uint32_t n_members;   /* members in this file */
@@ -111,6 +140,10 @@ typedef struct {
     uint32_t w0_marker;    /* v10+: W0[0] marker for W0 verification */
     char     maj_token[8]; /* v11+: majority mode token ("1","1r","1p","1rp","3","7") */
     uint32_t maj1_thresh;  /* v11+: maj1 threshold (-2=auto, -1=n/2, >=0 exact) */
+    /* v14+ precision block (2026-08-12) */
+    int32_t  ot_precision; /* F = 1<<OT_PRECISION */
+    int32_t  bit_width;    /* KI_BIT_WIDTH (8/16/32) */
+    char     counter_type[24]; /* "int32_t" | "float" */
 } ScoreHeader;
 
 /* -- Per-member score block ----------------------------------- */
@@ -156,6 +189,11 @@ static int    g_epochs;
 static int    g_split_vn;
 static int    g_split_hn;
 static int    g_target_err_x100;
+/* Precision-consistency across archives (v14+, 2026-08-12) — tentative
+ * decls (blocks_from_index sits before the definitions with initializers). */
+static int    g_ens_otp;
+static int    g_ens_bits;
+static char   g_ens_ct[16];
 /* W0-marker consistency: the FIRST non-placeholder archive decides whether
  * this directory holds Otto archives (w0_marker != 0) or Bit-Voting archives
  * (w0_marker == 0). Mixing both would corrupt the ensemble — mixing check
@@ -206,20 +244,25 @@ typedef struct {
     int      hidden, epochs, split_vn, split_hn, target_err_x100; /* .meta identity check */
     int      n_test, n_classes;   /* eval samples / classes (per archive) */
     int      n_members, n_xforms;
+    /* v14+ precision (2026-08-12): 0/"" = absent (older archives) */
+    int      ot_precision;
+    int      bit_width;
+    char     counter_type[24];
     IndexMember *members;   /* [n_members] */
 } IndexFile;
 
 #define KIDX_MAGIC   0x5844494Bu  /* "KIDX" */
-#define KIDX_VERSION 2            /* v2: +ctime per file, +member eval, +dims */
+#define KIDX_VERSION 3            /* v3: +ot_precision/bit_width/counter_type per file */
 
 /* Binary layout of one IndexFile (see index_save): name[128], mtime i64,
  * ctime i64, size i64, file_time i64, file_eval f32, version i32, seed i32,
  * w0_marker u32, maj_token[8], maj1_thresh i32, hidden i32, epochs i32,
  * split_vn i32, split_hn i32, target_err_x100 i32, n_test i32, n_classes i32,
- * n_members i32, n_xforms i32
- * → 128+8+8+8+8+4+4+4+4+8+4+4+4+4+4+4+4+4+4+4 = 224 B, followed by n_members ×
- * (member_idx, color, enc_type, enc_width, xform_real, eval = 6×i32 = 24 B
- *  + xform_name[64] = 88 B). */
+ * n_members i32, n_xforms i32,
+ * v3: ot_precision i32, bit_width i32, counter_type[24]
+ * → 128+8+8+8+8+4+4+4+4+8+4+4+4+4+4+4+4+4+4+4+4+4+24 = 256 B, followed by
+ * n_members × (member_idx, color, enc_type, enc_width, xform_real, eval =
+ * 6×i32 = 24 B + xform_name[64] = 88 B). */
 
 /* Read the header + per-member metadata of ONE .ens file into an IndexFile —
  * the .index cache is filter-INDEPENDENT: this function never skips a file and
@@ -266,6 +309,10 @@ static int read_ens_meta(const char *path, IndexFile *e) {
     e->maj1_thresh = rd.maj1_thresh;   /* -999 for v<11 (reader default) */
     e->n_xforms = rd.n_xforms;
     e->n_members = (int)rd.n_members;
+    /* v14+ precision block (2026-08-12) */
+    e->ot_precision = (int)rd.ot_precision;
+    e->bit_width    = (int)rd.bit_width;
+    snprintf(e->counter_type, sizeof(e->counter_type), "%s", rd.counter_type);
     if (rd.n_members < 1 || rd.n_members > 100000) { ens_reader_close(&rd); return 1; }
     e->members = (IndexMember *)calloc((size_t)rd.n_members, sizeof(IndexMember));
     if (!e->members) { fprintf(stderr, "[FATAL] OOM\n"); exit(1); }
@@ -408,11 +455,14 @@ static int index_save(const char *dir, const IndexFile *files, int n_files) {
                 h = e->hidden, ep = e->epochs, vn = e->split_vn, hn = e->split_hn,
                 te = e->target_err_x100,
                 nt = e->n_test, nc = e->n_classes,
-                nm = e->n_members, nx = e->n_xforms;
+                nm = e->n_members, nx = e->n_xforms,
+                otp = e->ot_precision, bw = e->bit_width;
         fwrite(&mt, 4, 1, f); fwrite(&h, 4, 1, f); fwrite(&ep, 4, 1, f);
         fwrite(&vn, 4, 1, f); fwrite(&hn, 4, 1, f); fwrite(&te, 4, 1, f);
         fwrite(&nt, 4, 1, f); fwrite(&nc, 4, 1, f);
         fwrite(&nm, 4, 1, f); fwrite(&nx, 4, 1, f);
+        fwrite(&otp, 4, 1, f); fwrite(&bw, 4, 1, f);
+        fwrite(e->counter_type, 1, 24, f);
         for (int m = 0; m < e->n_members; m++) {
             int32_t mm = e->members[m].member_idx, c = e->members[m].color,
                     t = e->members[m].enc_type, w = e->members[m].enc_width,
@@ -486,12 +536,14 @@ static int index_load(const char *dir, IndexFile **files_out) {
             for (uint32_t j = 0; j < i; j++) free(files[j].members);
             free(files); fclose(f); return -1;
         }
-        int32_t mt, h, ep, vn, hn, te, nt, nc, nm, nx;
+        int32_t mt, h, ep, vn, hn, te, nt, nc, nm, nx, otp, bw;
         if (fread(&mt, 4, 1, f) != 1 || fread(&h, 4, 1, f) != 1 ||
             fread(&ep, 4, 1, f) != 1 || fread(&vn, 4, 1, f) != 1 ||
             fread(&hn, 4, 1, f) != 1 || fread(&te, 4, 1, f) != 1 ||
             fread(&nt, 4, 1, f) != 1 || fread(&nc, 4, 1, f) != 1 ||
-            fread(&nm, 4, 1, f) != 1 || fread(&nx, 4, 1, f) != 1) {
+            fread(&nm, 4, 1, f) != 1 || fread(&nx, 4, 1, f) != 1 ||
+            fread(&otp, 4, 1, f) != 1 || fread(&bw, 4, 1, f) != 1 ||
+            fread(e->counter_type, 1, 24, f) != 24) {
             fprintf(stderr, "  [WARN] %s: truncated index — rebuilding\n", path);
             for (uint32_t j = 0; j < i; j++) free(files[j].members);
             free(files); fclose(f); return -1;
@@ -502,6 +554,8 @@ static int index_load(const char *dir, IndexFile **files_out) {
         e->split_vn = (int)vn; e->split_hn = (int)hn;
         e->target_err_x100 = (int)te;
         e->n_test = (int)nt; e->n_classes = (int)nc;
+        e->ot_precision = (int)otp; e->bit_width = (int)bw;
+        e->counter_type[23] = '\0';
         if (e->n_members < 0 || e->n_members > 100000) {
             for (uint32_t j = 0; j < i; j++) free(files[j].members);
             free(files); fclose(f); return -1;
@@ -639,6 +693,26 @@ static void blocks_from_index(IndexFile *files, int n_files) {
                 continue;
             }
         }
+        /* Precision-consistency (v14+, 2026-08-12): the first v14+ archive
+         * sets the expected ot_precision/bit_width/counter_type; every later
+         * archive must match — mixing e.g. int32/OT_PRECISION=17 with
+         * flt32/OT_PRECISION=16 archives would sum incompatible logits. */
+        if (e->version >= 14 && e->ot_precision != 0) {
+            if (g_ens_otp == 0 && g_ens_ct[0] == '\0') {
+                g_ens_otp = e->ot_precision;
+                g_ens_bits = e->bit_width;
+                snprintf(g_ens_ct, sizeof(g_ens_ct), "%s", e->counter_type);
+            } else if (g_ens_otp != e->ot_precision ||
+                       g_ens_bits != e->bit_width ||
+                       strcmp(g_ens_ct, e->counter_type) != 0) {
+                fprintf(stderr, "  [WARN] %s: precision mismatch "
+                        "(otp=%d/%d bits=%d/%d ct=%s/%s) — skipping\n",
+                        e->name, e->ot_precision, g_ens_otp,
+                        e->bit_width, g_ens_bits,
+                        e->counter_type, g_ens_ct);
+                continue;
+            }
+        }
         /* .meta identity: catch stale/mixed configs */
         if (g_meta_ok) {
             if (e->hidden != g_meta_h || e->epochs != g_meta_ep ||
@@ -669,9 +743,9 @@ static void blocks_from_index(IndexFile *files, int n_files) {
             if (g_meta_st[0]) {
                 int ver_ok = 0;
                 if (strcmp(g_meta_st, "IEEE 754 double") == 0)
-                    ver_ok = (e->version == 12);
+                    ver_ok = (e->version == 12 || e->version == 15);
                 else if (strcmp(g_meta_st, "int64_t") == 0)
-                    ver_ok = (e->version == 13 || e->version == 8);
+                    ver_ok = (e->version == 13 || e->version == 14 || e->version == 8);
                 else /* "IEEE 754 float32" */
                     ver_ok = (e->version >= 9 && e->version <= 11);
                 if (!ver_ok) {
@@ -736,16 +810,13 @@ static void blocks_from_index(IndexFile *files, int n_files) {
                     case 4: pass = (fabsf(im->eval - g_eval_thresh) < 0.001f); break;
                 }
                 if (!pass) {
-                    const char *op_str = "gt";
-                    switch (g_eval_cmp) {
-                        case 0: op_str = "gt"; break;
-                        case 1: op_str = "ge"; break;
-                        case 2: op_str = "lt"; break;
-                        case 3: op_str = "le"; break;
-                        case 4: op_str = "eq"; break;
-                    }
-                    fprintf(stderr, "  [SKIP] %s  eval=%.1f%%  (filter: eval %s %.1f)\n",
-                            e->name, im->eval, op_str, g_eval_thresh);
+                    /* INTENTIONAL (2026-08-14): the per-member [SKIP] line
+                     * was removed — with a low absolute threshold ("eval gt
+                     * 80") thousands of members are filtered and the log is
+                     * flooded (1000+ lines). The percentile filter path
+                     * prints a single summary line in main already; this
+                     * absolute path now stays silent and only the final
+                     * block count shows the filter effect. */
                     continue;
                 }
             }
@@ -793,18 +864,58 @@ static char   g_eval_op = '>';     /* operator char for display */
 static float  g_eval_thresh = 0.0f; /* threshold value */
 static char   g_ens_maj[8] = "";    /* v11+: majority token of first loaded .ens */
 static int    g_ens_majt = -999;    /* v11+: maj1_thresh of first loaded .ens */
+
+/* ── Target-class optimization (2026-08-11) ─────────────────────────
+ * --target 3,7        : optimize the ensemble as if only these classes
+ *                       existed. correct counts ONLY when
+ *                       label ∈ targets AND pred == label (exact hit);
+ *                       the denominator is the count of target-class
+ *                       samples (recall, 0-100% — not diluted by the
+ *                       class distribution to 0-10%).
+ * --filter-sample 3,7 : SAMPLE-level filter: only samples whose LABEL
+ *                       is in the list enter the evaluation (correct AND
+ *                       denominator). Members are still all loaded —
+ *                       a member-level eval filter is pointless here,
+ *                       every member contains all classes.
+ * Both flags accept a comma-separated class list (0..KI_NCLASSES-1).
+ * Default (neither flag): exact old behavior. */
+static int    g_target_active = 0;      /* 1 = --target given */
+static int    g_target_binary = 0;      /* --target-binary: k vs. all other
+                                           classes as ONE binary decision.
+                                           TP+TN = correct, FP+FN = error
+                                           (2026-08-14, plan: specialist
+                                           "is it k?" with FP penalty — the
+                                           old target-only recall let a
+                                           member say "everything is k"). */
+static int    g_target_count = 0;       /* number of target classes */
+static int    g_target_classes[10];     /* --target 3,7 → {3,7} */
+static int    g_filter_sample_active = 0; /* 1 = --filter-sample given */
+static int    g_filter_sample_count = 0;
+static int    g_filter_sample_classes[10]; /* --filter-sample 0,9 */
+static int    g_eval_denom = 0;         /* effective denominator (after label load) */
 /* .meta (directory identity) values — used to validate every .ens against
  * the directory's recorded config. SEED is intentionally NOT a criterion:
  * --ensembleN (per-member seeds) and --sweep are mutually exclusive, and
  * W0 verification runs via the w0_marker of the first member only. */
 static int    g_meta_ok = 0;        /* 1 = .meta exists with H/EP/VN/HN */
 static int    g_meta_h = 0, g_meta_ep = 0, g_meta_vn = 0, g_meta_hn = 0;
+static int    g_meta_bits = 0;      /* BITS= (container bit width, 0 = legacy absent) */
+static int    g_meta_otp = 0;       /* OT_PRECISION (F=1<<OT_PRECISION logit scale, 0 = legacy absent) */
+/* Precision-consistency across archives (2026-08-12): the FIRST v14+ archive
+ * decides the expected ot_precision/bit_width/counter_type; later archives
+ * must match (mixing int32/otp17 with flt32/otp17 archives would corrupt the
+ * ensemble). 0 = unset (no v14+ archive seen yet). */
+static int    g_ens_otp = 0;
+static int    g_ens_bits = 0;
+static char   g_ens_ct[16] = "";
 static char   g_meta_maj[8] = "";   /* "" = field absent */
 static int    g_meta_majt = -999;   /* -999 = field absent */
 static char   g_member_out[1024] = "";  /* --member-out PATH: write optimal subset as member file */
+static int    g_member_out_default = 0; /* --member-out-default: derive member-{DIR}.out
+                                           from the corpus dir (2026-08-16) */
 static char   g_xform_spec[1024] = "";  /* --xform SPEC: expand xform list (e.g. "sweep@spiral") */
 static char   g_member_seed_spec[256] = ""; /* --member-seed SPEC: pre-seed beam with this member spec */
-static char   g_start_member_file[1024] = ""; /* --start-member-file FILE: start the beam from a
+static char   g_start_member_file[1024] = ""; /* --member-start FILE: start the beam from a
                                            previously exported attractor (--member-out) instead of
                                            a single seed. The beam then only ADDS members — the
                                            pool extension becomes monotone: adding @shuffle etc.
@@ -843,14 +954,33 @@ static float  g_min_gain = 0.01f;       /* --min-gain F: min. improvement %% to 
 static int    g_optimal = 0;            /* --optimal: 2-opt exchange on the beam result
                                            (removal allowed — breaks the add-only
                                            attractor, plan-2026-08-08 Stage 2) */
+/* --optimal mode (2026-08-12): 0 = best-improvement (default, deterministic,
+ * applies the GLOBAL best swap per pass), 1 = first-improvement (applies the
+ * FIRST swap that improves — explores a different local optimum, faster per
+ * pass). Both stay monotonic (err strictly decreases). */
+static int    g_optimal_mode = 0;       /* 0 = best (default), 1 = first */
+static int    g_optimal_passes = 0;     /* --optimal-passes N: cap the fixpoint
+                                           search at N passes (0 = unlimited,
+                                           run until no improvement) */
 static int    g_greedy_clarity = 0;     /* --greedy-clarity: among candidates that do NOT
                                            worsen the current ensemble (acc >= prev_acc),
                                            pick the one with the highest member clarity
                                            (own class-score std-dev) instead of the best
                                            acc — prefer unambiguous voters (plan-2026-08-08) */
 static int    g_debug = 0;              /* --debug: verbose debug output */
+static int    g_debug_member = 0;      /* --debug-member: detailed list of the SELECTED
+                                          members after the beam, in the trainer's
+                                          --debug-member format (2026-08-12) */
+static int    g_debug_confusion = 0;   /* --debug-confusion: print the final ensemble's
+                                          confusion matrix (tprint table, same as the
+                                          trainer's --debug-confusion) after the beam /
+                                          greedy / multi-try search (2026-08-14) */
 static int    g_seed_sort = 0;         /* --seed-sort: print single-member eval table */
 static int    g_seed_top = 0;          /* --seed-sort N: show only top N rows (0 = all) */
+static char   g_sample_index[1024] = ""; /* --sample-index FILE: write member↔sample
+                                           recognition pairs as Parquet
+                                           (2026-08-15, 3rd gen) — full pair table,
+                                           ALL assignments (argmax pred) + margin */
 static int    g_stdout = 0;            /* --stdout: pure filter-export — print the filtered
                                           XF:CHAN:ENC specs to stdout, suppress normal output */
 static int    g_stdout_field = 0;      /* --stdout column extraction: 0=full spec,
@@ -858,6 +988,13 @@ static int    g_stdout_field = 0;      /* --stdout column extraction: 0=full spe
 static float    g_best_eval = -1.0f;      /* global best across tries (beam) */
 static int      g_best_n = 0;            /* member count for global best */
 static uint8_t *g_best_used = NULL;     /* used mask for global best */
+/* Additionsreihenfolge des global besten Ensembles (order[] aus dem Beam),
+ * in der Reihenfolge, in der die Member dem Ensemble hinzugefügt wurden.
+ * --debug-member iteriert darüber, damit acc[%] kumulativ monoton steigt
+ * und die Tabelle exakt die Member des member-out files zeigt (gleiche
+ * Menge, andere Sortierung). 2026-08-14. */
+static int      g_best_order_n = 0;      /* Anzahl Member in g_best_order */
+static int     *g_best_order = NULL;     /* block-Indizes in Additionsreihenfolge */
 
 /* ═══════════════════════════════════════════════════════════════════════
  * COMPLETION TABLE — for --completion flag (bash auto-completion)
@@ -869,7 +1006,12 @@ static uint8_t *g_best_used = NULL;     /* used mask for global best */
 static const struct _comp_entry merge_comp_table[] = {
     {"--check",            "none",  NULL},
     {"--filter",           "token", "eval regexp regex ! :"},
+    {"--filter-t1",        "none",  NULL},
+    {"--target",           "token", "0 1 2 3 4 5 6 7 8 9"},
+    {"--target-binary",    "none",  NULL},
+    {"--filter-sample",    "token", "0 1 2 3 4 5 6 7 8 9"},
     {"--seed-sort",        "num",   NULL},
+    {"--sample-index",     "file",  NULL},
     {"--greedy",           "none",  NULL},
     {"--greedy-clarity",   "none",  NULL},
     {"--beam",             "num",   NULL},
@@ -881,16 +1023,20 @@ static const struct _comp_entry merge_comp_table[] = {
     {"--max",              "num",   NULL},
     {"--min-gain",         "float", NULL},
     {"--member-seed",      "token", NULL},
-    {"--start-member-file","file",  NULL},
+    {"--member-start","file",  NULL},
     {"--eff-lambda",       "float", NULL},
     {"--expansion-sort",   "token", "abs marg marginal clarity clr"},
-    {"--optimal",          "none",  NULL},
+    {"--optimal",          "token", "best first"},
+    {"--optimal-passes",   "num",   NULL},
     {"--debug",            "none",  NULL},
+    {"--debug-member",     "none",  NULL},
+    {"--debug-confusion",  "none",  NULL},
     {"--stdout",           "none",  NULL},
     {"--encoding",         "token", "@enc"},
     {"--channel",          "token", "@color"},
     {"--xform",            "token", "@xform"},
     {"--member-out",       "file",  NULL},
+    {"--member-out-default", "none", NULL},
     {"--save",             "file",  NULL},
     {"--num",              "num",   NULL},
     {"--help",             "none",  NULL},
@@ -1035,6 +1181,67 @@ static int member_is_filtered(const ScoreBlock *b) {
     return 0;
 }
 
+/* ── Target-class / filter-sample evaluation helpers (2026-08-11) ──
+ * These centralize the "is sample s correct" decision that used to be
+ * duplicated at every correct++ site. Semantics:
+ *   --target T        : label ∈ T AND pred == label  (exact hit of the
+ *                       target class; denominator = target-class count)
+ *   --filter-sample L : only samples with label ∈ L enter the eval
+ *                       (both correct AND denominator); members are all
+ *                       loaded — this filters the SAMPLE set, not members.
+ * Default (neither): pred == label, denominator = n_test (old behavior). */
+static int in_class_list(const int *list, int n, int c) {
+    for (int i = 0; i < n; i++)
+        if (list[i] == c) return 1;
+    return 0;
+}
+
+/* Returns 1 if a sample with true label `label` and PREDICTED class
+ * `pred` counts as "correct" under the active target/filter-sample mode.
+ * This is the pure membership decision (no argmax) — callers that already
+ * computed the argmax (candidate evaluation with base+sc sums) use this
+ * directly; eval_sample_correct() wraps it with the argmax. */
+static int eval_sample_correct_pred(int pred, uint8_t label) {
+    /* --filter-sample: exclude samples whose label is not in the list */
+    if (g_filter_sample_active &&
+        !in_class_list(g_filter_sample_classes, g_filter_sample_count, (int)label))
+        return 0;
+    if (g_target_active) {
+        if (g_target_binary) {
+            /* BINARY: --target k vs. all other classes as ONE decision.
+             * correct = (label==k && pred==k)  [TP]
+             *         | (label!=k && pred!=k)  [TN]
+             * FP (label!=k, pred==k) and FN (label==k, pred!=k) are errors.
+             * This penalizes the degenerate "everything is k" specialist
+             * that a pure target-recall objective tolerates. */
+            int is_k   = in_class_list(g_target_classes, g_target_count, (int)label);
+            int pred_k = in_class_list(g_target_classes, g_target_count, pred);
+            return (is_k == pred_k) ? 1 : 0;
+        }
+        /* Variante A: only target-class samples count, and only when the
+         * prediction EXACTLY hits the target class. */
+        if (!in_class_list(g_target_classes, g_target_count, (int)label)) return 0;
+        return (pred == (int)label) ? 1 : 0;
+    }
+    return (pred == (int)label) ? 1 : 0;
+}
+
+/* Row-based wrapper: computes argmax over the K class scores, then applies
+ * the membership decision. Used at the commit/print sites where only the
+ * committed sum_scores row is available. */
+static int eval_sample_correct(const SCORE_TYPE *row, uint8_t label) {
+    int pred = 0;
+    for (int k = 1; k < g_n_classes; k++)
+        if (row[k] > row[pred]) pred = k;
+    return eval_sample_correct_pred(pred, label);
+}
+
+/* Effective denominator for accuracy display: target/filter-sample mode
+ * (computed once after label load), n_test otherwise. Never 0. */
+static int eval_denom(void) {
+    return (g_eval_denom > 0) ? g_eval_denom : g_n_test;
+}
+
 /* -- Find member by spec string "xf:chan:encW" ----------------
  * Returns block index or -1 if not found. Used by --member-seed.
  * First tries exact match (xf:chan:encW), then lenient match
@@ -1087,6 +1294,34 @@ static int load_scores_directory(const char *dir) {
         if (blocks[i].scores == NULL) _order[k++] = i;
     qsort(_order, (size_t)need, sizeof(int), cmp_block_source);
 
+    /* ── Group ranges: all members of one source_file are contiguous in
+     * _order (cmp_block_source). Precompute [grp_begin, grp_end) per file so
+     * the OMP loop can iterate FILES (each opened exactly once) instead of
+     * blocks — one worker per file, disjoint blocks per worker. (2026-08-14) */
+    int n_groups = 0;
+    for (int o = 0; o < need; ) {
+        int oe = o;
+        while (oe < need &&
+               strcmp(blocks[_order[oe]].source_file, blocks[_order[o]].source_file) == 0)
+            oe++;
+        n_groups++;
+        o = oe;
+    }
+    int *grp_begin = (int *)malloc((size_t)n_groups * sizeof(int));
+    int *grp_end   = (int *)malloc((size_t)n_groups * sizeof(int));
+    if (!grp_begin || !grp_end) { fprintf(stderr, "[FATAL] OOM\n"); exit(1); }
+    {
+        int gi = 0;
+        for (int o = 0; o < need; ) {
+            int oe = o;
+            while (oe < need &&
+                   strcmp(blocks[_order[oe]].source_file, blocks[_order[o]].source_file) == 0)
+                oe++;
+            grp_begin[gi] = o; grp_end[gi] = oe; gi++;
+            o = oe;
+        }
+    }
+
     int filled = 0;
     int files_processed = 0;
     /* ── Progress indicator (2026-08-03): ONE line of dots ──
@@ -1100,13 +1335,77 @@ static int load_scores_directory(const char *dir) {
         printf("  Loading scores");
         fflush(stdout);
     }
-    for (int o = 0; o < need; ) {
-        const char *fname = blocks[_order[o]].source_file;
-        int oe = o;
-        while (oe < need && strcmp(blocks[_order[oe]].source_file, fname) == 0) oe++;
 
-        files_processed++;
-        if (!g_stdout && (files_processed % dot_interval == 0)) {
+    /* ── Labels + eval denominator ONCE, before the parallel loop ──
+     * Every archive carries the SAME test labels (the .index/.meta already
+     * validated the corpus identity), so they are loaded from the first
+     * readable file here and then only READ by the parallel workers below.
+     * INTENTIONAL: the label MISMATCH warning previously checked every
+     * archive; with OMP that would race on stderr + duplicate the read, and
+     * corpus identity is already guaranteed by the .index consistency check.
+     * A missing-labels archive still emits the classic warning. */
+    for (int gr = 0; gr < n_groups && !g_labels; gr++) {
+        const char *fname = blocks[_order[grp_begin[gr]]].source_file;
+        char path[1024];
+        snprintf(path, sizeof(path), "%s/%s", dir, fname);
+        EnsReader rd;
+        if (ens_reader_open(&rd, path) != 0) continue;
+        if (rd.n_members < 1 || rd.n_members > 100000) { ens_reader_close(&rd); continue; }
+        if (!COUNTER_TYPE_IS_FLOAT) rd.fp_scale = 1;
+        if (ens_reader_skip_all_meta(&rd) != 0) { ens_reader_close(&rd); continue; }
+        int _ok = 1;
+        for (uint32_t m = 0; m < rd.n_members; m++)
+            if (ens_reader_skip_scores(&rd) != 0) { _ok = 0; break; }
+        if (!_ok) { ens_reader_close(&rd); continue; }
+        g_labels = (uint8_t *)malloc((size_t)g_n_test);
+        if (!g_labels) { fprintf(stderr, "[FATAL] OOM\n"); exit(1); }
+        if (fread(g_labels, 1, (size_t)g_n_test, rd.f) != (size_t)g_n_test) {
+            fprintf(stderr, "  [WARN] %s: no labels found (old format?)\n", path);
+            free(g_labels); g_labels = NULL;
+        }
+        ens_reader_close(&rd);
+    }
+    /* Effective denominator for the target/filter-sample modes: computed
+     * ONCE here (identical to the old first-label-load logic). */
+    if (g_labels && g_eval_denom == 0) {
+        if (g_target_binary) {
+            g_eval_denom = g_n_test;   /* binary accuracy, not recall */
+        } else {
+            int d = 0;
+            for (int i = 0; i < g_n_test; i++) {
+                int lb = (int)g_labels[i];
+                if (g_filter_sample_active &&
+                    !in_class_list(g_filter_sample_classes,
+                                   g_filter_sample_count, lb)) continue;
+                if (g_target_active &&
+                    !in_class_list(g_target_classes, g_target_count, lb)) continue;
+                d++;
+            }
+            g_eval_denom = d > 0 ? d : g_n_test;   /* guard div-by-zero */
+        }
+    }
+
+    /* ── PARALLEL score load (2026-08-14) ──
+     * One OMP worker per source_file group. Every worker opens its OWN
+     * EnsReader (stack-local → thread-safe) and writes into DISJOINT blocks
+     * (scores / score_min / score_max / clarity are per-member, never shared
+     * between workers). Labels + g_eval_denom are read-only here (pre-loaded
+     * above) — no lock needed. Thread count = the global OMP setting the
+     * merge already uses (omp_get_num_procs / OMP_NUM_THREADS, see main);
+     * set OMP_NUM_THREADS to control it. schedule(dynamic) balances the
+     * (homogeneous ~810 KB) files across workers. */
+    int files_done = 0;
+    #pragma omp parallel for schedule(dynamic) reduction(+:filled)
+    for (int gr = 0; gr < n_groups; gr++) {
+        int o = grp_begin[gr], oe = grp_end[gr];
+        const char *fname = blocks[_order[o]].source_file;
+
+        /* one dot per dot_interval files, printed by thread 0 only
+         * (omp master is not allowed inside a worksharing loop) */
+        #pragma omp atomic
+        files_done++;
+        if (!g_stdout && omp_get_thread_num() == 0 &&
+            (files_done % dot_interval == 0)) {
             printf(".");
             fflush(stdout);
         }
@@ -1119,12 +1418,12 @@ static int load_scores_directory(const char *dir) {
          * in one path can no longer drift (bug 2026-08-06: "0 blocks filled"
          * SEGV). */
         EnsReader rd;
-        if (ens_reader_open(&rd, path) != 0) { o = oe; continue; }
-        if (rd.n_members < 1 || rd.n_members > 100000) { ens_reader_close(&rd); o = oe; continue; }
+        if (ens_reader_open(&rd, path) != 0) continue;
+        if (rd.n_members < 1 || rd.n_members > 100000) { ens_reader_close(&rd); continue; }
         /* int32-merge fixed-point scale on v9-11 float scores (backward
          * compatible with the int32 merge semantics; argmax-invariant). */
         if (!COUNTER_TYPE_IS_FLOAT) rd.fp_scale = 1;
-        if (ens_reader_skip_all_meta(&rd) != 0) { ens_reader_close(&rd); o = oe; continue; }
+        if (ens_reader_skip_all_meta(&rd) != 0) { ens_reader_close(&rd); continue; }
         uint32_t n_members = rd.n_members;
         size_t score_sz = rd.score_sz;
         int bad = 0;
@@ -1189,39 +1488,64 @@ static int load_scores_directory(const char *dir) {
             }
             filled++;
         }
-        if (!bad) {
-            /* Labels (uint8[n_test] appended by trainer) — load once, verify rest */
-            if (!g_labels) {
-                g_labels = (uint8_t *)malloc((size_t)g_n_test);
-                if (!g_labels) { fprintf(stderr, "[FATAL] OOM\n"); exit(1); }
-                if (fread(g_labels, 1, (size_t)g_n_test, rd.f) != (size_t)g_n_test) {
-                    fprintf(stderr, "  [WARN] %s: no labels found (old format?)\n", path);
-                    free(g_labels); g_labels = NULL;
-                }
-            } else {
-                uint8_t *check = (uint8_t *)malloc((size_t)g_n_test);
-                if (check) {
-                    if (fread(check, 1, (size_t)g_n_test, rd.f) == (size_t)g_n_test) {
-                        for (int i = 0; i < g_n_test; i++) {
-                            if (check[i] != g_labels[i]) {
-                                fprintf(stderr, "  [WARN] %s: label mismatch at sample %d (%d vs %d)\n",
-                                        path, i, check[i], g_labels[i]);
-                                break;
-                            }
-                        }
-                    }
-                    free(check);
-                }
-            }
-        }
+        (void)bad;   /* INTENTIONAL: label-read skipped in parallel workers
+                      * (done once in the pre-loop above); scores are the only
+                      * payload read here. */
         ens_reader_close(&rd);
-        o = oe;
     }
+    files_processed = files_done;
     /* Close the dot line and report the summary. */
     if (!g_stdout && files_processed > 0)
         printf(" done (%d files, %d blocks filled)\n", files_processed, filled);
+    free(grp_begin); free(grp_end);
     free(_order);
     return filled;
+}
+
+/* ── Load <dir>/.meta into the g_meta_* globals (directory identity) ──
+ * Used by load_directory AND fix_directory (--check) — the latter needs
+ * g_meta_bits/g_meta_otp/g_meta_ct to validate v14+ precision against the
+ * archives (2026-08-12). Returns 1 when a .meta was read, 0 otherwise. */
+static int meta_load_globals(const char *dir) {
+    char meta_path[1024];
+    snprintf(meta_path, sizeof(meta_path), "%s/.meta", dir);
+    FILE *mf = fopen(meta_path, "r");
+    if (!mf) return 0;
+    int m_h = 0, m_ep = 0, m_vn = 0, m_hn = 0, m_seed = 0;
+    int m_bits = 0;         /* 0 = field absent (legacy .meta) */
+    int m_otp  = 0;         /* OT_PRECISION (0 = field absent) */
+    char m_maj[8] = "";     /* empty = field absent */
+    int  m_majt = -999;     /* -999 = field absent */
+    char m_ct[64] = "";     /* COUNTER_TYPE label (empty = absent) */
+    char m_st[64] = "";     /* SCORE_TYPE label (empty = absent) */
+    char line[128];
+    while (fgets(line, sizeof(line), mf)) {
+        if (sscanf(line, "H=%d", &m_h) == 1) continue;
+        if (sscanf(line, "EPOCHS=%d", &m_ep) == 1) continue;
+        if (sscanf(line, "VN=%d", &m_vn) == 1) continue;
+        if (sscanf(line, "HN=%d", &m_hn) == 1) continue;
+        if (sscanf(line, "SEED=%d", &m_seed) == 1) continue;
+        if (sscanf(line, "MAJ=%7s", m_maj) == 1) continue;
+        if (sscanf(line, "MAJ1_THRESH=%d", &m_majt) == 1) continue;
+        if (sscanf(line, "BITS=%d", &m_bits) == 1) continue;
+        if (sscanf(line, "OT_PRECISION=%d", &m_otp) == 1) continue;
+        /* labels contain spaces ("IEEE 754 double") → rest of line */
+        if (sscanf(line, "COUNTER_TYPE=%63[^\n]", m_ct) == 1) continue;
+        if (sscanf(line, "SCORE_TYPE=%63[^\n]", m_st) == 1) continue;
+    }
+    fclose(mf);
+    g_meta_ok = 1;
+    g_meta_h = m_h; g_meta_ep = m_ep; g_meta_vn = m_vn; g_meta_hn = m_hn;
+    g_meta_bits = m_bits;
+    g_meta_otp = m_otp;
+    g_meta_maj[0] = '\0';
+    if (m_maj[0]) snprintf(g_meta_maj, sizeof(g_meta_maj), "%s", m_maj);
+    g_meta_majt = m_majt;
+    g_meta_ct[0] = '\0';
+    if (m_ct[0]) snprintf(g_meta_ct, sizeof(g_meta_ct), "%s", m_ct);
+    g_meta_st[0] = '\0';
+    if (m_st[0]) snprintf(g_meta_st, sizeof(g_meta_st), "%s", m_st);
+    return 1;
 }
 
 /* -- Load all .ens files from directory ---------------------- */
@@ -1229,42 +1553,15 @@ static int load_directory(const char *dir) {
     if (!dir || !dir[0]) return -1;
 
     /* Read .meta (directory identity) if present */
-    {
-        char meta_path[1024];
-        snprintf(meta_path, sizeof(meta_path), "%s/.meta", dir);
-        FILE *mf = fopen(meta_path, "r");
-        if (mf) {
-            int m_h = 0, m_ep = 0, m_vn = 0, m_hn = 0, m_seed = 0;
-            char m_maj[8] = "";     /* empty = field absent */
-            int  m_majt = -999;     /* -999 = field absent */
-            char m_ct[64] = "";     /* COUNTER_TYPE label (empty = absent) */
-            char m_st[64] = "";     /* SCORE_TYPE label (empty = absent) */
-            char line[128];
-            while (fgets(line, sizeof(line), mf)) {
-                if (sscanf(line, "H=%d", &m_h) == 1) continue;
-                if (sscanf(line, "EPOCHS=%d", &m_ep) == 1) continue;
-                if (sscanf(line, "VN=%d", &m_vn) == 1) continue;
-                if (sscanf(line, "HN=%d", &m_hn) == 1) continue;
-                if (sscanf(line, "SEED=%d", &m_seed) == 1) continue;
-                if (sscanf(line, "MAJ=%7s", m_maj) == 1) continue;
-                if (sscanf(line, "MAJ1_THRESH=%d", &m_majt) == 1) continue;
-                /* labels contain spaces ("IEEE 754 double") → rest of line */
-                if (sscanf(line, "COUNTER_TYPE=%63[^\n]", m_ct) == 1) continue;
-                if (sscanf(line, "SCORE_TYPE=%63[^\n]", m_st) == 1) continue;
-            }
-            fclose(mf);
-            /* Store for .ens validation (load_archive checks every file
-             * against these directory-identity values) */
-            g_meta_ok = 1;
-            g_meta_h = m_h; g_meta_ep = m_ep; g_meta_vn = m_vn; g_meta_hn = m_hn;
-            g_meta_maj[0] = '\0';
-            if (m_maj[0]) snprintf(g_meta_maj, sizeof(g_meta_maj), "%s", m_maj);
-            g_meta_majt = m_majt;
-            g_meta_ct[0] = '\0';
-            if (m_ct[0]) snprintf(g_meta_ct, sizeof(g_meta_ct), "%s", m_ct);
-            g_meta_st[0] = '\0';
-            if (m_st[0]) snprintf(g_meta_st, sizeof(g_meta_st), "%s", m_st);
-            if (!g_stdout) {
+    if (meta_load_globals(dir)) {
+        int m_h = g_meta_h, m_ep = g_meta_ep, m_vn = g_meta_vn, m_hn = g_meta_hn;
+        int m_seed = 0;   /* SEED is not stored in g_meta_* (not a merge criterion) */
+        int m_bits = g_meta_bits, m_otp = g_meta_otp;
+        char m_maj[8]; snprintf(m_maj, sizeof(m_maj), "%s", g_meta_maj);
+        int  m_majt = g_meta_majt;
+        char m_ct[64]; snprintf(m_ct, sizeof(m_ct), "%s", g_meta_ct);
+        char m_st[64]; snprintf(m_st, sizeof(m_st), "%s", g_meta_st);
+        if (!g_stdout) {
                 printf("  Config from .meta: H=%d  EP=%d  VN=%d  HN=%d",
                        m_h, m_ep, m_vn, m_hn);
                 if (m_seed != 0) printf("  SEED=%d", m_seed);
@@ -1278,12 +1575,13 @@ static int load_directory(const char *dir) {
                 }
                 if (m_ct[0]) printf("  COUNTER_TYPE=%s", m_ct);
                 if (m_st[0]) printf("  SCORE_TYPE=%s", m_st);
+                if (m_bits != 0) printf("  BITS=%d", m_bits);
+                if (m_otp != 0)  printf("  OT_PRECISION=%d", m_otp);
                 printf("\n");
             }
         } else {
             if (!g_stdout) printf("  (no .meta — legacy directory, config from first archive)\n");
         }
-    }
 
     int n_files = 0;
     int n_rebuilt = 0;       /* files actually re-read (new/changed) */
@@ -1424,6 +1722,9 @@ static int load_directory(const char *dir) {
 static void export_member_file(const char *path, const uint8_t *set,
                                int n_members, float eval, int beam_width);
 static void backup_member_to_dir(const char *dir, const char *path);
+/* Forward decl — defined with the --debug-member block below (greedy calls
+ * it before the definition site). 2026-08-14. */
+static void print_ensemble_confusion(const uint8_t *set, int n_blk);
 
 /* -- Merge and evaluate -------------------------------------- */
 static int merge_and_eval(const char *save_path, int max_en)
@@ -1448,6 +1749,23 @@ static int merge_and_eval(const char *save_path, int max_en)
            n_blocks, g_n_test, g_n_classes);
     printf("  Config: H=%d  EP=%d  VN=%d  HN=%d  TE=%d\n",
            g_hidden, g_epochs, g_split_vn, g_split_hn, g_target_err_x100);
+    /* Target-class / filter-sample mode display */
+    if (g_target_active || g_filter_sample_active) {
+        printf("  Mode:");
+        if (g_target_active) {
+            printf("  target={");
+            for (int _t = 0; _t < g_target_count; _t++)
+                printf("%s%d", _t ? "," : "", g_target_classes[_t]);
+            printf("}");
+        }
+        if (g_filter_sample_active) {
+            printf("  filter-sample={");
+            for (int _f = 0; _f < g_filter_sample_count; _f++)
+                printf("%s%d", _f ? "," : "", g_filter_sample_classes[_f]);
+            printf("}");
+        }
+        printf("  (denom=%d/%d)\n", g_eval_denom, g_n_test);
+    }
     printf("\n");
     printf("  %-4s  %-7s  %-11s  %-8s  %s\n", "EN",   "acc[%]",  "correct",     "gain[%]", "member");
     printf("  %-4s  %-7s  %-11s  %-8s  %s\n", "----", "-------", "-----------", "--------", "-------------------");
@@ -1484,14 +1802,11 @@ static int merge_and_eval(const char *save_path, int max_en)
           #pragma omp parallel for reduction(+:correct)
           for (int s = 0; s < g_n_test; s++) {
               const SCORE_TYPE *row = sum_scores + (size_t)s * row_sz;
-              int pred = 0;
-              for (int k = 1; k < g_n_classes; k++)
-                  if (row[k] > row[pred]) pred = k;
-              if (pred == (int)g_labels[s]) correct++;
+              if (eval_sample_correct(row, g_labels[s])) correct++;
           }
         }
 
-        float acc = has_labels ? (float)correct * 100.0f / (float)g_n_test : 0.0f;
+        float acc = has_labels ? (float)correct * 100.0f / (float)(eval_denom()) : 0.0f;
         /* Full label "XF:CHAN:ENC" in ONE line (no separate file separator
          * line — one member = one row, see 2026-08-01) */
         char _full[96];
@@ -1511,23 +1826,23 @@ static int merge_and_eval(const char *save_path, int max_en)
         }
         if (has_labels) {
             printf("  %-4d  %-7.2f  %5d/%-5d  %-+7.2f  %s\n",
-                   en, acc, correct, g_n_test, gain, _full);
+                   en, acc, correct, eval_denom(), gain, _full);
         } else {
             printf("  %-4d  (no labels)\n", en);
         }
         if (save_f && has_labels)
             fprintf(save_f, "%d  %.4f  %d  %d  %+.4f\n",
-                    en, acc / 100.0f, correct, g_n_test, gain / 100.0f);
+                    en, acc / 100.0f, correct, eval_denom(), gain / 100.0f);
         prev_acc = acc;
     }
 
     printf("\n══╡ BEST PREFIX ╞═══════════════════════════════════════════\n");
     printf("  Best:  EN=%d  acc=%.2f%%  (%d/%d)\n",
            best_en, best_acc,
-           (int)(best_acc * (float)g_n_test / 100.0f + 0.5f), g_n_test);
+           (int)(best_acc * (float)eval_denom() / 100.0f + 0.5f), eval_denom());
     printf("  Final: %d members  acc=%.2f%%  (%d/%d)\n",
            n_blocks, prev_acc,
-           (int)(prev_acc * (float)g_n_test / 100.0f + 0.5f), g_n_test);
+           (int)(prev_acc * (float)eval_denom() / 100.0f + 0.5f), eval_denom());
     if (save_f) { fclose(save_f); printf("  Saved:  %s\n", save_path); }
     /* --member-out in merge mode: write ALL loaded (post-filter) members as
      * XF:CHAN:ENC specs. Combined with --filter eval this halves the training
@@ -1535,12 +1850,12 @@ static int merge_and_eval(const char *save_path, int max_en)
     if (g_member_out[0])
         export_member_file(g_member_out, NULL, n_blocks, prev_acc, 0);
 
-    int _bc = (int)(best_acc * (float)g_n_test / 100.0f + 0.5f);
+    int _bc = (int)(best_acc * (float)eval_denom() / 100.0f + 0.5f);
     struct timeval _t1; gettimeofday(&_t1, NULL);
     double _ms = (double)(_t1.tv_sec - _t0.tv_sec) * 1000.0
                + (double)(_t1.tv_usec - _t0.tv_usec) / 1000.0;
     ki_report_show(0, 0, _bc, g_n_test, (int)_ms, omp_get_max_threads(),
-                   g_n_test - _bc, 0.0f, best_en);
+                   g_n_test - _bc, 0.0f, best_en, n_blocks);
 
     free(sum_scores);
     return g_n_test;
@@ -1636,12 +1951,9 @@ static int merge_and_greedy(const char *save_path, int initial_member, int beam_
         int _c = 0;
         for (int s = 0; s < g_n_test && has_labels; s++) {
             const SCORE_TYPE *row = sum_scores + (size_t)s * row_sz;
-            int pred = 0;
-            for (int k = 1; k < g_n_classes; k++)
-                if (row[k] > row[pred]) pred = k;
-            if (pred == (int)g_labels[s]) _c++;
+            if (eval_sample_correct(row, g_labels[s])) _c++;
         }
-        float sev = has_labels ? (float)_c * 100.0f / (float)g_n_test : 0.0f;
+        float sev = has_labels ? (float)_c * 100.0f / (float)eval_denom() : 0.0f;
         order[order_n++] = initial_member;
         char _lbl[256];
         const char *_xn = xform_name_safe(blocks[initial_member].xform_real);
@@ -1653,7 +1965,7 @@ static int merge_and_greedy(const char *save_path, int initial_member, int beam_
 #pragma GCC diagnostic pop
         if (has_labels) {
             printf("  %-4d  %-7.2f  %5d/%-5d  %-+7.2f  %s\n",
-                   1, sev, _c, g_n_test, sev, _lbl);
+                   1, sev, _c, eval_denom(), sev, _lbl);
         }
         prev_acc = sev;
         best_acc = sev;
@@ -1706,10 +2018,12 @@ static int merge_and_greedy(const char *save_path, int initial_member, int beam_
                             SCORE_TYPE v = base[row_start + k] + sc[row_start + k];
                             if (v > pred_val) { pred = k; pred_val = v; }
                         }
-                        if (pred == (int)g_labels[s]) correct++;
+                        /* target/filter-sample: membership decision on the
+                         * CANDIDATE prediction (base+sc), not committed. */
+                        if (eval_sample_correct_pred(pred, g_labels[s])) correct++;
                     }
                 }
-                float acc = has_labels ? (float)correct * 100.0f / (float)g_n_test : 0.0f;
+                float acc = has_labels ? (float)correct * 100.0f / (float)(eval_denom()) : 0.0f;
 
                 if (g_greedy_clarity) {
                     /* no-worsen constraint + max clarity */
@@ -1794,33 +2108,38 @@ static int merge_and_greedy(const char *save_path, int initial_member, int beam_
                 int correct = 0;
                 for (int s = 0; s < g_n_test && has_labels; s++) {
                     const SCORE_TYPE *row = sum_scores + (size_t)s * row_sz;
-                    int pred = 0;
-                    for (int k = 1; k < g_n_classes; k++)
-                        if (row[k] > row[pred]) pred = k;
-                    if (pred == (int)g_labels[s]) correct++;
+                    if (eval_sample_correct(row, g_labels[s])) correct++;
                 }
-                float acc = has_labels ? (float)correct * 100.0f / (float)g_n_test : 0.0f;
+                float acc = has_labels ? (float)correct * 100.0f / (float)(eval_denom()) : 0.0f;
 
+                /* HONEST BLOCK LABEL (2026-08-12): a --max commit is a BLOCK
+                 * of _commit_n members, not a single one. Showing only the
+                 * last member (old behavior) made blocks with N>1 look like
+                 * a single member — and could show the SAME name twice when
+                 * two blocks ended on the same member (EN=28/29 artefact).
+                 * Now the label states the block size explicitly. */
                 char label[256];
-                /* Show the LAST member of the committed block (the one that
-                 * pushed the accumulated gain over min-gain). */
                 int _blk_last = pending[pending_n - 1];
                 const char *_xn = xform_name_safe(blocks[_blk_last].xform_real);
                 char _ml[256];
                 member_label(&blocks[_blk_last], _ml, sizeof(_ml));
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wformat-truncation"
-                snprintf(label, sizeof(label), "%s:%s", _xn, _ml);
+                if (_commit_n > 1)
+                    snprintf(label, sizeof(label), "(block +%d, last: %s:%s)",
+                             _commit_n, _xn, _ml);
+                else
+                    snprintf(label, sizeof(label), "%s:%s", _xn, _ml);
 #pragma GCC diagnostic pop
                 float gain2 = acc - prev_acc;   /* accumulated gain of the block */
 
                 if (has_labels) {
                     printf("  %-4d  %-7.2f  %5d/%-5d  %-+7.2f  %s\n",
-                           order_n, acc, correct, g_n_test, gain2, label);
+                           order_n, acc, correct, eval_denom(), gain2, label);
                 }
                 if (save_f && has_labels)
                     fprintf(save_f, "%d  %.4f  %d  %d  %+.4f  %s\n",
-                            order_n, acc / 100.0f, correct, g_n_test, gain2 / 100.0f, label);
+                            order_n, acc / 100.0f, correct, eval_denom(), gain2 / 100.0f, label);
 
                 if (acc > best_acc) {
                     best_acc = acc;
@@ -1854,12 +2173,9 @@ static int merge_and_greedy(const char *save_path, int initial_member, int beam_
         int correct = 0;
         for (int s = 0; s < g_n_test && has_labels; s++) {
             const SCORE_TYPE *row = sum_scores + (size_t)s * row_sz;
-            int pred = 0;
-            for (int k = 1; k < g_n_classes; k++)
-                if (row[k] > row[pred]) pred = k;
-            if (pred == (int)g_labels[s]) correct++;
+            if (eval_sample_correct(row, g_labels[s])) correct++;
         }
-        float acc = has_labels ? (float)correct * 100.0f / (float)g_n_test : 0.0f;
+        float acc = has_labels ? (float)correct * 100.0f / (float)(eval_denom()) : 0.0f;
 
                         char label[256];
         const char *_xn = xform_name_safe(blocks[best_m].xform_real);
@@ -1873,11 +2189,11 @@ static int merge_and_greedy(const char *save_path, int initial_member, int beam_
 
         if (has_labels) {
             printf("  %-4d  %-7.2f  %5d/%-5d  %-+7.2f  %-s\n",
-                   order_n + 1, acc, correct, g_n_test, gain2, label);
+                   order_n + 1, acc, correct, eval_denom(), gain2, label);
         }
         if (save_f && has_labels)
             fprintf(save_f, "%d  %.4f  %d  %d  %+.4f  %s\n",
-                    order_n + 1, acc / 100.0f, correct, g_n_test, gain2 / 100.0f, label);
+                    order_n + 1, acc / 100.0f, correct, eval_denom(), gain2 / 100.0f, label);
 
         if (acc > best_acc) {
             best_acc = acc;
@@ -1911,10 +2227,10 @@ static int merge_and_greedy(const char *save_path, int initial_member, int beam_
         }
     }
 
-    int best_corr = (int)(best_acc * (float)g_n_test / 100.0f + 0.5f);
+    int best_corr = (int)(best_acc * (float)eval_denom() / 100.0f + 0.5f);
     printf("\n══╡ OPTIMAL SUBSET ╞════════════════════════════════════════\n");
     printf("  Best:   EN=%d  acc=%.2f%%  (%d/%d)\n",
-           best_en, best_acc, best_corr, g_n_test);
+           best_en, best_acc, best_corr, eval_denom());
     printf("  Total:  %d members available\n", n);
     printf("  Used:   %d members in optimal subset\n", order_n);
     printf("\n  Optimal order (member indices):");
@@ -1926,14 +2242,14 @@ static int merge_and_greedy(const char *save_path, int initial_member, int beam_
     printf("\n");
     printf("  Report: H=%d  EP=%d  VN=%d  HN=%d  TE=%d  eval=%.2f%%  err=%d  N=%d  opt_en=%d\n",
            g_hidden, g_epochs, g_split_vn, g_split_hn, g_target_err_x100,
-           best_acc, g_n_test - best_corr, g_n_test, best_en);
+           best_acc, eval_denom() - best_corr, eval_denom(), best_en);
 
     struct timeval _t1; gettimeofday(&_t1, NULL);
     double _ms = (double)(_t1.tv_sec - _t0.tv_sec) * 1000.0
                + (double)(_t1.tv_usec - _t0.tv_usec) / 1000.0;
     /* lr= carries --beam-bestN (unused by merge-ensemble) for reproducibility */
-    ki_report_show(0, 0, best_corr, g_n_test, (int)_ms, omp_get_max_threads(),
-                   g_n_test - best_corr, (float)g_beam_bestN, best_en);
+    ki_report_show(0, 0, best_corr, eval_denom(), (int)_ms, omp_get_max_threads(),
+                   eval_denom() - best_corr, (float)g_beam_bestN, best_en, n_blocks);
     if (save_f) { fclose(save_f); printf("  Saved:  %s\n", save_path); }
     /* --member-out in greedy mode: export the BEST prefix only (order[0..
      * best_en-1]) — same semantics as beam, which exports g_best_used up to
@@ -1947,6 +2263,16 @@ static int merge_and_greedy(const char *save_path, int initial_member, int beam_
             greedy_set[order[i]] = 1;
         export_member_file(g_member_out, greedy_set, best_en, best_acc, 0);
         free(greedy_set);
+    }
+    /* --debug-confusion: confusion matrix of the winning greedy subset
+     * (order[0..best_en-1] — same set as member-out/REPORT). */
+    if (g_debug_confusion && best_en > 0) {
+        uint8_t *greedy_cm = (uint8_t *)calloc((size_t)n, 1);
+        if (!greedy_cm) { fprintf(stderr, "[FATAL] OOM\n"); exit(1); }
+        for (int i = 0; i < best_en; i++)
+            greedy_cm[order[i]] = 1;
+        print_ensemble_confusion(greedy_cm, n);
+        free(greedy_cm);
     }
     free(sum_scores); free(used); free(order); free(pending);
     return g_n_test;
@@ -2049,6 +2375,598 @@ static void backup_member_to_dir(const char *dir, const char *path) {
 }
 
 /* ═══════════════════════════════════════════════════════════════════
+ * build_sample_index — --sample-index FILE (2026-08-14, 3rd gen 08-15)
+ *
+ * Writes the member↔sample prediction table of ALL loaded (post-filter)
+ * blocks as THREE Parquet files (columnar, compressed, queryable
+ * directly by DuckDB / pandas / pyarrow — no DB engine, no import):
+ *
+ *   FILE.samples.parquet  (sample_id INT32, label INT32)
+ *     ground-truth labels of all test samples.
+ *
+ *   FILE.members.parquet  (member_id INT64, name VARCHAR)
+ *     member_id = FNV-1a 64-bit over the .ens basename (stable, name-bound)
+ *     name      = the spec ("colswap-1-4@rot112:lbp:tri8")
+ *
+ *   FILE.pairs.parquet    (member_id INT64, sample_id INT32,
+ *                          pred INT32, margin INT64)
+ *     EVERY assignment member→sample, with the member's argmax CLASS (pred)
+ *     and the decision margin (best−second). The pred column is the key
+ *     for the Shirt (class 6) analysis: it stores WRONG predictions too,
+ *     so "which members see Shirt-sample X as T-shirt/Pullover/Coat" is
+ *     directly answerable (the confusion question) — a correct-only table
+ *     cannot.
+ *
+ * Example queries (DuckDB):
+ *   1) which members recognize sample X (and how)?
+ *        SELECT m.name, p.pred, p.margin FROM read_parquet('FILE.pairs.parquet') p
+ *        JOIN read_parquet('FILE.members.parquet') m ON m.member_id=p.member_id
+ *        WHERE p.sample_id=X ORDER BY p.margin DESC;
+ *   2) which samples does member Y see as class k?
+ *        SELECT sample_id, margin FROM read_parquet('FILE.pairs.parquet')
+ *        WHERE member_id=Y AND pred=k;
+ *   3) which members see Shirt-samples as Shirt (the specialists)?
+ *        SELECT m.name, COUNT(*) FROM read_parquet('FILE.pairs.parquet') p
+ *        JOIN read_parquet('FILE.members.parquet') m ON m.member_id=p.member_id
+ *        JOIN read_parquet('FILE.samples.parquet') s ON s.sample_id=p.sample_id
+ *        WHERE s.label=6 AND p.pred=6 GROUP BY p.member_id ORDER BY 2 DESC;
+ *   4) the confusion: which members see Shirt-samples as T-shirt?
+ *        ... WHERE s.label=6 AND p.pred=0 ...;
+ *
+ * DESIGN (3rd gen, 2026-08-15): full pair table (variant B), ALL
+ * assignments (not only correct), pred + margin stored.
+ *
+ * PERFORMANCE (2026-08-15): the original SQLite implementation was
+ * structurally slow — the pairs table was WITHOUT ROWID with
+ * PK(member_id,sample_id), so EVERY insert went through the PK B-Tree
+ * (random page jumps with FNV-1a member_ids), and the two deferred
+ * CREATE INDEX passes (idx_pairs_sample, idx_pairs_pred) were
+ * single-threaded full scans. Three serial single-thread passes over
+ * 368M rows. Parquet removes all of it:
+ *   1. member_ids[] is precomputed once and the block indices are sorted
+ *      by member_id → pairs stream out in (member_id, sample_id) order.
+ *   2. carquet (pure C11 Parquet writer, built locally under 3rdparty/)
+ *      writes the sorted columns with zstd compression — a single
+ *      sequential columnar pass, no B-Tree, no index build.
+ *   3. Each block's scores are freed after its chunk is written (scores
+ *      are read once only) → peak RAM stays below the score-load peak.
+ *   4. Member-id collision check is one sort+scan (O(n log n) instead of
+ *      the old O(n²) re-hashing; collisions are practically impossible
+ *      at 2^64).
+ * The argmax computation is chunk-parallel (OMP, implicit barrier per
+ * chunk); the carquet writer is called serially by the main thread.
+ * NOTE: carquet API uses CARQUET_WARN_UNUSED_RESULT — every call's
+ * return value is checked (build has -Werror). */
+
+/* qsort helper for build_sample_index: sort (member_id, block-index) pairs
+ * by member_id (stable tiebreak on block index). This gives the blocks in
+ * member_id order, so the pairs stream out in (member_id, sample_id) order
+ * — sequential B-Tree append into the WITHOUT ROWID PK (2026-08-15). */
+typedef struct { uint64_t id; int block; } MidSortEnt;
+static int cmp_mid_sort(const void *a, const void *b) {
+    const MidSortEnt *ea = (const MidSortEnt *)a, *eb = (const MidSortEnt *)b;
+    if (ea->id < eb->id) return -1;
+    if (ea->id > eb->id) return 1;
+    return ea->block - eb->block;   /* stable tiebreak (same member_id) */
+}
+
+static int build_sample_index(const char *path) {
+    if (!path || !path[0] || !g_labels || g_n_test <= 0 || g_n_classes <= 0)
+        return 0;
+
+    /* ── Member-IDs einmal vorberechnen + Blocks nach member_id sortieren ──
+     * (2026-08-15, 3rd gen) The pairs Parquet is written in
+     * (member_id, sample_id) order — sorting the block indices by
+     * member_id ONCE here makes Pass 2 stream the pairs in exactly that
+     * order (ordered columnar pages, good compression). The member-id
+     * collision check (O(n²) in the old SQLite members pass) becomes one
+     * sort+scan (O(n log n)); collisions are practically impossible at
+     * 2^64. */
+    MidSortEnt *mid_sorted = (MidSortEnt *)malloc((size_t)n_blocks * sizeof(MidSortEnt));
+    uint64_t *member_ids = (uint64_t *)malloc((size_t)n_blocks * sizeof(uint64_t));
+    int *block_order = (int *)malloc((size_t)n_blocks * sizeof(int));
+    if (!mid_sorted || !member_ids || !block_order) { fprintf(stderr, "[FATAL] OOM\n"); exit(1); }
+    for (int i = 0; i < n_blocks; i++) {
+        mid_sorted[i].id = member_id_fnv1a(blocks[i].source_file);
+        mid_sorted[i].block = i;
+    }
+    qsort(mid_sorted, (size_t)n_blocks, sizeof(MidSortEnt), cmp_mid_sort);
+    /* Kollisionen auflösen: benachbarte gleiche IDs (sortiert → einmal scannen).
+     * Praktisch nie, aber der PK erzwingt Eindeutigkeit — prüfen statt raten.
+     * Suffix "_2"/"_2_"... wird angehängt, bis der Hash frei ist. */
+    for (int i = 1; i < n_blocks; i++) {
+        if (mid_sorted[i].id != mid_sorted[i - 1].id) continue;
+        const char *name = blocks[mid_sorted[i].block].source_file;
+        char buf[192];
+        snprintf(buf, sizeof(buf), "%s_2", name);
+        while (1) {
+            uint64_t id2 = member_id_fnv1a(buf);
+            int dup = 0;
+            for (int j = 0; j < i; j++)
+                if (mid_sorted[j].id == id2 || strcmp(buf, blocks[mid_sorted[j].block].source_file) == 0)
+                    { dup = 1; break; }
+            if (!dup) { mid_sorted[i].id = id2; break; }
+            if (strlen(buf) >= sizeof(buf) - 2) break;   /* Überlaufschutz */
+            strncat(buf, "_", sizeof(buf) - strlen(buf) - 1);
+        }
+        fprintf(stderr, "  [WARN] --sample-index: member-id collision for '%s' — used suffix\n", name);
+    }
+    for (int i = 0; i < n_blocks; i++) {
+        block_order[i] = mid_sorted[i].block;
+        member_ids[mid_sorted[i].block] = mid_sorted[i].id;
+    }
+    free(mid_sorted);
+
+    /* ── Parquet-Writer-Setup (2026-08-15, 3rd gen) ──
+     * Three files derived from the --sample-index path:
+     *   FILE.samples.parquet, FILE.members.parquet, FILE.pairs.parquet
+     * carquet (pure C11, local build in 3rdparty/) writes columnar,
+     * zstd-compressed Parquet — one sequential pass, no B-Tree, no
+     * index build (SQLite was 3 serial single-thread passes; see DESIGN
+     * comment above). */
+    char p_samples[1100], p_members[1100], p_pairs[1100];
+    snprintf(p_samples, sizeof(p_samples), "%s.samples.parquet", path);
+    snprintf(p_members, sizeof(p_members), "%s.members.parquet", path);
+    snprintf(p_pairs,   sizeof(p_pairs),   "%s.pairs.parquet",   path);
+    /* Remove stale artifacts from a previous run (rebuildable). */
+    unlink(p_samples); unlink(p_members); unlink(p_pairs);
+
+    carquet_logical_type_t string_type = { .id = CARQUET_LOGICAL_STRING };
+    carquet_error_t cerr = CARQUET_ERROR_INIT;
+    carquet_status_t st;
+    int rc = 0;
+
+    /* ── Pass 0: samples.parquet (sample_id INT32, label INT32) ── */
+    {
+        carquet_schema_t *sc = carquet_schema_create(&cerr);
+        if (!sc) { fprintf(stderr, "  [ERROR] --sample-index: samples schema: %s\n", cerr.message); return 1; }
+        st = carquet_schema_add_column(sc, "sample_id", CARQUET_PHYSICAL_INT32, NULL,
+                                       CARQUET_REPETITION_REQUIRED, 0, 0);
+        st = carquet_schema_add_column(sc, "label", CARQUET_PHYSICAL_INT32, NULL,
+                                       CARQUET_REPETITION_REQUIRED, 0, 0);
+        if (st != CARQUET_OK) { fprintf(stderr, "  [ERROR] --sample-index: samples schema col: %s\n", cerr.message); carquet_schema_free(sc); return 1; }
+        carquet_writer_options_t opts;
+        carquet_writer_options_init(&opts);
+        opts.compression = CARQUET_COMPRESSION_ZSTD;
+        carquet_writer_t *w = carquet_writer_create(p_samples, sc, &opts, &cerr);
+        if (!w) { fprintf(stderr, "  [ERROR] --sample-index: create %s: %s\n", p_samples, cerr.message); carquet_schema_free(sc); return 1; }
+        int32_t *sid = (int32_t *)malloc((size_t)g_n_test * sizeof(int32_t));
+        int32_t *lbl = (int32_t *)malloc((size_t)g_n_test * sizeof(int32_t));
+        if (!sid || !lbl) { fprintf(stderr, "[FATAL] OOM\n"); exit(1); }
+        for (int s = 0; s < g_n_test; s++) { sid[s] = s; lbl[s] = (int32_t)g_labels[s]; }
+        st = carquet_writer_write_batch(w, 0, sid, (int64_t)g_n_test, NULL, NULL);
+        st = carquet_writer_write_batch(w, 1, lbl, (int64_t)g_n_test, NULL, NULL);
+        if (st != CARQUET_OK) fprintf(stderr, "  [ERROR] --sample-index: samples write: %s\n", cerr.message);
+        st = carquet_writer_close(w);
+        if (st != CARQUET_OK) { fprintf(stderr, "  [ERROR] --sample-index: samples close: %s\n", cerr.message); rc = 1; }
+        free(sid); free(lbl);
+        carquet_schema_free(sc);
+        if (rc) return 1;
+        printf("  [sample-index] samples: %d labels written\n", g_n_test);
+    }
+
+    /* ── Pass 1: members.parquet (member_id INT64, name VARCHAR) ──
+     * IDs come from the precomputed member_ids[] (collision resolution
+     * already ran once, O(n log n)); order follows block_order for
+     * determinism — same IDs as in Pass 2. */
+    {
+        carquet_schema_t *sc = carquet_schema_create(&cerr);
+        if (!sc) { fprintf(stderr, "  [ERROR] --sample-index: members schema: %s\n", cerr.message); return 1; }
+        st = carquet_schema_add_column(sc, "member_id", CARQUET_PHYSICAL_INT64, NULL,
+                                       CARQUET_REPETITION_REQUIRED, 0, 0);
+        st = carquet_schema_add_column(sc, "name", CARQUET_PHYSICAL_BYTE_ARRAY, &string_type,
+                                       CARQUET_REPETITION_REQUIRED, 0, 0);
+        if (st != CARQUET_OK) { fprintf(stderr, "  [ERROR] --sample-index: members schema col: %s\n", cerr.message); carquet_schema_free(sc); return 1; }
+        carquet_writer_options_t opts;
+        carquet_writer_options_init(&opts);
+        opts.compression = CARQUET_COMPRESSION_ZSTD;
+        carquet_writer_t *w = carquet_writer_create(p_members, sc, &opts, &cerr);
+        if (!w) { fprintf(stderr, "  [ERROR] --sample-index: create %s: %s\n", p_members, cerr.message); carquet_schema_free(sc); return 1; }
+        int64_t *mid = (int64_t *)malloc((size_t)n_blocks * sizeof(int64_t));
+        carquet_byte_array_t *names = (carquet_byte_array_t *)calloc((size_t)n_blocks, sizeof(carquet_byte_array_t));
+        if (!mid || !names) { fprintf(stderr, "[FATAL] OOM\n"); exit(1); }
+        for (int i = 0; i < n_blocks; i++) {
+            int b = block_order[i];
+            mid[i] = (int64_t)member_ids[b];
+            names[i].data = (uint8_t *)(uintptr_t)blocks[b].source_file;
+            names[i].length = (int32_t)strlen(blocks[b].source_file);
+        }
+        st = carquet_writer_write_batch(w, 0, mid, (int64_t)n_blocks, NULL, NULL);
+        st = carquet_writer_write_batch(w, 1, names, (int64_t)n_blocks, NULL, NULL);
+        if (st != CARQUET_OK) fprintf(stderr, "  [ERROR] --sample-index: members write: %s\n", cerr.message);
+        st = carquet_writer_close(w);
+        if (st != CARQUET_OK) { fprintf(stderr, "  [ERROR] --sample-index: members close: %s\n", cerr.message); rc = 1; }
+        free(mid); free(names);
+        carquet_schema_free(sc);
+        if (rc) return 1;
+        printf("  [sample-index] members: %d names written\n", n_blocks);
+    }
+
+    /* ── Pass 2: pairs.parquet — parallel over members ──
+     * IMPORTANT (2026-08-15): schedule(static) — OpenMP assigns the
+     * iterations in ascending thread-number order in consecutive blocks
+     * (thread 0 = smallest member_ids). Since the blocks run through
+     * block_order[] (sorted by member_id) and the thread buffers are
+     * written in thread order, the pairs stream out globally sorted by
+     * (member_id, sample_id) → perfectly ordered columnar pages.
+     * schedule(dynamic) would destroy the ordering (random assignment). */
+    size_t row_sz = (size_t)g_n_classes;
+    int n_threads = omp_get_max_threads();
+    if (n_threads < 1) n_threads = 1;
+    if (n_threads > 64) n_threads = 64;
+    long total_rows = 0;
+    int done_blocks = 0;
+    int dot_interval = n_blocks / 40;
+    if (dot_interval < 1) dot_interval = 1;
+    int fail = 0;   /* shared error flag (omp atomic writes) */
+    printf("  [sample-index] pairs (OMP %d threads): ", n_threads);
+    fflush(stdout);
+
+    /* Column buffers per thread slot: each thread fills slot [tid]
+     * (disjoint member ranges), then the main thread writes the slots
+     * in thread order via carquet (single writer — carquet is not
+     * thread-safe for writing). */
+    typedef struct { int64_t mid; int32_t sid; int32_t pred; int64_t mg; } _Trip;
+    /* PERFORMANCE (2026-08-15): SI_CHUNK=32 → 1152 chunks with per-chunk
+     * overhead; SI_CHUNK=512 → 72 chunks, more work per omp region. */
+    enum { SI_CHUNK = 512 };
+    size_t slot_sz = (size_t)SI_CHUNK * (size_t)g_n_test;
+    _Trip *chunk_bufs = (_Trip *)malloc((size_t)n_threads * slot_sz * sizeof(_Trip));
+    int   *chunk_cnt  = (int *)calloc((size_t)n_threads, sizeof(int));
+    if (!chunk_bufs || !chunk_cnt) { fprintf(stderr, "[FATAL] OOM\n"); exit(1); }
+
+    /* ── pairs writer ── */
+    carquet_schema_t *p_sc = carquet_schema_create(&cerr);
+    if (!p_sc) { fprintf(stderr, "  [ERROR] --sample-index: pairs schema: %s\n", cerr.message); return 1; }
+    st = carquet_schema_add_column(p_sc, "member_id", CARQUET_PHYSICAL_INT64, NULL,
+                                   CARQUET_REPETITION_REQUIRED, 0, 0);
+    st = carquet_schema_add_column(p_sc, "sample_id", CARQUET_PHYSICAL_INT32, NULL,
+                                   CARQUET_REPETITION_REQUIRED, 0, 0);
+    st = carquet_schema_add_column(p_sc, "pred", CARQUET_PHYSICAL_INT32, NULL,
+                                   CARQUET_REPETITION_REQUIRED, 0, 0);
+    st = carquet_schema_add_column(p_sc, "margin", CARQUET_PHYSICAL_INT64, NULL,
+                                   CARQUET_REPETITION_REQUIRED, 0, 0);
+    if (st != CARQUET_OK) { fprintf(stderr, "  [ERROR] --sample-index: pairs schema col: %s\n", cerr.message); carquet_schema_free(p_sc); return 1; }
+    carquet_writer_options_t p_opts;
+    carquet_writer_options_init(&p_opts);
+    p_opts.compression = CARQUET_COMPRESSION_ZSTD;
+    carquet_writer_t *p_w = carquet_writer_create(p_pairs, p_sc, &p_opts, &cerr);
+    if (!p_w) { fprintf(stderr, "  [ERROR] --sample-index: create %s: %s\n", p_pairs, cerr.message); carquet_schema_free(p_sc); return 1; }
+
+    for (int cstart = 0; cstart < n_blocks; cstart += SI_CHUNK) {
+        int cend = cstart + SI_CHUNK;
+        if (cend > n_blocks) cend = n_blocks;
+        memset(chunk_cnt, 0, (size_t)n_threads * sizeof(int));
+        #pragma omp parallel for num_threads(n_threads) schedule(static)
+        for (int m = cstart; m < cend; m++) {
+            int tid = omp_get_thread_num();
+            _Trip *mybuf = chunk_bufs + (size_t)tid * slot_sz;
+            int b = block_order[m];   /* nach member_id sortiert (2026-08-15) */
+            const SCORE_TYPE *sc = blocks[b].scores;
+            if (!sc) continue;
+            uint64_t mid = member_ids[b];   /* vorberechnet, kein Re-Hash */
+            int n = chunk_cnt[tid];   /* thread-lokal fortsetzen */
+            for (int s = 0; s < g_n_test; s++) {
+                const SCORE_TYPE *row = sc + (size_t)s * row_sz;
+                int best = 0, second = -1;
+                SCORE_TYPE best_v = row[0], second_v = 0;
+                for (int k = 1; k < g_n_classes; k++) {
+                    if (row[k] > best_v) { second = best; second_v = best_v; best = k; best_v = row[k]; }
+                    else if (second < 0 || row[k] > second_v) { second = k; second_v = row[k]; }
+                }
+                /* 2nd gen (2026-08-15): store EVERY assignment with the
+                 * member's argmax CLASS (pred). The Shirt analysis needs the
+                 * WRONG predictions too: "which members see Shirt-sample X
+                 * as T-shirt/Pullover/Coat" is the confusion question — a
+                 * correct-only table cannot answer it. margin = best−second. */
+                mybuf[n].mid  = (int64_t)mid;
+                mybuf[n].sid  = (int32_t)s;
+                mybuf[n].pred = (int32_t)best;
+                mybuf[n].mg   = (int64_t)(best_v - second_v);
+                n++;
+            }
+            chunk_cnt[tid] = n;
+        }
+        /* seriell (Haupt-Thread): Chunk-Puffer aller Threads in
+         * Thread-Reihenfolge via carquet schreiben (Spalte für Spalte) —
+         * carquet wants one contiguous array per column, so the trip
+         * buffers are transposed into four column arrays first. */
+        {
+            int64_t chunk_n = 0;
+            for (int t = 0; t < n_threads; t++) chunk_n += (int64_t)chunk_cnt[t];
+            if (chunk_n > 0) {
+                int64_t *cm = (int64_t *)malloc((size_t)chunk_n * sizeof(int64_t));
+                int32_t *cs = (int32_t *)malloc((size_t)chunk_n * sizeof(int32_t));
+                int32_t *cp = (int32_t *)malloc((size_t)chunk_n * sizeof(int32_t));
+                int64_t *cg = (int64_t *)malloc((size_t)chunk_n * sizeof(int64_t));
+                if (!cm || !cs || !cp || !cg) { fprintf(stderr, "[FATAL] OOM\n"); exit(1); }
+                int64_t o = 0;
+                for (int t = 0; t < n_threads; t++) {
+                    _Trip *tb = chunk_bufs + (size_t)t * slot_sz;
+                    for (int b = 0; b < chunk_cnt[t]; b++) {
+                        cm[o] = tb[b].mid; cs[o] = tb[b].sid;
+                        cp[o] = tb[b].pred; cg[o] = tb[b].mg;
+                        o++;
+                    }
+                }
+                st = carquet_writer_write_batch(p_w, 0, cm, chunk_n, NULL, NULL);
+                st = carquet_writer_write_batch(p_w, 1, cs, chunk_n, NULL, NULL);
+                st = carquet_writer_write_batch(p_w, 2, cp, chunk_n, NULL, NULL);
+                st = carquet_writer_write_batch(p_w, 3, cg, chunk_n, NULL, NULL);
+                if (st != CARQUET_OK) { fprintf(stderr, "  [WARN] --sample-index: pairs write: %s\n", cerr.message); fail = 1; }
+                free(cm); free(cs); free(cp); free(cg);
+            }
+        }
+        for (int t = 0; t < n_threads; t++)
+            total_rows += chunk_cnt[t];
+        done_blocks += (cend - cstart);
+        /* Progressive Score-Freigabe (2026-08-15): jeder Block wird nur
+         * EINMAL gelesen (Pass 2 ist der letzte Nutzer). Freigeben direkt
+         * nach dem Chunk → Peak-RAM = Score-Load-Peak (zu Beginn) bzw.
+         * Dateigröße (am Ende), nie die Summe beider. */
+        for (int m = cstart; m < cend; m++) {
+            int b = block_order[m];
+            free(blocks[b].scores);
+            blocks[b].scores = NULL;
+        }
+        if (done_blocks % dot_interval == 0) {
+            printf(".");
+            fflush(stdout);
+        }
+    }
+    st = carquet_writer_close(p_w);
+    if (st != CARQUET_OK) { fprintf(stderr, "  [ERROR] --sample-index: pairs close: %s\n", cerr.message); fail = 1; }
+    carquet_schema_free(p_sc);
+    free(chunk_bufs);
+    free(chunk_cnt);
+    printf(" done (%ld pairs)\n", total_rows);
+    printf("  [sample-index] %s  (members=%d pairs=%ld samples=%d)\n",
+           p_pairs, n_blocks, total_rows, g_n_test);
+
+    free(block_order);
+    free(member_ids);
+    return (fail || rc) ? 1 : 0;
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+ * print_ensemble_confusion — --debug-confusion: confusion matrix of the
+ * FINAL ensemble over the full test split (2026-08-14).
+ *
+ * Sums the scores of all set-members (same semantics as the final
+ * re-evaluation in the beam), takes argmax per sample and feeds the
+ * resulting y_pred into print_confusion_debug() from ki-common.h — the
+ * SAME tprint table the trainer's --debug-confusion prints, so MERGE and
+ * TRN outputs can be compared 1:1. The full 10×10 matrix is shown even
+ * under --target k / --filter-sample (the raw class drift — e.g. where
+ * Shirt/T-shirt/Pullover samples end up — is exactly the question for the
+ * specialist-orchestrator research).
+ *
+ * set:  member bitmask (g_best_used / greedy_set) of the winning ensemble.
+ * n_blk: total blocks. */
+static void print_ensemble_confusion(const uint8_t *set, int n_blk) {
+    if (!set || !g_labels || g_n_test <= 0 || g_n_classes <= 0) return;
+    size_t row_sz = (size_t)g_n_classes;
+    size_t score_sz = (size_t)g_n_test * row_sz;
+    SCORE_TYPE *sum = (SCORE_TYPE *)calloc(score_sz, sizeof(SCORE_TYPE));
+    if (!sum) { fprintf(stderr, "[FATAL] OOM\n"); exit(1); }
+    for (int i = 0; i < n_blk; i++) {
+        if (!set[i]) continue;
+        const SCORE_TYPE *sc = blocks[i].scores;
+        if (!sc) continue;
+        for (size_t j = 0; j < score_sz; j++) sum[j] += sc[j];
+    }
+    uint8_t *y_pred = (uint8_t *)malloc((size_t)g_n_test);
+    if (!y_pred) { free(sum); fprintf(stderr, "[FATAL] OOM\n"); exit(1); }
+    for (int s = 0; s < g_n_test; s++) {
+        const SCORE_TYPE *row = sum + (size_t)s * row_sz;
+        int best = 0;
+        for (int k = 1; k < g_n_classes; k++)
+            if (row[k] > row[best]) best = k;
+        y_pred[s] = (uint8_t)best;
+    }
+    print_confusion_debug(g_labels, y_pred, g_n_test, 0, 1);
+    free(y_pred);
+    free(sum);
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+ * print_debug_members — --debug-member: detailed list of the SELECTED
+ * members after the beam search, in the trainer's --debug-member format
+ * so MERGE and TRN outputs can be compared 1:1 (2026-08-12).
+ *
+ * The trainer line is:
+ *   [  3/3] mem=88.6%/82.0%/E=1801  time=2833ms  xf:chan:enc  W0=..  MIN=..  MAX=..  pxz=..
+ * The merge has NO training phase → trn%/E/time/pxz do not exist here and
+ * are shown as "-". The REAL per-member evl% is computed from the loaded
+ * .ens scores + ground truth (argmax-vs-truth over g_n_test samples) —
+ * this is the merge-side number to compare against the trainer's evl%.
+ * set:    member bitmask (g_best_used) of the winning ensemble.
+ * n_used: number of set members (= g_best_n). */
+/* print_debug_members — --debug-member: detailed list of the SELECTED
+ * members after the beam search, in the trainer's --debug-member format
+ * so MERGE and TRN outputs can be compared 1:1 (2026-08-12).
+ *
+ * TABLE FORMAT (2026-08-14, user design):
+ *   EN  acc[%]  eval[%]  evl-all[%]  err  member  W0  MIN  MAX
+ * - acc[%]     = kumulative Ensemble-Accuracy in ADDITIONSREIHENFOLGE
+ *                (order[] aus dem Beam, monoton steigend, endet bei ens-total)
+ * - eval[%]    = Target-Eval des Members (eval_sample_correct(), Nenner
+ *                eval_denom() — unter --target k nur die Target-Samples,
+ *                identisch zur Search-Tabelle; ohne --target == evl-all[%])
+ * - evl-all[%] = volle Member-Eval (roher argmax über g_n_test, wie die
+ *                Trainer-Evl% — zeigt, ob ein Member die Nicht-Target-
+ *                Klassen zerstört, während er die 0624-Familie optimiert)
+ * - err        = eval_denom() - correct (Target-Fehler wie die Search)
+ * Die Menge der Member ist EXAKT die des member-out files (set ==
+ * g_best_used) — nur die Sortierung folgt der Additionsreihenfolge statt
+ * der Block-Reihenfolge. "time", "pxz", "trn%" (mem=-.-%) entfallen.
+ *
+ * set:    member bitmask (g_best_used) of the winning ensemble.
+ * order:  Additionsreihenfolge (g_best_order); NULL → set in Block-Reihenfolge.
+ * order_n: Anzahl Einträge in order.
+ * n_used: number of set members (= g_best_n).
+ * n_blk:  total blocks.
+ * best_eval: final ensemble eval (%). */
+static void print_debug_members(const uint8_t *set, const int *order,
+                                int order_n, int n_used, int n_blk,
+                                float best_eval) {
+    if (!set || n_used <= 0) return;
+    printf("\n══╡ MEMBERS (--debug-member) ╞═  %d members  ens-eval=%.2f%%  ══════════\n",
+           n_used, best_eval);
+
+    /* ── Anzeige-Reihenfolge bauen: 1) order[]-Einträge die in set sind
+     * (Additionsreihenfolge), 2) restliche set-Member in Block-Reihenfolge
+     * (nur im --max-Sonderfall relevant, wo best_set_best von order[]
+     * abweichen kann). Menge bleibt == set == member-out file. */
+    int *disp = (int *)malloc((size_t)n_used * sizeof(int));
+    if (!disp) { fprintf(stderr, "[FATAL] OOM\n"); exit(1); }
+    int disp_n = 0;
+    if (order && order_n > 0) {
+        for (int oi = 0; oi < order_n && disp_n < n_used; oi++) {
+            int bi = order[oi];
+            if (bi >= 0 && bi < n_blk && set[bi])
+                disp[disp_n++] = bi;
+        }
+    }
+    for (int bi = 0; bi < n_blk && disp_n < n_used; bi++)
+        if (set[bi]) {
+            int already = 0;
+            for (int di = 0; di < disp_n; di++)
+                if (disp[di] == bi) { already = 1; break; }
+            if (!already) disp[disp_n++] = bi;
+        }
+    if (disp_n == 0) { free(disp); return; }
+
+    /* Tabellenkopf + Zeilen via libtprint (2026-08-14) — dieselbe
+     * Tabellen-Library wie die Trainer (tprint_create/…), damit die
+     * Spaltenbreiten automatisch zur längsten Zelle passen (hand-rolled
+     * %-7s brach bei langen Specs wie "colswap-1-4@rot112:lbp:tri8"). */
+    TPrint *tp = tprint_create(stdout, TRUE, TRUE, 2, 2);
+    tprint_set_double_fmt(tp, "%7.2f");
+    tprint_column_add(tp, "EN",       TPAlign_center, TPAlign_right);
+    tprint_column_add(tp, "acc[%]",   TPAlign_center, TPAlign_right);
+    tprint_column_add(tp, "eval[%]",  TPAlign_center, TPAlign_right);
+    tprint_column_add(tp, "evl-all[%]",TPAlign_center, TPAlign_right);
+    tprint_column_add(tp, "err",      TPAlign_center, TPAlign_right);
+    tprint_column_add(tp, "member",   TPAlign_center, TPAlign_left);
+    tprint_column_add(tp, "W0",       TPAlign_center, TPAlign_left);
+    tprint_column_add(tp, "MIN",      TPAlign_center, TPAlign_right);
+    tprint_column_add(tp, "MAX",      TPAlign_center, TPAlign_right);
+
+    /* Kumulative Ensemble-Summe: pro Schritt die Scores des Members addieren
+     * und argmax-vs-truth über g_n_test (wie die FINAL-RE-EVALUATION im
+     * Beam). Am Ende == ens-total. */
+    size_t row_sz = (size_t)g_n_classes;
+    size_t score_sz = (size_t)g_n_test * row_sz;
+    SCORE_TYPE *acc_sum = (SCORE_TYPE *)calloc(score_sz, sizeof(SCORE_TYPE));
+    if (!acc_sum) { free(disp); fprintf(stderr, "[FATAL] OOM\n"); exit(1); }
+    int e_ok = 0;
+    int e_ok_all = 0;   /* volle Ensemble-Eval (roher argmax, alle Samples) */
+
+    for (int di = 0; di < disp_n; di++) {
+        int i = disp[di];
+        /* ZWEI Member-Evals (2026-08-14, user design):
+         * - m_correct_all : volle Eval über ALLE g_n_test Samples (roher
+         *   argmax) — "evl-all[%]", konsistent zur Trainer-Evl%.
+         * - m_correct_tgt : Target-Eval über eval_sample_correct() —
+         *   "eval[%]", identisch zur Search-Tabelle (unter --target k
+         *   zählt nur die Target-Samples). Ohne --target sind beide gleich. */
+        int m_correct_all = 0;
+        int m_correct_tgt = 0;
+        if (g_labels && blocks[i].scores) {
+            for (int s = 0; s < g_n_test; s++) {
+                const SCORE_TYPE *row = blocks[i].scores +
+                                        (size_t)s * (size_t)g_n_classes;
+                int best = 0;
+                for (int k = 1; k < g_n_classes; k++)
+                    if (row[k] > row[best]) best = k;
+                if (best == (int)g_labels[s]) m_correct_all++;
+                if (eval_sample_correct(row, g_labels[s])) m_correct_tgt++;
+            }
+        }
+        float evl_tgt = (eval_denom() > 0)
+                        ? 100.0f * (float)m_correct_tgt / (float)eval_denom() : 0.0f;
+        float evl_all = (g_n_test > 0)
+                        ? 100.0f * (float)m_correct_all / (float)g_n_test : 0.0f;
+        /* kumulative Ensemble-Summe aktualisieren */
+        const SCORE_TYPE *sc = blocks[i].scores;
+        if (sc) {
+            for (size_t j = 0; j < score_sz; j++) acc_sum[j] += sc[j];
+            e_ok = 0;
+            e_ok_all = 0;
+            for (int s = 0; s < g_n_test && g_labels; s++) {
+                const SCORE_TYPE *row = acc_sum + (size_t)s * row_sz;
+                if (eval_sample_correct(row, g_labels[s])) e_ok++;
+                /* volle Ensemble-Eval: roher argmax über alle Samples */
+                int best = 0;
+                for (int k = 1; k < g_n_classes; k++)
+                    if (row[k] > row[best]) best = k;
+                if (best == (int)g_labels[s]) e_ok_all++;
+            }
+        }
+        float acc = (eval_denom() > 0)
+                    ? 100.0f * (float)e_ok / (float)eval_denom() : 0.0f;
+        const char *_xn = (blocks[i].xform_real >= 0)
+                          ? xform_name_safe(blocks[i].xform_real)
+                          : xform_group_label(blocks[i].xform_id);
+        char _ml[64];
+        member_label(&blocks[i], _ml, sizeof(_ml));
+        char _spec[128];
+        snprintf(_spec, sizeof(_spec), "%s:%s", _xn, _ml);
+        char _w0[16];
+        snprintf(_w0, sizeof(_w0), "0x%08X", blocks[i].w0_marker);
+        char _min[32], _max[32];
+#if COUNTER_TYPE_IS_FLOAT
+        snprintf(_min, sizeof(_min), "%.0f", (double)blocks[i].score_min);
+        snprintf(_max, sizeof(_max), "%.0f", (double)blocks[i].score_max);
+#else
+        snprintf(_min, sizeof(_min), "%" PRId64, (int64_t)blocks[i].score_min);
+        snprintf(_max, sizeof(_max), "%" PRId64, (int64_t)blocks[i].score_max);
+#endif
+        tprint_data_add_int32(tp, 0, di + 1);
+        tprint_data_add_double(tp, 1, (double)acc);
+        tprint_data_add_double(tp, 2, (double)evl_tgt);
+        tprint_data_add_double(tp, 3, (double)evl_all);
+        tprint_data_add_int32(tp, 4, eval_denom() - m_correct_tgt);
+        tprint_data_add_str(tp, 5, _spec);
+        tprint_data_add_str(tp, 6, _w0);
+        tprint_data_add_str(tp, 7, _min);
+        tprint_data_add_str(tp, 8, _max);
+    }
+    /* ens-total: finale Ensemble-Eval (acc_sum der kompletten Menge).
+     * INTENTIONAL (2026-08-14): eval[%] (Spalte 2) nutzt eval_denom() —
+     * identisch zur Search-Tabelle, die unter --target k nur die
+     * Target-Samples zählt. evl-all[%] (Spalte 3) zeigt die volle
+     * Ensemble-Eval über alle Samples. Vorher gab es nur den g_n_test-
+     * Nenner: unter --target 0,2,4,6 zeigte ens-total 33.90% statt der
+     * Search-84.75% (gleiche correct-Zahl, falscher Nenner). */
+    {
+        float e_eval = (eval_denom() > 0)
+                       ? 100.0f * (float)e_ok / (float)eval_denom() : 0.0f;
+        float e_eval_all = (g_n_test > 0)
+                           ? 100.0f * (float)e_ok_all / (float)g_n_test : 0.0f;
+        char _et[128];
+        snprintf(_et, sizeof(_et), "ens-total  (correct=%d/%d)",
+                 e_ok, eval_denom());
+        tprint_data_add_str(tp, 0, "");
+        tprint_data_add_str(tp, 1, "");
+        tprint_data_add_double(tp, 2, (double)e_eval);
+        tprint_data_add_double(tp, 3, (double)e_eval_all);
+        tprint_data_add_int32(tp, 4, eval_denom() - e_ok);
+        tprint_data_add_str(tp, 5, _et);
+        tprint_data_add_str(tp, 6, "");
+        tprint_data_add_str(tp, 7, "");
+        tprint_data_add_str(tp, 8, "");
+    }
+    tprint_print(tp);
+    tprint_free(tp);
+    free(acc_sum);
+    free(disp);
+    printf("\n");
+    fflush(stdout);
+}
+
+/* ═══════════════════════════════════════════════════════════════════
  * export_member_file — SINGLE API for --member-out (all modes)
  * ═══════════════════════════════════════════════════════════════════
  * set:    member bitmask to export (NULL = ALL loaded blocks; used by the
@@ -2085,8 +3003,20 @@ static void export_member_file(const char *path, const uint8_t *set,
         const char *_MAJ = g_meta_maj[0] ? g_meta_maj : (g_ens_maj[0] ? g_ens_maj : "1");
         int _MAJT = (g_meta_majt != -999) ? g_meta_majt
                   : (g_ens_majt != -999 ? g_ens_majt : -2);
-        fprintf(mf, "# META: H=%d  EP=%d  VN=%d  HN=%d  MAJ=%s  MAJ1_THRESH=%d\n",
-                _H, _EP, _VN, _HN, _MAJ, _MAJT);
+        /* TARGET= is appended when --target was given: the TRN's
+         * --debug-class-voting uses it to mark the specialist's target
+         * column (feature 2026-08-12, "one specialist = one question").
+         * No --target → no field (old member files stay compatible). */
+        char target_spec[64] = "";
+        if (g_target_active && g_target_count > 0) {
+            int off = 0;
+            for (int ti = 0; ti < g_target_count; ti++)
+                off += snprintf(target_spec + off, sizeof(target_spec) - (size_t)off,
+                                "%s%d", ti ? "," : "", g_target_classes[ti]);
+        }
+        fprintf(mf, "# META: H=%d  EP=%d  VN=%d  HN=%d  MAJ=%s  MAJ1_THRESH=%d%s%s\n",
+                _H, _EP, _VN, _HN, _MAJ, _MAJT,
+                g_target_active ? "  TARGET=" : "", target_spec);
     }
 
     if (g_xform_spec[0]) {
@@ -2174,7 +3104,7 @@ static int cmp_exp(const void *a, const void *b) {
  * 2026-08-09). Format: one "XF:CHAN:ENC" per line, '#' = comment. */
 static int load_start_member_set(const char *path, uint8_t *mask, int n) {
     FILE *f = fopen(path, "r");
-    if (!f) { fprintf(stderr, "  [WARN] --start-member-file: cannot open %s\n", path); return 0; }
+    if (!f) { fprintf(stderr, "  [WARN] --member-start: cannot open %s\n", path); return 0; }
     char line[256];
     int loaded = 0, missing = 0;
     while (fgets(line, sizeof(line), f)) {
@@ -2198,7 +3128,7 @@ static int load_start_member_set(const char *path, uint8_t *mask, int n) {
     }
     fclose(f);
     if (missing > 0)
-        fprintf(stderr, "  [WARN] --start-member-file: %d spec(s) not found in pool (skipped)\n", missing);
+        fprintf(stderr, "  [WARN] --member-start: %d spec(s) not found in pool (skipped)\n", missing);
     printf("  StartSet:  %d members loaded from %s\n", loaded, path);
     return loaded;
 }
@@ -2237,7 +3167,7 @@ static int merge_and_beam(const char *save_path, int beam_width,
      * TRY 1 found 69.36% — the divergence was the beam slot depth, 1 seeded
      * slot vs beam_width single slots, not the seed itself). */
     int auto_seed = (initial_member < 0 || initial_member >= n);
-    /* --start-member-file: start the beam from a previously exported attractor
+    /* --member-start: start the beam from a previously exported attractor
      * (monotone pool extension — the saved set is the FLOOR; new pool members
      * can only add, never redirect below it). Overrides the single seed.
      * Finding 11 fix (2026-08-09): @shuffle pipelines can no longer worsen
@@ -2251,7 +3181,7 @@ static int merge_and_beam(const char *save_path, int beam_width,
             auto_seed = 1;               /* but do NOT overwrite below: handled here */
             /* keep the set for the init block */
         } else {
-            fprintf(stderr, "  [WARN] --start-member-file: no valid members — falling back to seed\n");
+            fprintf(stderr, "  [WARN] --member-start: no valid members — falling back to seed\n");
         }
     }
     if (auto_seed && n_start == 0) {
@@ -2271,7 +3201,7 @@ static int merge_and_beam(const char *save_path, int beam_width,
         }
     }
     /* Initial candidate: empty, pre-seeded with initial_member, or pre-loaded
-     * with the full start-member set (--start-member-file). */
+     * with the full start-member set (--member-start). */
     if (n_start > 0) {
         /* Sum ALL start-set members into beam[0] — the saved attractor is the
          * floor the beam extends from. */
@@ -2290,15 +3220,11 @@ static int merge_and_beam(const char *save_path, int beam_width,
         int _c = 0;
         for (int s = 0; s < g_n_test && has_labels; s++) {
             const SCORE_TYPE *row = beam[0].sum + (size_t)s * row_sz;
-            int pred = 0;
-            for (int k = 1; k < g_n_classes; k++)
-                if (row[k] > row[pred]) pred = k;
-            if (pred == (int)g_labels[s]) _c++;
+            if (eval_sample_correct(row, g_labels[s])) _c++;
         }
-        beam[0].eval = (float)_c * 100.0f / (float)g_n_test;
-        /* floor display: the saved attractor as EN=1 row */
-        printf("  ── start-set eval: %.2f%% (%d/%d)  %d members ──\n",
-               beam[0].eval, _c, g_n_test, _cnt);
+        beam[0].eval = (float)_c * 100.0f / (float)eval_denom();
+        /* floor display: shown as EN=0 row right after the table header
+         * (see the fmt block below — beam[0] holds the start-set sum). */
     } else if (initial_member >= 0 && initial_member < n) {
         beam[0].sum = (SCORE_TYPE *)calloc(score_sz, sizeof(SCORE_TYPE));
         for (size_t i = 0; i < score_sz; i++)
@@ -2309,12 +3235,9 @@ static int merge_and_beam(const char *save_path, int beam_width,
         int _c = 0;
         for (int s = 0; s < g_n_test && has_labels; s++) {
             const SCORE_TYPE *row = beam[0].sum + (size_t)s * row_sz;
-            int pred = 0;
-            for (int k = 1; k < g_n_classes; k++)
-                if (row[k] > row[pred]) pred = k;
-            if (pred == (int)g_labels[s]) _c++;
+            if (eval_sample_correct(row, g_labels[s])) _c++;
         }
-        beam[0].eval = (float)_c * 100.0f / (float)g_n_test;
+        beam[0].eval = (float)_c * 100.0f / (float)eval_denom();
         /* Fill remaining beam_width-1 slots with best singles (≠ seed) so the
          * beam state matches the unseeded case (beam_width single-member slots).
          * Only for EXPLICIT seeds (--member-seed): auto-seeded unseeded runs
@@ -2412,8 +3335,22 @@ static int merge_and_beam(const char *save_path, int beam_width,
     int *pending = (int *)malloc((size_t)(g_max_mode ? (size_t)n : 1) * sizeof(int));
     if (!pending) { fprintf(stderr, "[FATAL] OOM\n"); exit(1); }
     int pending_n = 0;
-    if (initial_member >= 0) best_used[initial_member] = 1;  /* seed immer tracken */
-    /* --start-member-file: the saved attractor is the floor — best_eval starts
+    /* Additionsreihenfolge des akzeptierten Ensembles (2026-08-14): jeder
+     * akzeptierte Member wird hier in der Reihenfolge notiert, in der der
+     * Beam ihn annahm. --debug-member zeigt damit die kumulative acc[%]
+     * monoton steigend (identisch zur EN-Tabelle). Menge == best_used. */
+    int *accepted = (int *)malloc((size_t)n * sizeof(int));
+    if (!accepted) { fprintf(stderr, "[FATAL] OOM\n"); exit(1); }
+    int accepted_n = 0;
+    if (initial_member >= 0) {
+        best_used[initial_member] = 1;  /* seed immer tracken */
+        /* INTENTIONAL (2026-08-14): der Seed gehört an den ANFANG der
+         * Additionsreihenfolge — vorher fehlte er in accepted[] und die
+         * --debug-member Tabelle startete mit EN=2 statt EN=1 (die kumulative
+         * acc[%] begann beim falschen Member). */
+        if (accepted_n < n) accepted[accepted_n++] = initial_member;
+    }
+    /* --member-start: the saved attractor is the floor — best_eval starts
      * there and only IMPROVEMENTS are accepted (monotone extension). */
     if (n_start > 0) {
         for (int _mi = 0; _mi < n; _mi++)
@@ -2429,6 +3366,22 @@ static int merge_and_beam(const char *save_path, int beam_width,
            n, g_n_test, g_n_classes);
     printf("  Config: H=%d  EP=%d  VN=%d  HN=%d  TE=%d\n",
             g_hidden, g_epochs, g_split_vn, g_split_hn, g_target_err_x100);
+    if (g_target_active || g_filter_sample_active) {
+        printf("  Mode:");
+        if (g_target_active) {
+            printf("  target={");
+            for (int _t = 0; _t < g_target_count; _t++)
+                printf("%s%d", _t ? "," : "", g_target_classes[_t]);
+            printf("}");
+        }
+        if (g_filter_sample_active) {
+            printf("  filter-sample={");
+            for (int _f = 0; _f < g_filter_sample_count; _f++)
+                printf("%s%d", _f ? "," : "", g_filter_sample_classes[_f]);
+            printf("}");
+        }
+        printf("  (denom=%d/%d)\n", g_eval_denom, g_n_test);
+    }
     printf("  Score Mode:  %s\n", ki_score_type_str());
     printf("  Beam width: %d\n", beam_width);
     printf("  Scan:       %s\n",
@@ -2447,6 +3400,27 @@ static int merge_and_beam(const char *save_path, int beam_width,
 #else
     const char fmt[]="  %-4d  %-7.2f  %5d/%-5d  %-+7.2f  %-7.1f  %-5d  0x%08X  %-+13" PRId64 "  %-+13" PRId64 "  %-7.2f  %-4d  %s\n";
 #endif
+
+    /* ── EN=0 row: the --member-start floor (2026-08-12) ──
+     * When a start-set was loaded, beam[0] already holds its summed scores
+     * and eval. Show it as EN=0 so the table reads "0 = start-set (fixed),
+     * 1..N = added members" — the final member count is start+N. */
+    if (n_start > 0 && has_labels) {
+        int _c0 = (int)(beam[0].eval * (float)eval_denom() / 100.0f + 0.5f);
+        char _lbl0[96];
+        snprintf(_lbl0, sizeof(_lbl0), "(Start-Set: %d members)", beam[0].n_used);
+#if COUNTER_TYPE_IS_FLOAT
+        printf(fmt, 0, beam[0].eval, _c0, eval_denom(), 0.0f, beam[0].eval,
+               eval_denom() - _c0, 0u,
+               (double)blocks[0].score_min, (double)blocks[0].score_max,
+               0.0, -1, _lbl0);
+#else
+        printf(fmt, 0, beam[0].eval, _c0, eval_denom(), 0.0f, beam[0].eval,
+               eval_denom() - _c0, 0u,
+               (int64_t)blocks[0].score_min, (int64_t)blocks[0].score_max,
+               0.0, -1, _lbl0);
+#endif
+    }
 
     FILE *save_f = NULL;
     if (save_path && save_path[0]) {
@@ -2473,12 +3447,12 @@ static int merge_and_beam(const char *save_path, int beam_width,
 #pragma GCC diagnostic ignored "-Wformat-truncation"
         snprintf(_label, sizeof(_label), "%s:%s", _xn, _ml);
 #pragma GCC diagnostic pop
-        int _c = (int)(beam[0].eval * (float)g_n_test / 100.0f + 0.5f);
-        int _err0 = g_n_test - _c;
+        int _c = (int)(beam[0].eval * (float)eval_denom() / 100.0f + 0.5f);
+        int _err0 = eval_denom() - _c;
 #if COUNTER_TYPE_IS_FLOAT
         {   struct timeval _now; gettimeofday(&_now, NULL);
             double _elapsed = (double)(_now.tv_sec - _step_start.tv_sec) + (double)(_now.tv_usec - _step_start.tv_usec) * 1e-6;
-        printf(fmt, 1, beam[0].eval, _c, g_n_test, beam[0].eval,
+        printf(fmt, 1, beam[0].eval, _c, eval_denom(), beam[0].eval,
                beam[0].eval, _err0,
                blocks[initial_member].w0_marker,
                (double)blocks[initial_member].score_min,
@@ -2488,7 +3462,7 @@ static int merge_and_beam(const char *save_path, int beam_width,
 #else
         {   struct timeval _now; gettimeofday(&_now, NULL);
             double _elapsed = (double)(_now.tv_sec - _step_start.tv_sec) + (double)(_now.tv_usec - _step_start.tv_usec) * 1e-6;
-        printf(fmt, 1, beam[0].eval, _c, g_n_test, beam[0].eval,
+        printf(fmt, 1, beam[0].eval, _c, eval_denom(), beam[0].eval,
                beam[0].eval, _err0,
                blocks[initial_member].w0_marker,
                (int64_t)blocks[initial_member].score_min,
@@ -2544,11 +3518,11 @@ static int merge_and_beam(const char *save_path, int beam_width,
                                     second_k = k; second_val = v;
                                 }
                             }
-                            if (best_k == (int)g_labels[s]) correct++;
+                            if (eval_sample_correct_pred(best_k, g_labels[s])) correct++;
                             if (second_k >= 0) margin += best_val - second_val;
                         }
                     }
-                    float acc = has_labels ? (float)correct * 100.0f / (float)g_n_test : 0.0f;
+                    float acc = has_labels ? (float)correct * 100.0f / (float)(eval_denom()) : 0.0f;
 
                     int pos = __sync_fetch_and_add(&n_exp, 1);
                     exp[pos].slot_idx   = si;
@@ -2682,7 +3656,11 @@ static int merge_and_beam(const char *save_path, int beam_width,
                      * block below); accepted members are buffered in pending[]
                      * instead, so ALL block members (not just the last
                      * candidate's path) reach best_used at the commit. */
-                    if (!g_max_mode) best_used[mi] = 1;
+                    if (!g_max_mode) {
+                        if (!best_used[mi] && accepted_n < n)
+                            accepted[accepted_n++] = mi;   /* nur neue Member */
+                        best_used[mi] = 1;
+                    }
                     else if (pending_n < n) pending[pending_n++] = mi;
                     if (best_cand_used) {
                         memset(best_cand_used, 0, (size_t)n);
@@ -2716,7 +3694,24 @@ static int merge_and_beam(const char *save_path, int beam_width,
                     const char *_xn = xform_name_safe(blocks[_m].xform_real);
                     char _ml[64];
                     member_label(&blocks[_m], _ml, sizeof(_ml));
-                    snprintf(_label, sizeof(_label), "%s:%s", _xn, _ml);
+                    /* HONEST LABEL (2026-08-12): in --max mode the shown member
+                     * is the LAST member of the BEST PATH (best_slot_idx), NOT
+                     * necessarily the member added in THIS step — the beam can
+                     * keep the same path-end member across steps while the
+                     * path composition changes (EN=28/29 artefact: same name,
+                     * different slot). Mark re-used path ends explicitly.
+                     * Only in --max: there best_used is set at the BLOCK
+                     * COMMIT (after this print), so a member already in
+                     * best_used here is genuinely a re-used path end. In
+                     * strict mode best_used[mi]=1 is set at ACCEPT (before
+                     * the print) — every member would look "re-used", so the
+                     * marker is meaningless there and must stay off. */
+                    int _reused = g_max_mode && best_used && best_used[_m];
+                    if (_reused)
+                        snprintf(_label, sizeof(_label), "%s:%s (path-end, slot %d)",
+                                 _xn, _ml, best_slot_idx);
+                    else
+                        snprintf(_label, sizeof(_label), "%s:%s", _xn, _ml);
                     _member_eval = blocks[_m].file_eval;
                 } else
                     snprintf(_label, sizeof(_label), "-");
@@ -2754,12 +3749,12 @@ static int merge_and_beam(const char *save_path, int beam_width,
                  *   incrementing no_improve_steps → the search never stopped
                  *   (same member re-committed forever, 50..74 in the log). */
                 float _gain = best_eval - prev_acc;
-                int _corr = (int)(best_eval * (float)g_n_test / 100.0f + 0.5f);
+                int _corr = (int)(best_eval * (float)eval_denom() / 100.0f + 0.5f);
                 if (_gain > 0.0f && (g_max_mode ? _gain > gain_threshold : 1)) {
                     struct timeval _now; gettimeofday(&_now, NULL);
                     double _elapsed = (double)(_now.tv_sec - _step_start.tv_sec) + (double)(_now.tv_usec - _step_start.tv_usec) * 1e-6;
 #if COUNTER_TYPE_IS_FLOAT
-        printf(fmt, step + 1 + en_offset, best_eval, _corr, g_n_test, _gain,
+        printf(fmt, step + 1 + en_offset, best_eval, _corr, eval_denom(), _gain,
                _member_eval,
                (_m >= 0) ? blocks[_m].err : 0,
                (_m >= 0) ? blocks[_m].w0_marker : 0,
@@ -2767,7 +3762,7 @@ static int merge_and_beam(const char *save_path, int beam_width,
                (double)((_m >= 0) ? blocks[_m].score_max : 0),
                _elapsed, best_slot_idx, _label);
 #else
-        printf(fmt, step + 1 + en_offset, best_eval, _corr, g_n_test, _gain,
+        printf(fmt, step + 1 + en_offset, best_eval, _corr, eval_denom(), _gain,
                _member_eval,
                (_m >= 0) ? blocks[_m].err : 0,
                (_m >= 0) ? blocks[_m].w0_marker : 0,
@@ -2817,6 +3812,7 @@ static int merge_and_beam(const char *save_path, int beam_width,
                             if (g_max_members > 0 && _cur_n >= g_max_members) break;
                             if (!best_used[pending[_p]]) {
                                 best_used[pending[_p]] = 1;
+                                if (accepted_n < n) accepted[accepted_n++] = pending[_p];
                                 _cur_n++;
                             }
                         }
@@ -2851,9 +3847,16 @@ static int merge_and_beam(const char *save_path, int beam_width,
                             int _pred = 0;
                             for (int _k = 1; _k < g_n_classes; _k++)
                                 if (_row[_k] > _row[_pred]) _pred = _k;
-                            if (_pred == (int)g_labels[_s]) _sok++;
+                            /* FIX (2026-08-12): target-aware — same semantics
+                             * as eval_sample_correct_pred(). Previously plain
+                             * _pred==label counted over ALL 10000 samples but
+                             * the caller divided by eval_denom()=1000 → the
+                             * --max "BEAM BEST" reported e.g. 878/1000 that
+                             * was actually 878 global hits over 10000, not the
+                             * target recall (real target recall 69.0%). */
+                            if (eval_sample_correct_pred(_pred, g_labels[_s])) _sok++;
                         }
-                        float _set_eval = (float)_sok * 100.0f / (float)g_n_test;
+                        float _set_eval = (float)_sok * 100.0f / (float)eval_denom();
                         if (_set_eval > best_set_eval) {
                             best_set_eval = _set_eval;
                             best_set_n = best_n;
@@ -2931,12 +3934,9 @@ static int merge_and_beam(const char *save_path, int beam_width,
             int _fok = 0;
             for (int s = 0; s < g_n_test; s++) {
                 const SCORE_TYPE *row = final_sum + (size_t)s * row_sz;
-                int pred = 0;
-                for (int k = 1; k < g_n_classes; k++)
-                    if (row[k] > row[pred]) pred = k;
-                if (pred == (int)g_labels[s]) _fok++;
+                if (eval_sample_correct(row, g_labels[s])) _fok++;
             }
-            best_eval = (float)_fok * 100.0f / (float)g_n_test;
+            best_eval = (float)_fok * 100.0f / (float)eval_denom();
             free(final_sum);
         }
     }
@@ -2947,9 +3947,32 @@ static int merge_and_beam(const char *save_path, int beam_width,
         g_best_n    = real_n;
         if (!g_best_used) g_best_used = (uint8_t *)calloc((size_t)n, 1);
         for (int i = 0; i < n; i++) g_best_used[i] = best_used[i];
+        /* INTENTIONAL (2026-08-14): Additionsreihenfolge des besten Ensembles
+         * sichern — --debug-member iteriert darüber, damit acc[%] kumulativ
+         * in der Beam-Additionsreihenfolge steigt. Menge == g_best_used
+         * (accepted[] enthält genau die akzeptierten Member), nur die
+         * Sortierung unterscheidet sich von der Block-Reihenfolge des
+         * member-out files. Im --max-Modus kann die Best-Set-Kopie
+         * (best_set_best) von accepted[] abweichen — dann zeigt die Tabelle
+         * die accepted[]-Reihenfolge der finalen best_used-Menge
+         * (best_set_best ist bereits in best_used kopiert; accepted[] enthält
+         * die Additionsreihenfolge der Kandidaten). */
+        free(g_best_order);
+        g_best_order = NULL;
+        if (accepted_n > 0) {
+            g_best_order = (int *)malloc((size_t)accepted_n * sizeof(int));
+            if (g_best_order) {
+                memcpy(g_best_order, accepted, (size_t)accepted_n * sizeof(int));
+                g_best_order_n = accepted_n;
+            } else {
+                g_best_order_n = 0;
+            }
+        } else {
+            g_best_order_n = 0;
+        }
     }
 
-    int best_corr = (int)(best_eval * (float)g_n_test / 100.0f + 0.5f);
+    int best_corr = (int)(best_eval * (float)eval_denom() / 100.0f + 0.5f);
     best_n = real_n;
 
     if (g_tries > 1) {
@@ -2959,11 +3982,11 @@ static int merge_and_beam(const char *save_path, int beam_width,
          * shadows the global best in run-grep (bug 2026-07-31: --tries 5
          * reported the last try's eval instead of the best). */
         printf("  ── TRY best: %d members  acc=%.2f%%  (%d/%d) ──\n",
-               best_n, best_eval, best_corr, g_n_test);
+               best_n, best_eval, best_corr, eval_denom());
     } else {
         printf("\n══╡ BEAM BEST ╞════════════════════════════════════════════\n");
         printf("  Best:       %d members  acc=%.2f%%  (%d/%d)  [slot %d]\n",
-               best_n, best_eval, best_corr, g_n_test, best_slot_idx);
+               best_n, best_eval, best_corr, eval_denom(), best_slot_idx);
         printf("  Beam:       width=%d  blocks=%d%s\n",
                 beam_width, n, g_max_mode ? "  --max (cumulative min-gain)" : "");
 
@@ -2980,13 +4003,14 @@ static int merge_and_beam(const char *save_path, int beam_width,
         }
         printf("  Report:     H=%d  EP=%d  VN=%d  HN=%d  TE=%d  eval=%.2f%%  err=%d  N=%d  best_en=%d  beam=%d  last=%s\n",
                g_hidden, g_epochs, g_split_vn, g_split_hn, g_target_err_x100,
-               best_eval, g_n_test - best_corr, g_n_test, best_n, beam_width,
+               best_eval, eval_denom() - best_corr, eval_denom(), best_n, beam_width,
                _last_label);
         if (save_f) { fclose(save_f); printf("  Saved:      %s\n", save_path); }
     }
     for (int i = 0; i < n_beam; i++) free(beam[i].sum);
     for (int i = 0; i < n_beam; i++) free(beam[i].used);
     free(beam); free(trial); free(exp); free(best_used); free(best_cand_used); free(pending); free(_owned_exclude);
+    free(accepted);   /* Additionsreihenfolge (2026-08-14) */
     /* FIX (2026-08-10): free the best-set-tracking buffer (was leaked —
      * ASan: 1885 bytes in merge_and_beam, Z.2376). */
     free(best_set_best);
@@ -2997,8 +4021,8 @@ static int merge_and_beam(const char *save_path, int beam_width,
         double _ms = (double)(_now.tv_sec - _step_start.tv_sec) * 1000.0
                    + (double)(_now.tv_usec - _step_start.tv_usec) / 1000.0;
         /* lr= carries --beam-bestN (unused by merge-ensemble) for reproducibility */
-        ki_report_show(0, 0, best_corr, g_n_test, (int)_ms, omp_get_max_threads(),
-                       g_n_test - best_corr, (float)g_beam_bestN, best_n);
+        ki_report_show(0, 0, best_corr, eval_denom(), (int)_ms, omp_get_max_threads(),
+                       eval_denom() - best_corr, (float)g_beam_bestN, best_n, n_blocks);
     }
 
     return g_n_test;
@@ -3034,16 +4058,27 @@ static void merge_and_exchange(int beam_width)
         cur_n++;
     }
 
-    /* ── Current err(S) ── */
-    int cur_err = 0;
+    /* ── Current err(S) ──
+     * FIX (2026-08-12): count errors with the ACTIVE evaluation semantics
+     * (--target/--filter-sample: only the target-class samples count, and
+     * only exact pred==label hits are correct). Previously this used plain
+     * argmax over g_n_test — --optimal was target-blind, producing
+     * nonsensical evals (881.30% / -18.90%) when combined with --target.
+     * FIX 2 (2026-08-12): the FIRST fix still counted a cur_err++ for EVERY
+     * sample where eval_sample_correct() returns 0 — but under --target k
+     * that is ALL non-target samples (9000 of 10000). cur_err started at
+     * ~9299 while the swap scorer (eval_denom() - ok, max 1000) compared
+     * e < cur_err → almost every swap was accepted, degrading the real
+     * target-err (88% → 70% in the --target 6 run). Now cur_err counts ONLY
+     * target-class errors, exactly like the swap scorer: start at
+     * eval_denom() (all target samples wrong) and subtract each correct hit. */
+    int _den0 = eval_denom();
+    int cur_err = _den0;
     for (int s = 0; s < g_n_test && has_labels; s++) {
         const SCORE_TYPE *row = sum + (size_t)s * row_sz;
-        int p = 0;
-        for (int k = 1; k < g_n_classes; k++)
-            if (row[k] > row[p]) p = k;
-        if (p != (int)g_labels[s]) cur_err++;
+        if (eval_sample_correct(row, g_labels[s])) cur_err--;
     }
-    if (!has_labels) cur_err = g_n_test; /* no labels → cannot improve */
+    if (!has_labels) cur_err = _den0; /* no labels → cannot improve */
 
     struct timeval _t0; gettimeofday(&_t0, NULL);
     printf("\n");
@@ -3068,6 +4103,14 @@ static void merge_and_exchange(int beam_width)
     }
     for (;;) {
         pass++;
+        /* Passes cap (--optimal-passes N, 2026-08-12): stop after N passes
+         * even if a further improvement might exist — runtime control for
+         * very large ensembles. The fixpoint check below still applies. */
+        if (g_optimal_passes > 0 && pass > g_optimal_passes) {
+            printf("  [stop] pass limit %d reached (fixpoint not proven)\n",
+                   g_optimal_passes);
+            break;
+        }
         /* Best-improvement search: for each (m ∈ S, m' ∉ S) compute
          * err(S − m + m') = err((sum − sc_m) + sc_m') on the fly — no trial
          * buffer, same trick as the beam expansion (base+sc in the argmax
@@ -3075,6 +4118,14 @@ static void merge_and_exchange(int beam_width)
          * critical compare (same race-safe pattern as merge_and_greedy). */
         int best_m = -1, best_mp = -1;
         int best_err = cur_err;
+        /* FIRST-improvement (2026-08-12): a shared flag lets all threads stop
+         * scanning once ANY improving swap is found. The first thread to find
+         * one claims it (critical guard best_m<0). This is intentionally
+         * thread-order-dependent (unlike best-improvement, which is fully
+         * deterministic) — it explores a different local optimum faster.
+         * `continue` is legal here: collapse(2) makes the oo-loop the
+         * innermost, and the comment at the pre-sort explains the rule. */
+        volatile int _found = 0;
         #pragma omp parallel
         {
             int l_m = -1, l_mp = -1, l_err = cur_err;
@@ -3087,6 +4138,7 @@ static void merge_and_exchange(int beam_width)
             #pragma omp for collapse(2) schedule(guided)
             for (int ii = 0; ii < n_in; ii++) {
                 for (int oo = 0; oo < n_out; oo++) {
+                    if (g_optimal_mode == 1 && _found) continue;  /* first-mode: stop when any found */
                     int m  = in_S[ii];
                     int mp = out_S[oo];
                     const SCORE_TYPE *scm = blocks[m].scores;
@@ -3100,15 +4152,33 @@ static void merge_and_exchange(int beam_width)
                             SCORE_TYPE v = sum[rs + k] - scm[rs + k] + scp[rs + k];
                             if (v > bv) { bv = v; bk = k; }
                         }
-                        if (bk == (int)g_labels[s]) ok++;
+                        /* FIX (2026-08-12): target-aware — the candidate is
+                         * correct only under the active eval semantics
+                         * (--target k: label==k && pred==k). Previously plain
+                         * bk==label made --optimal target-blind. */
+                        if (eval_sample_correct_pred(bk, g_labels[s])) ok++;
                     }
-                    int e = has_labels ? g_n_test - ok : cur_err;
-                    if (e < l_err) { l_err = e; l_m = m; l_mp = mp; }
+                    int e = has_labels ? eval_denom() - ok : cur_err;
+                    if (g_optimal_mode == 1) {
+                        /* FIRST-improvement: claim the FIRST strict improvement
+                         * (thread-order-dependent, see the _found comment). */
+                        if (e < cur_err) {
+                            #pragma omp critical
+                            {
+                                if (best_m < 0) { best_m = m; best_mp = mp; best_err = e; }
+                            }
+                            _found = 1;   /* signal all threads to stop */
+                        }
+                    } else {
+                        if (e < l_err) { l_err = e; l_m = m; l_mp = mp; }
+                    }
                 }
             }
-            #pragma omp critical
-            {
-                if (l_err < best_err) { best_err = l_err; best_m = l_m; best_mp = l_mp; }
+            if (g_optimal_mode != 1) {
+                #pragma omp critical
+                {
+                    if (l_err < best_err) { best_err = l_err; best_m = l_m; best_mp = l_mp; }
+                }
             }
         }
 
@@ -3146,23 +4216,29 @@ static void merge_and_exchange(int beam_width)
         if (pass >= n) break;
     }
 
-    /* ── Update globals so member-out/REPORT show the exchanged set ── */
+    /* ── Update globals so member-out/REPORT show the exchanged set ──
+     * FIX (2026-08-12): use eval_denom() (the target/filter-sample
+     * denominator), NOT g_n_test — the 2-opt err counts only the samples
+     * in the active evaluation set (--target k → 1000, not 10000).
+     * With g_n_test the REPORT showed eval=881.30% (8813/1000) after
+     * --optimal in --target mode. */
     g_best_n = cur_n;
-    g_best_eval = has_labels ? (float)(g_n_test - cur_err) * 100.0f / (float)g_n_test
+    int _den = eval_denom();
+    g_best_eval = has_labels ? (float)(_den - cur_err) * 100.0f / (float)_den
                              : 0.0f;
-    int _corr = g_n_test - cur_err;
+    int _corr = _den - cur_err;
     struct timeval _now; gettimeofday(&_now, NULL);
     double _ms = (double)(_now.tv_sec - _t0.tv_sec) * 1000.0
                + (double)(_now.tv_usec - _t0.tv_usec) / 1000.0;
     printf("\n══╡ OPTIMAL BEST ╞════════════════════════════════════════════\n");
     printf("  Best:   %d members  acc=%.2f%%  (%d/%d)  [2-opt fixpoint]\n",
-           cur_n, g_best_eval, _corr, g_n_test);
+           cur_n, g_best_eval, _corr, eval_denom());
     printf("  Report: H=%d  EP=%d  VN=%d  HN=%d  TE=%d  eval=%.2f%%  err=%d  N=%d  best_en=%d  beam=%d  optimal=1\n",
            g_hidden, g_epochs, g_split_vn, g_split_hn, g_target_err_x100,
-           g_best_eval, cur_err, g_n_test, cur_n, beam_width);
+           g_best_eval, cur_err, eval_denom(), cur_n, beam_width);
     /* lr= carries --beam-bestN (unused by merge-ensemble) for reproducibility */
-    ki_report_show(0, 0, _corr, g_n_test, (int)_ms, omp_get_max_threads(),
-                   cur_err, (float)g_beam_bestN, cur_n);
+    ki_report_show(0, 0, _corr, eval_denom(), (int)_ms, omp_get_max_threads(),
+                   cur_err, (float)g_beam_bestN, cur_n, n_blocks);
     free(in_S); free(out_S);
     free(sum);
 }
@@ -3190,7 +4266,33 @@ static void show_help(const char *prog) {
     printf("                    'regexp' + POSIX pattern vs the full XF:CHAN:ENC spec)\n");
     printf("                    Regex EXCLUDE : --filter regex '!:(otto|hermann)$'  ('!' or 'not '\n");
     printf("                    after the keyword flips to EXCLUDE; multiple --filter calls AND together)\n");
+    printf("  --filter-t1      Named filter: short for\n");
+    printf("                    --filter regex '\\<rot[0-9]+@(id|spiral|avg2|avg3|avg4):'\n");
+    printf("                    (keep rot-chain members whose pipeline exits via\n");
+    printf("                     id/spiral/avg2/avg3/avg4 — 2026-08-15)\n");
+    printf("  --target N[,M,...] Optimize the ensemble for the given class(es) only:\n");
+    printf("                    correct counts ONLY when label is one of the target\n");
+    printf("                    classes AND the prediction hits it exactly. The\n");
+    printf("                    denominator becomes the number of target-class\n");
+    printf("                    samples (recall, 0-100%% — not diluted by the class\n");
+    printf("                    distribution). --member-out exports the subset that\n");
+    printf("                    is optimal FOR THESE CLASSES. Examples: --target 3,\n");
+    printf("                    --target 3,7. Default (no flag): all classes.\n");
+    printf("  --target-binary   With --target k: k vs. ALL other classes as ONE binary\n");
+    printf("                    decision (TP+TN = correct, FP+FN = error). Prevents the\n");
+    printf("                    \"everything is k\" cheat of plain target recall. 2026-08-14\n");
+    printf("  --filter-sample N[,M,...]  SAMPLE-level filter: only test samples whose\n");
+    printf("                    LABEL is in the list enter the evaluation (both the\n");
+    printf("                    correct count and the denominator). Members are still\n");
+    printf("                    ALL loaded — this restricts the evaluation set, not\n");
+    printf("                    the member pool. Combinable with --target\n");
+    printf("                    (--target 3,7 --filter-sample 3,7 = full recall mode\n");
+    printf("                    on the target classes).\n");
     printf("  --seed-sort [N]   Print single-member eval sorted by strength (no search, N=top rows, default: all)\n");
+    printf("  --sample-index FILE  Write member↔sample recognition pairs as Parquet\n");
+    printf("                    (no search; writes FILE.samples/.members/.pairs.parquet —\n");
+    printf("                     queryable via DuckDB read_parquet() or sample-query.py;\n");
+    printf("                     pairs = ALL assignments + argmax pred + margin)\n");
     printf("  --greedy          Greedy optimal subset (members sorted by contribution)\n");
     printf("    --greedy-clarity    Greedy variant: among candidates that do NOT worsen\n");
     printf("                        the current ensemble, pick the one with the highest\n");
@@ -3207,9 +4309,9 @@ static void show_help(const char *prog) {
     printf("      --tries-top-seed    Seed choice for tries: k-th strongest free member\n");
     printf("                          (Try 1 = strongest, Try 2 = 2nd, ...). Deterministic.\n");
     printf("                          Default.\n");
-    printf("    --tries-random-seed Seed choice for tries: splitmix64 random pick\n");
-    printf("                        among the free members. Broader diversity, still\n");
-    printf("                        reproducible (fixed RNG base per corpus/config).\n");
+    printf("      --tries-random-seed Seed choice for tries: splitmix64 random pick\n");
+    printf("                          among the free members. Broader diversity, still\n");
+    printf("                          reproducible (fixed RNG base per corpus/config).\n");
     printf("    --beam-bestN N      Start the per-level beam selection at the N-th best\n");
     printf("                        candidate instead of the 1st-best (default 1). Breaks\n");
     printf("                        the fixation on the 1st-best member (add-only beam never\n");
@@ -3225,7 +4327,7 @@ static void show_help(const char *prog) {
     printf("    --max N             Stop greedy/beam at N members\n");
     printf("    --min-gain F        Minimum gain [%%] to keep adding (default: %.2f)\n", g_min_gain);
     printf("    --member-seed SPEC  Pre-seed beam with member spec (e.g. \"rot22@spiral:BP:sig8\")\n");
-    printf("    --start-member-file FILE  Start the beam from a previously exported\n");
+    printf("    --member-start FILE  Start the beam from a previously exported\n");
     printf("                        attractor (--member-out format) instead of a single\n");
     printf("                        seed. The saved set is the FLOOR: the beam only ADDS\n");
     printf("                        members, so extending the pool (e.g. new @shuffle\n");
@@ -3242,12 +4344,30 @@ static void show_help(const char *prog) {
     printf("                    clarity: by the member's own class-score std-dev\n");
     printf("                          (--seed-sort shows it) — prefer unambiguous\n");
     printf("                          voters that disturb other members the least\n");
-    printf("  --optimal         2-opt exchange on the beam result: allows REMOVAL\n");
+    printf("  --optimal [best|first]  2-opt exchange on the beam result: allows REMOVAL\n");
     printf("                    (for each m in S, m' not in S: if err(S-m+m') <\n");
     printf("                    err(S), swap). Breaks the add-only attractor,\n");
     printf("                    monotonically convergent to a fixpoint. Only with\n");
     printf("                    --beam. See: plans/plan-2026-08-08\n");
+    printf("                    best  (default): apply the GLOBAL best swap per pass\n");
+    printf("                          (deterministic, 88.69->88.73 on BV32/29 members)\n");
+    printf("                    first : apply the FIRST improving swap (thread-order-\n");
+    printf("                          dependent, faster per pass, may land on a\n");
+    printf("                          different local optimum than best)\n");
+    printf("    --optimal-passes N  Cap the 2-opt fixpoint search at N passes\n");
+    printf("                    (0 = unlimited, run until no improvement; the\n");
+    printf("                    fixpoint is then not proven, \"[stop] pass limit\")\n");
     printf("\n  EXPORT ACTION -----------------------------------------------------------------------------------\n");
+    printf("  --debug-member    After the beam search, print the detailed list of the\n");
+    printf("                    SELECTED members in the trainer's --debug-member format\n");
+    printf("                    ([n/N] mem=trn/evl/E= time= xf:chan:enc W0= MIN= MAX= pxz=).\n");
+    printf("                    trn%%/E/time/pxz are '-' here (merge has no training phase);\n");
+    printf("                    evl%% is the REAL per-member accuracy computed from the\n");
+    printf("                    .ens scores vs. ground truth — compare 1:1 with the TRN.\n");
+    printf("  --debug-confusion Print the confusion matrix of the FINAL ensemble\n");
+    printf("                    (summed member scores → argmax per sample, the same\n");
+    printf("                    tprint table as the trainer's --debug-confusion —\n");
+    printf("                    merge and TRN outputs compare 1:1, 2026-08-14).\n");
     printf("  --stdout          Pure filter-export: print the filtered member specs\n");
     printf("                    (XF:CHAN:ENC, one per line) to stdout and exit. Combine\n");
     printf("                    with --filter, e.g. '--filter eval gt 50%%' for the top\n");
@@ -3259,6 +4379,9 @@ static void show_help(const char *prog) {
     printf("  --member-out FILE With --check: write the broken members' XF:CHAN:ENC specs\n");
     printf("                    to FILE for TRN --member-file (retrain, no patching). With\n");
     printf("                    --beam: export the optimal subset instead.\n");
+    printf("  --member-out-default  Derive member-{DIR}.out from the corpus dir\n");
+    printf("                    (e.g. scores-H196-E10-BV8-FLT64 → member-H196-E10-BV8-FLT64.out,\n");
+    printf("                    'scores-' prefix stripped). Explicit --member-out wins. 2026-08-16\n");
     printf("  --save FILE       Save cumulative accuracy to FILE (default: DIR/merge.dat)\n");
     printf("\n  USAGE ACTION ------------------------------------------------------------------------------------\n");
     printf("  -h, --help        Show this help text\n");
@@ -3283,10 +4406,17 @@ static void show_help(const char *prog) {
  * metadata, file size, scores (all-zero, outliers), and labels.
  * Does NOT modify global state (g_n_test, blocks, etc.).
  */
-typedef struct { int ok; char msg[256]; } CheckResult;
+typedef struct { int ok; char msg[256];
+    /* Cross-file identity (2026-08-12): filled by check_archive so
+     * check_directory can detect duplicate internal specs / dimension
+     * mismatches across the corpus. */
+    char internal_spec[256]; /* "xf:color:enc<width>" from v7 meta ("" if n/a) */
+    uint32_t n_test, hidden, epochs, w0_marker;
+} CheckResult;
 
 static CheckResult check_archive(const char *path) {
-    CheckResult res = {0, ""};
+    CheckResult res;
+    memset(&res, 0, sizeof(res));
 
     /* File size */
     struct stat st;
@@ -3313,6 +4443,24 @@ static CheckResult check_archive(const char *path) {
     uint32_t split_hn  = rd.split_hn;
     float    ensemble_eval = rd.ensemble_eval;
     uint32_t w0_check  = rd.w0_marker;
+    /* Cross-file identity for check_directory (2026-08-12) */
+    res.n_test = n_test; res.hidden = hidden; res.epochs = epochs;
+    res.w0_marker = w0_check;
+
+    /* v14+ precision vs .meta (2026-08-12): a MISMATCH is an ERROR — the
+     * archive's logits would not sum correctly with the other members.
+     * Old archives (v<14) are valid but carry no precision block: reported
+     * as OK + a [WARN: ...] text suffix (they have "höheren Zweifel", not
+     * a defect — the user decision 2026-08-12). */
+    int prec_verdict = 0;    /* 0 = none/ok, 1 = v<14 (warn-text), -1 = mismatch (error) */
+    if (version >= 14 && (g_meta_otp != 0 || g_meta_bits != 0 || g_meta_ct[0])) {
+        if ((g_meta_otp != 0 && rd.ot_precision != g_meta_otp) ||
+            (g_meta_bits != 0 && rd.bit_width    != g_meta_bits) ||
+            (g_meta_ct[0] && strcmp(rd.counter_type, g_meta_ct) != 0))
+            prec_verdict = -1;
+    } else if (version < 14 && (g_meta_otp != 0 || g_meta_bits != 0 || g_meta_ct[0])) {
+        prec_verdict = 1;
+    }
 
     if (!ens_version_valid((int)version)) {
         res.ok = -1; snprintf(res.msg, sizeof(res.msg), "Unsupported version %u", version);
@@ -3331,10 +4479,66 @@ static CheckResult check_archive(const char *path) {
         ens_reader_close(&rd); return res;
     }
 
-    /* ── Skip per-member metadata (reader tracks meta_bytes) ── */
-    if (ens_reader_skip_all_meta(&rd) != 0) {
-        res.ok = -1; snprintf(res.msg, sizeof(res.msg), "Bad metadata");
-        ens_reader_close(&rd); return res;
+    /* ── Read per-member metadata (2026-08-12: no longer skipped) ──
+     * v7+ carries 4 length-prefixed strings: color, enc, width, xform.
+     * Validate them AND compare the internal spec against the filename —
+     * a mismatch means the archive was written with a racy pipe id (see
+     * bugs/bug-2026-08-12-trainer-pipe-registry-race.md) and the merge
+     * would load the wrong member via find_member_by_spec(). */
+    char fields[4][128]; uint8_t raw[4];
+    for (uint32_t m = 0; m < n_members; m++) {
+        if (ens_reader_read_member_meta(&rd, fields, raw) != 0) {
+            res.ok = -1; snprintf(res.msg, sizeof(res.msg), "Bad metadata");
+            ens_reader_close(&rd); return res;
+        }
+        if (version >= 7) {
+            /* A2/A3: unknown xform / color / encoding names */
+            if (xform_id_by_name(fields[3]) < 0) {
+                snprintf(res.msg + strlen(res.msg), sizeof(res.msg) - strlen(res.msg),
+                         "%sunknown xform '%s'", res.msg[0] ? "; " : "", fields[3]);
+                if (res.ok <= 0) res.ok = 1;
+            }
+            if (color_id_by_name(fields[0]) < 0) {
+                snprintf(res.msg + strlen(res.msg), sizeof(res.msg) - strlen(res.msg),
+                         "%sunknown color '%s'", res.msg[0] ? "; " : "", fields[0]);
+                if (res.ok <= 0) res.ok = 1;
+            }
+            if (enc_id_by_name(fields[1]) < 0) {
+                snprintf(res.msg + strlen(res.msg), sizeof(res.msg) - strlen(res.msg),
+                         "%sunknown encoding '%s'", res.msg[0] ? "; " : "", fields[1]);
+                if (res.ok <= 0) res.ok = 1;
+            }
+            /* A4: implausible encoding width */
+            int ew = atoi(fields[2]);
+            if (ew != 8 && ew != 16 && ew != 32) {
+                snprintf(res.msg + strlen(res.msg), sizeof(res.msg) - strlen(res.msg),
+                         "%simplausible enc_width '%s'", res.msg[0] ? "; " : "", fields[2]);
+                if (res.ok <= 0) res.ok = 1;
+            }
+            /* A1: filename vs internal spec — the pipe-race signature.
+             * filename: "xf:color:enc<width>" without the ".ens" suffix. */
+            const char *base = strrchr(path, '/');
+            base = base ? base + 1 : path;
+            char file_spec[256], int_spec[256];
+            {
+                size_t blen = strlen(base);
+                size_t cut = (blen >= 4 && strcmp(base + blen - 4, ".ens") == 0) ? 4 : 0;
+                size_t cp = blen - cut;
+                if (cp >= sizeof(file_spec)) cp = sizeof(file_spec) - 1;
+                memcpy(file_spec, base, cp);
+                file_spec[cp] = '\0';
+            }
+            snprintf(int_spec, sizeof(int_spec), "%.63s:%.63s:%.63s%.63s",
+                     fields[3], fields[0], fields[1], fields[2]);
+            /* Cross-file identity for the duplicate-spec check */
+            snprintf(res.internal_spec, sizeof(res.internal_spec), "%.250s", int_spec);
+            if (strcmp(file_spec, int_spec) != 0) {
+                snprintf(res.msg + strlen(res.msg), sizeof(res.msg) - strlen(res.msg),
+                         "%sname mismatch (file '%s' vs internal '%s')",
+                         res.msg[0] ? "; " : "", file_spec, int_spec);
+                if (res.ok <= 0) res.ok = 1;
+            }
+        }
     }
 
     /* ── Expected file size (all accounting from the reader) ── */
@@ -3408,9 +4612,30 @@ static CheckResult check_archive(const char *path) {
 
     /* Build final status message */
     char dims[256];
-    snprintf(dims, sizeof(dims), "v%u  %u×%u  H=%u  EP=%u  VN=%u  HN=%u  %u member%s  EVL=%.1f%%  W0=0x%08X  scores=[%+" PRId64 ",%+" PRId64 "]",
-             version, n_test, n_classes, hidden, epochs, split_vn, split_hn,
-             n_members, n_members == 1 ? "" : "s", ensemble_eval, w0_check, vmin, vmax);
+    if (version >= 14) {
+        snprintf(dims, sizeof(dims), "v%u  %u×%u  H=%u  EP=%u  VN=%u  HN=%u  %u member%s  EVL=%.1f%%  W0=0x%08X  otp=%d bits=%d ct=%.15s  scores=[%+" PRId64 ",%+" PRId64 "]",
+                 version, n_test, n_classes, hidden, epochs, split_vn, split_hn,
+                 n_members, n_members == 1 ? "" : "s", ensemble_eval, w0_check,
+                 rd.ot_precision, rd.bit_width, rd.counter_type, vmin, vmax);
+    } else {
+        snprintf(dims, sizeof(dims), "v%u  %u×%u  H=%u  EP=%u  VN=%u  HN=%u  %u member%s  EVL=%.1f%%  W0=0x%08X  scores=[%+" PRId64 ",%+" PRId64 "]",
+                 version, n_test, n_classes, hidden, epochs, split_vn, split_hn,
+                 n_members, n_members == 1 ? "" : "s", ensemble_eval, w0_check, vmin, vmax);
+    }
+    /* Precision verdict: mismatch → ERROR; v<14 → OK + [WARN: ...] text */
+    if (prec_verdict == -1) {
+        snprintf(res.msg + strlen(res.msg), sizeof(res.msg) - strlen(res.msg),
+                 "%sprecision mismatch vs .meta (otp=%d bits=%d ct=%.15s)",
+                 res.msg[0] ? "; " : "",
+                 rd.ot_precision, rd.bit_width, rd.counter_type);
+        res.ok = -1;
+    } else if (prec_verdict == 1) {
+        snprintf(res.msg + strlen(res.msg), sizeof(res.msg) - strlen(res.msg),
+                 "%sold format (v<14), no precision block — cannot verify vs .meta "
+                 "BITS/OT_PRECISION (archive stays valid, retrain to get v14)",
+                 res.msg[0] ? "; " : "");
+        /* res.ok stays 0 → tag OK, the WARN is text-only */
+    }
     if (res.msg[0]) {
         char tmp[512];
         snprintf(tmp, sizeof(tmp), "%s  [%s]", dims, res.msg);
@@ -3429,6 +4654,17 @@ static int check_directory(const char *dir) {
     if (!d) { fprintf(stderr, "[ERROR] Cannot open %s\n", dir); return 1; }
 
     int n_ok = 0, n_warn = 0, n_err = 0, n_files = 0;
+    /* Cross-file identity tables (2026-08-12) — bounded by the corpus size */
+    enum { MAX_FILES = 8192 };
+    char (*specs)[256] = (char (*)[256])calloc((size_t)MAX_FILES, sizeof(char[256]));
+    uint32_t *dims = (uint32_t *)calloc((size_t)MAX_FILES, 4 * sizeof(uint32_t));
+    char (*fnames)[256] = (char (*)[256])calloc((size_t)MAX_FILES, sizeof(char[256]));
+    int n_specs = 0;
+    if (!specs || !dims || !fnames) {
+        fprintf(stderr, "[ERROR] check_directory OOM\n");
+        free(specs); free(dims); free(fnames); closedir(d); return 1;
+    }
+
     struct dirent *de;
     while ((de = readdir(d)) != NULL) {
         const char *ext = strrchr(de->d_name, '.');
@@ -3444,12 +4680,65 @@ static int check_directory(const char *dir) {
         else               { tag = "OK   ";  n_ok++; }
         printf("  %s  %-40s  %s\n", tag, de->d_name, r.msg);
         n_files++;
+
+        /* Collect identity for the cross-file checks */
+        if (r.internal_spec[0] && n_specs < MAX_FILES) {
+            snprintf(specs[n_specs], 256, "%s", r.internal_spec);
+            dims[n_specs * 4 + 0] = r.n_test;
+            dims[n_specs * 4 + 1] = r.hidden;
+            dims[n_specs * 4 + 2] = r.epochs;
+            dims[n_specs * 4 + 3] = r.w0_marker;
+            snprintf(fnames[n_specs], 256, "%s", de->d_name);
+            n_specs++;
+        }
     }
     closedir(d);
 
+    /* ── B1: duplicate internal specs (the pipe-race signature) ── */
+    int dup_errors = 0;
+    for (int i = 0; i < n_specs; i++) {
+        for (int j = i + 1; j < n_specs; j++) {
+            if (strcmp(specs[i], specs[j]) == 0) {
+                printf("  ERROR  %-40s  duplicate internal spec '%s' (also %s) — "
+                       "merge loads the wrong member\n",
+                       fnames[i], specs[i], fnames[j]);
+                dup_errors++;
+                n_err++;
+            }
+        }
+    }
+
+    /* ── B2: dimension inconsistency (n_test/H/EP) across the corpus ── */
+    if (n_specs > 0) {
+        uint32_t b_nt = dims[0], b_h = dims[1], b_ep = dims[2];
+        for (int i = 1; i < n_specs; i++) {
+            if (dims[i*4+0] != b_nt || dims[i*4+1] != b_h || dims[i*4+2] != b_ep) {
+                printf("  ERROR  %-40s  dimension mismatch: n_test=%u H=%u EP=%u "
+                       "vs corpus %u/%u/%u\n",
+                       fnames[i], dims[i*4+0], dims[i*4+1], dims[i*4+2],
+                       b_nt, b_h, b_ep);
+                n_err++;
+            }
+        }
+        /* ── B3: majority/W0 mixing (Otto w0!=0 vs Bit-Voting w0==0) ── */
+        uint32_t b_w0 = dims[3];
+        for (int i = 1; i < n_specs; i++) {
+            if ((dims[i*4+3] == 0) != (b_w0 == 0)) {
+                printf("  ERROR  %-40s  W0-marker mixing: file w0=0x%08X vs corpus 0x%08X "
+                       "(Otto + Bit-Voting in one corpus)\n",
+                       fnames[i], dims[i*4+3], b_w0);
+                n_err++;
+            }
+        }
+    }
+
+    free(specs); free(dims); free(fnames);
+
     printf("\n══╡ CHECK SUMMARY ╞══════════════════════════════════════════════\n");
-    printf("  %d .ens file(s):  %d OK,  %d WARN,  %d ERROR\n",
-           n_files, n_ok, n_warn, n_err);
+    printf("  %d .ens file(s):  %d OK,  %d WARN,  %d ERROR%s%s\n",
+           n_files, n_ok, n_warn, n_err,
+           dup_errors ? "  (+duplicate specs)" : "",
+           n_specs > 1 ? "" : "  (cross-file checks need >=2 files)");
     return n_err > 0 ? 1 : 0;
 }
 
@@ -3482,14 +4771,36 @@ static int check_directory(const char *dir) {
 /* Detect a broken header eval: open the archive once, parse the header,
  * read all member scores, compute the true eval (argmax vs labels).
  * Returns 1 when |header - computed| > 1.0% (broken), 0 when ok, -1 on error.
- * *header_eval_out / *computed_out receive the values (may be NULL). */
+ * *header_eval_out / *computed_out receive the values (may be NULL).
+ * PRECISION CHECK (v14+, 2026-08-12): when the archive carries the precision
+ * block and .meta specifies BITS/OT_PRECISION/COUNTER_TYPE, a mismatch sets
+ * *prec_mismatch_out = 1 (caller reports it as broken — the scores would not
+ * sum correctly with the other archives). *prec_mismatch_out may be NULL. */
 static int archive_detect_broken(const char *path, const uint8_t *labels,
                                  int n_test, int n_classes,
-                                 float *header_eval_out, float *computed_out) {
+                                 float *header_eval_out, float *computed_out,
+                                 int *prec_mismatch_out) {
+    if (prec_mismatch_out) *prec_mismatch_out = 0;
     EnsReader rd;
     if (ens_reader_open(&rd, path) != 0) return -1;
     int version = (int)rd.version;
     float header_eval = rd.ensemble_eval;
+    /* v14+ precision vs .meta (both must carry the fields for a check) */
+    if (prec_mismatch_out && version >= 14 &&
+        (g_meta_otp != 0 || g_meta_bits != 0 || g_meta_ct[0])) {
+        if ((g_meta_otp != 0 && rd.ot_precision != g_meta_otp) ||
+            (g_meta_bits != 0 && rd.bit_width    != g_meta_bits) ||
+            (g_meta_ct[0] && strcmp(rd.counter_type, g_meta_ct) != 0)) {
+            *prec_mismatch_out = 1;
+        }
+    } else if (prec_mismatch_out && version < 14 &&
+               (g_meta_otp != 0 || g_meta_bits != 0 || g_meta_ct[0])) {
+        /* OLD archive (v<14) in a directory whose .meta carries precision:
+         * the file has no precision block — cannot verify it fits. Report as
+         * a WARN via *prec_mismatch_out = 2 (NOT broken — the eval is still
+         * valid; only the precision provenance is unknown). */
+        *prec_mismatch_out = 2;
+    }
     if (rd.n_test != (uint32_t)n_test || rd.n_classes != (uint32_t)n_classes) {
         ens_reader_close(&rd); return -1;
     }
@@ -3631,6 +4942,9 @@ static int fix_write_meta(const char *dir) {
 /* ── CHECK REPAIRS entry point (--check) ── */
 static int fix_directory(const char *dir) {
     printf("\n══╡ CHECK — broken member detection ╞════════════════════════════\n");
+    /* Load .meta identity (incl. BITS/OT_PRECISION/COUNTER_TYPE) so the
+     * v14+ precision check in archive_detect_broken can validate against it. */
+    meta_load_globals(dir);
     fix_write_meta(dir);
 
     /* Collect labels from the first archive that embeds them (v8+) */
@@ -3693,8 +5007,9 @@ static int fix_directory(const char *dir) {
     if (g_member_out[0]) {
         mo = fopen(g_member_out, "w");
         if (mo) {
-            fprintf(mo, "# broken members — recompute via TRN --member-file (2026-07-31)\n");
-            fprintf(mo, "# header=stored header eval  computed=scores+labels eval\n");
+            fprintf(mo, "# members to recompute via TRN --member-file (2026-07-31):\n");
+            fprintf(mo, "#   header=stored header eval  computed=scores+labels eval\n");
+            fprintf(mo, "#   PRECISION-MISMATCH / OLD FORMAT (v<14) — retrain to get v14/v15\n");
         } else {
             fprintf(stderr, "  [WARN] cannot open --member-out %s\n", g_member_out);
         }
@@ -3708,9 +5023,27 @@ static int fix_directory(const char *dir) {
         char path[1024];
         snprintf(path, sizeof(path), "%s/%s", dir, de->d_name);
         float he = 0.0f, ce = 0.0f;
-        int br = archive_detect_broken(path, labels, n_test, n_classes, &he, &ce);
+        int pm = 0;
+        int br = archive_detect_broken(path, labels, n_test, n_classes, &he, &ce, &pm);
         if (br < 0) { n_err++; continue; }
-        if (br) {
+        if (pm == 2) {
+            /* OLD archive (v<14) in a precision-carrying .meta dir: the file
+             * has no precision block, so its provenance cannot be verified.
+             * The file stays VALID (shown as OK+[WARN:] by check_archive) —
+             * but to close the loop (next check reports nothing), write the
+             * spec to --member-out so a TRN retrain upgrades it to v14. */
+            if (mo) {
+                char spec[256];
+                snprintf(spec, sizeof(spec), "%s", de->d_name);
+                size_t sl = strlen(spec);
+                if (sl > 4 && strcmp(spec + sl - 4, ".ens") == 0) spec[sl - 4] = '\0';
+                fprintf(mo, "# %s  OLD FORMAT (v<14) — no precision block, retrain to get v14\n%s\n",
+                        spec, spec);
+            }
+            n_ok++;
+            continue;
+        }
+        if (br || pm) {
             n_broken++;
             if (mo) {
                 /* Spec = filename without ".ens" (the .ens files ARE named
@@ -3719,10 +5052,17 @@ static int fix_directory(const char *dir) {
                 snprintf(spec, sizeof(spec), "%s", de->d_name);
                 size_t sl = strlen(spec);
                 if (sl > 4 && strcmp(spec + sl - 4, ".ens") == 0) spec[sl - 4] = '\0';
-                fprintf(mo, "# %s  header=%.2f%%  computed=%.2f%%\n%s\n",
-                        spec, he, ce, spec);
-                printf("  [BROKEN] %-40s header=%.2f%%  computed=%.2f%%\n",
-                       spec, he, ce);
+                if (pm) {
+                    fprintf(mo, "# %s  PRECISION-MISMATCH (otp/bits/counter_type vs .meta)\n%s\n",
+                            spec, spec);
+                    printf("  [BROKEN] %-40s PRECISION-MISMATCH vs .meta (otp/bits/counter_type)\n",
+                           spec);
+                } else {
+                    fprintf(mo, "# %s  header=%.2f%%  computed=%.2f%%\n%s\n",
+                            spec, he, ce, spec);
+                    printf("  [BROKEN] %-40s header=%.2f%%  computed=%.2f%%\n",
+                           spec, he, ce);
+                }
             }
         } else n_ok++;
     }
@@ -3740,6 +5080,28 @@ static int fix_directory(const char *dir) {
     return 0;
 }
 
+
+/* ── Strict numeric-argument guard (2026-08-11) ─────────────────────
+ * The num/float flags (--beam, --tries, --beam-bestN, --min-gain,
+ * --eff-lambda) REQUIRE a value. Before the fix they consumed the next
+ * token unconditionally via atoi(argv[++i]) — even when it was another
+ * flag (e.g. "--beam --filter eval gt 30%" swallowed "--filter" as the
+ * beam width, atoi("--filter")=0, silently disabling the filter).
+ * Now: the next token must be a numeric literal, otherwise the run
+ * aborts with an error. is_num_arg() accepts:
+ *   ints:    leading digit (0-9)
+ *   floats:  optional sign, then digit or '.'
+ * (a value of "-1" or "-0.5" is numeric here; range checks downstream
+ *  still reject negatives where they are not allowed). */
+static int is_num_arg(const char *s, int allow_float) {
+    if (!s || !*s) return 0;
+    if (*s == '+' || *s == '-') s++;
+    if (!*s) return 0;
+    if (allow_float) {
+        return (*s >= '0' && *s <= '9') || *s == '.';
+    }
+    return (*s >= '0' && *s <= '9');
+}
 
 int main(int argc, char **argv) {
     /* merge-ensemble defines aa zero-initialized (no struct initializer) —
@@ -3782,21 +5144,38 @@ int main(int argc, char **argv) {
         } else if (strcmp(argv[i], "--greedy-clarity") == 0) {
             greedy = 1;
             g_greedy_clarity = 1;
-        } else if (strcmp(argv[i], "--beam") == 0 && i + 1 < argc) {
-            beam_width = atoi(argv[++i]);
-            if (beam_width < 1) beam_width = 1;
-        } else if (strcmp(argv[i], "--tries") == 0 && i + 1 < argc) {
-            g_tries = atoi(argv[++i]);
-            if (g_tries < 1) g_tries = 1;
+        } else if (strcmp(argv[i], "--beam") == 0) {
+            /* STRICT (2026-08-11): --beam REQUIRES a numeric value. Before,
+             * "--beam --filter ..." swallowed the next flag as the width. */
+            if (i + 1 < argc && is_num_arg(argv[i + 1], 0)) {
+                beam_width = atoi(argv[++i]);
+                if (beam_width < 1) beam_width = 1;
+            } else {
+                fprintf(stderr, "[ERROR] --beam requires a numeric argument\n");
+                return 1;
+            }
+        } else if (strcmp(argv[i], "--tries") == 0) {
+            if (i + 1 < argc && is_num_arg(argv[i + 1], 0)) {
+                g_tries = atoi(argv[++i]);
+                if (g_tries < 1) g_tries = 1;
+            } else {
+                fprintf(stderr, "[ERROR] --tries requires a numeric argument\n");
+                return 1;
+            }
         } else if (strcmp(argv[i], "--tries-no-lock") == 0) {
             g_tries_no_lock = 1;
         } else if (strcmp(argv[i], "--tries-top-seed") == 0) {
             g_tries_seed = 0;
         } else if (strcmp(argv[i], "--tries-random-seed") == 0) {
             g_tries_seed = 1;
-        } else if (strcmp(argv[i], "--beam-bestN") == 0 && i + 1 < argc) {
-            g_beam_bestN = atoi(argv[++i]);
-            if (g_beam_bestN < 1) g_beam_bestN = 1;
+        } else if (strcmp(argv[i], "--beam-bestN") == 0) {
+            if (i + 1 < argc && is_num_arg(argv[i + 1], 0)) {
+                g_beam_bestN = atoi(argv[++i]);
+                if (g_beam_bestN < 1) g_beam_bestN = 1;
+            } else {
+                fprintf(stderr, "[ERROR] --beam-bestN requires a numeric argument\n");
+                return 1;
+            }
         } else if (strcmp(argv[i], "--max") == 0) {
             /* --max allein = Beam-as-a-Whole Scan (alter Formalismus);
              * --max N = max member count.
@@ -3813,17 +5192,103 @@ int main(int argc, char **argv) {
             } else {
                 g_max_mode = 1;
             }
-        } else if (strcmp(argv[i], "--min-gain") == 0 && i + 1 < argc) {
-            g_min_gain = (float)atof(argv[++i]);
-            if (g_min_gain < 0.0f) g_min_gain = 0.0f;
-        } else if (strcmp(argv[i], "--eff-lambda") == 0 && i + 1 < argc) {
-            aa.eff_lambda = (float)atof(argv[++i]);
-            if (aa.eff_lambda < 0.0f) {
-                fprintf(stderr, "[ERROR] --eff-lambda must be >= 0\n");
+        } else if (strcmp(argv[i], "--min-gain") == 0) {
+            /* STRICT (2026-08-11): value required — see is_num_arg() */
+            if (i + 1 < argc && is_num_arg(argv[i + 1], 1)) {
+                g_min_gain = (float)atof(argv[++i]);
+                if (g_min_gain < 0.0f) g_min_gain = 0.0f;
+            } else {
+                fprintf(stderr, "[ERROR] --min-gain requires a numeric argument\n");
+                return 1;
+            }
+        } else if (strcmp(argv[i], "--target") == 0) {
+            /* Target classes (comma list, e.g. "3,7"): optimize the
+             * ensemble as if only these classes existed. Value required. */
+            if (i + 1 < argc && argv[i + 1][0] != '-') {
+                const char *spec = argv[++i];
+                g_target_count = 0;
+                char buf[64];
+                snprintf(buf, sizeof(buf), "%.63s", spec);
+                for (char *tok = strtok(buf, ","); tok && g_target_count < 10;
+                     tok = strtok(NULL, ",")) {
+                    int c = atoi(tok);
+                    /* NOTE: g_n_classes is 0 during CLI parsing (set later
+                     * at archive load) — validate against the compile-time
+                     * constant KI_NCLASSES here. */
+                    if (c < 0 || c >= KI_NCLASSES) {
+                        fprintf(stderr, "[ERROR] --target: class '%s' out of range 0..%d\n",
+                                tok, KI_NCLASSES - 1);
+                        return 1;
+                    }
+                    g_target_classes[g_target_count++] = c;
+                }
+                if (g_target_count == 0) {
+                    fprintf(stderr, "[ERROR] --target requires a class list (e.g. 3,7)\n");
+                    return 1;
+                }
+                g_target_active = 1;
+            } else {
+                fprintf(stderr, "[ERROR] --target requires a class list (e.g. 3,7)\n");
+                return 1;
+            }
+        } else if (strcmp(argv[i], "--target-binary") == 0) {
+            /* BINARY target mode: --target k becomes a k-vs-all decision.
+             * TP (label==k, pred==k) and TN (label!=k, pred!=k) are both
+             * correct; FP (label!=k, pred==k) is now an ERROR — prevents
+             * the "everything is k" degenerate specialist (2026-08-14). */
+            g_target_binary = 1;
+            if (!g_target_active) {
+                fprintf(stderr, "[ERROR] --target-binary requires --target (e.g. --target 6 --target-binary)\n");
+                return 1;
+            }
+        } else if (strcmp(argv[i], "--filter-sample") == 0) {
+            /* Sample-level filter: only samples whose LABEL is in the
+             * list enter the evaluation (correct AND denominator).
+             * Value required. */
+            if (i + 1 < argc && argv[i + 1][0] != '-') {
+                const char *spec = argv[++i];
+                g_filter_sample_count = 0;
+                char buf[64];
+                snprintf(buf, sizeof(buf), "%.63s", spec);
+                for (char *tok = strtok(buf, ","); tok && g_filter_sample_count < 10;
+                     tok = strtok(NULL, ",")) {
+                    int c = atoi(tok);
+                    /* NOTE: g_n_classes is 0 during CLI parsing (set later
+                     * at archive load) — validate against the compile-time
+                     * constant KI_NCLASSES here. */
+                    if (c < 0 || c >= KI_NCLASSES) {
+                        fprintf(stderr, "[ERROR] --filter-sample: class '%s' out of range 0..%d\n",
+                                tok, KI_NCLASSES - 1);
+                        return 1;
+                    }
+                    g_filter_sample_classes[g_filter_sample_count++] = c;
+                }
+                if (g_filter_sample_count == 0) {
+                    fprintf(stderr, "[ERROR] --filter-sample requires a class list (e.g. 0,9)\n");
+                    return 1;
+                }
+                g_filter_sample_active = 1;
+            } else {
+                fprintf(stderr, "[ERROR] --filter-sample requires a class list (e.g. 0,9)\n");
+                return 1;
+            }
+        } else if (strcmp(argv[i], "--eff-lambda") == 0) {
+            if (i + 1 < argc && is_num_arg(argv[i + 1], 1)) {
+                aa.eff_lambda = (float)atof(argv[++i]);
+                if (aa.eff_lambda < 0.0f) {
+                    fprintf(stderr, "[ERROR] --eff-lambda must be >= 0\n");
+                    return 1;
+                }
+            } else {
+                fprintf(stderr, "[ERROR] --eff-lambda requires a numeric argument\n");
                 return 1;
             }
         } else if (strcmp(argv[i], "--debug") == 0) {
             g_debug = 1;
+        } else if (strcmp(argv[i], "--debug-member") == 0) {
+            g_debug_member = 1;
+        } else if (strcmp(argv[i], "--debug-confusion") == 0) {
+            g_debug_confusion = 1;
         } else if (strcmp(argv[i], "--seed-sort") == 0) {
             g_seed_sort = 1;
             /* Optional limit: "--seed-sort N" (top N rows). Without N → show all. */
@@ -3833,15 +5298,24 @@ int main(int argc, char **argv) {
             }
         } else if (strcmp(argv[i], "--stdout") == 0) {
             g_stdout = 1;
+        } else if (strcmp(argv[i], "--sample-index") == 0 && i + 1 < argc) {
+            strncpy(g_sample_index, argv[++i], sizeof(g_sample_index) - 1);
+            g_sample_index[sizeof(g_sample_index) - 1] = '\0';
         } else if (strcmp(argv[i], "--member-seed") == 0 && i + 1 < argc) {
             strncpy(g_member_seed_spec, argv[++i], sizeof(g_member_seed_spec) - 1);
             g_member_seed_spec[sizeof(g_member_seed_spec) - 1] = '\0';
-        } else if (strcmp(argv[i], "--start-member-file") == 0 && i + 1 < argc) {
+        } else if (strcmp(argv[i], "--member-start") == 0 && i + 1 < argc) {
             strncpy(g_start_member_file, argv[++i], sizeof(g_start_member_file) - 1);
             g_start_member_file[sizeof(g_start_member_file) - 1] = '\0';
         } else if (strcmp(argv[i], "--member-out") == 0 && i + 1 < argc) {
             strncpy(g_member_out, argv[++i], sizeof(g_member_out) - 1);
             g_member_out[sizeof(g_member_out) - 1] = '\0';
+        } else if (strcmp(argv[i], "--member-out-default") == 0) {
+            /* Derive member-{DIR}.out from the corpus dir (2026-08-16):
+             * "scores-H196-E10-BV8-FLT64" → "member-H196-E10-BV8-FLT64.out"
+             * (strips a leading "scores-" prefix). Resolved after parsing
+             * (needs `dir`). Overridden by an explicit --member-out. */
+            g_member_out_default = 1;
         } else if (strcmp(argv[i], "--xform") == 0) {
             /* --xform SPEC (value) = member-file expansion (existing); 
              * --xform (no value, next arg is a flag) = stdout XF column */
@@ -3872,9 +5346,49 @@ int main(int argc, char **argv) {
                 return 1;
             }
         } else if (strcmp(argv[i], "--optimal") == 0) {
+            /* 2-opt exchange (2026-08-12): optional mode token —
+             *   --optimal         = best-improvement (default, deterministic)
+             *   --optimal best    = same
+             *   --optimal first   = first-improvement (different local optimum)
+             * A following non-flag token is consumed as the mode; a flag or
+             * end-of-args leaves the default (best). */
             g_optimal = 1;
+            if (i + 1 < argc && argv[i + 1][0] != '-') {
+                const char *_om = argv[++i];
+                if (strcmp(_om, "first") == 0)      g_optimal_mode = 1;
+                else if (strcmp(_om, "best") == 0)  g_optimal_mode = 0;
+                else {
+                    fprintf(stderr, "[ERROR] --optimal: expected 'best' or 'first', got '%s'\n", _om);
+                    return 1;
+                }
+            }
+        } else if (strcmp(argv[i], "--optimal-passes") == 0) {
+            if (i + 1 < argc && is_num_arg(argv[i + 1], 0)) {
+                g_optimal_passes = atoi(argv[++i]);
+                if (g_optimal_passes < 1) g_optimal_passes = 1;
+            } else {
+                fprintf(stderr, "[ERROR] --optimal-passes requires a numeric argument\n");
+                return 1;
+            }
         } else if (strcmp(argv[i], "--check") == 0) {
             check_mode = 1;
+        } else if (strcmp(argv[i], "--filter-t1") == 0) {
+            /* Benannter Filter (2026-08-15): Kurzform für
+             *   --filter regex '\<rot[0-9]+@(id|spiral|avg2|avg3|avg4):'
+             * Behält nur Members, deren XF:CHAN:ENC-Spec mit einer rot-Kette
+             * beginnt, deren Pipeline-Ausgang id/spiral/avg2/avg3/avg4 ist.
+             * Nutzt denselben g_filter_re[]-Pfad wie --filter regex — die
+             * Filter-Semantik (member_is_filtered) ist identisch. Additiv zu
+             * weiteren --filter-Aufrufen (kein Reset). */
+            if (g_filter_re_count >= 64) {
+                fprintf(stderr, "[ERROR] too many regex filters\n");
+                return 1;
+            }
+            g_filter_re_not[g_filter_re_count] = 0;
+            snprintf(g_filter_re[g_filter_re_count],
+                     sizeof(g_filter_re[0]),
+                     "\\<rot[0-9]+@(id|spiral|avg2|avg3|avg4):");
+            g_filter_re_count++;
         } else if (strcmp(argv[i], "--filter") == 0) {
             /* Consume all following arguments until next flag or end */
             char buf[1024] = "";
@@ -3990,6 +5504,19 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+    /* --member-out-default: derive member-{DIR}.out from the corpus dir
+     * (2026-08-16). "scores-H196-E10-BV8-FLT64" → "member-H196-E10-BV8-FLT64.out"
+     * (a leading "scores-" prefix is stripped). An explicit --member-out
+     * always wins (checked here, AFTER parsing). */
+    if (g_member_out_default && !g_member_out[0]) {
+        const char *_base = strrchr(dir, '/');
+        _base = _base ? _base + 1 : dir;
+        const char *_tag = _base;
+        if (strncmp(_base, "scores-", 7) == 0) _tag = _base + 7;
+        snprintf(g_member_out, sizeof(g_member_out), "member-%s.out", _tag);
+        printf("  Member-out:  %s  (--member-out-default)\n", g_member_out);
+    }
+
 #if 0
     /* Default save path — static buffer so save_path stays valid for the
      * whole run (stack-use-after-scope: was a block-local char[] that
@@ -4003,6 +5530,9 @@ int main(int argc, char **argv) {
 
     /* Check or load */
     if (check_mode) {
+        /* Load .meta identity first — both check_directory (precision
+         * verdict in check_archive) and fix_directory need it. */
+        meta_load_globals(dir);
         int rc = check_directory(dir);
         fix_directory(dir);
         return rc;
@@ -4187,6 +5717,16 @@ int main(int argc, char **argv) {
      * load_scores_directory as a single line of dots. */
     load_scores_directory(dir);
 
+    /* ── --sample-index: eigenständiger Check-Modus (2026-08-15) ──
+     * Schreibt die Member↔Sample-Zuordnung als 3 Parquet-Dateien und
+     * beendet sich danach — kein Beam/Greedy. Nutzt die geladenen Scores
+     * (post-filter) und g_labels. Reihenfolge ist egal (Member-IDs sind
+     * Namens-Hashes; der Parquet-Writer sortiert via block_order). */
+    if (g_sample_index[0]) {
+        int rc = build_sample_index(g_sample_index);
+        return rc;
+    }
+
     /* ── Debug: block CRC table after dedup+sort ── */
     if (g_debug) {
         printf("\n── Block CRC table (%d blocks) ──\n", n_blocks);
@@ -4269,6 +5809,10 @@ int main(int argc, char **argv) {
             merge_and_beam(save_path, beam_width, member_seed_idx, _pe);
             free(_pe);
             if (g_optimal) merge_and_exchange(beam_width);
+            if (g_debug_member)
+                print_debug_members(g_best_used, g_best_order, g_best_order_n, g_best_n, n_blocks, g_best_eval);
+            if (g_debug_confusion)
+                print_ensemble_confusion(g_best_used, n_blocks);
             if (g_member_out[0]) {
                 export_member_file(g_member_out, g_best_used, g_best_n, g_best_eval, beam_width);
                 backup_member_to_dir(dir, g_member_out);
@@ -4298,6 +5842,8 @@ int main(int argc, char **argv) {
                 float _global_best_eval = -1.0f;
                 int   _global_best_n = 0;
                 uint8_t *_global_best_used = NULL;
+                int   _global_best_order_n = 0;   /* Additionsreihenfolge (2026-08-14) */
+                int  *_global_best_order = NULL;
 
                 /* If --member-seed specified, force it as first try's seed */
                 int _seed_idx = -1;
@@ -4343,12 +5889,9 @@ int main(int argc, char **argv) {
                                 int _c = 0;
                                 for (int s = 0; s < g_n_test; s++) {
                                     const SCORE_TYPE *_r = sc + (size_t)s * _row_sz;
-                                    int pred = 0;
-                                    for (int k = 1; k < g_n_classes; k++)
-                                        if (_r[k] > _r[pred]) pred = k;
-                                    if (pred == (int)g_labels[s]) _c++;
+                                    if (eval_sample_correct(_r, g_labels[s])) _c++;
                                 }
-                                float _eval = (float)_c * 100.0f / (float)g_n_test;
+                                float _eval = (float)_c * 100.0f / (float)eval_denom();
                                 if (_eval > _best_seed_eval) {
                                     _best_seed_eval = _eval;
                                     _seed_idx = mi;
@@ -4367,18 +5910,16 @@ int main(int argc, char **argv) {
                         int _c = 0;
                         for (int s = 0; s < g_n_test; s++) {
                             const SCORE_TYPE *_r = sc + (size_t)s * _row_sz;
-                            int pred = 0;
-                            for (int k = 1; k < g_n_classes; k++)
-                                if (_r[k] > _r[pred]) pred = k;
-                            if (pred == (int)g_labels[s]) _c++;
+                            if (eval_sample_correct(_r, g_labels[s])) _c++;
                         }
-                        _seed_eval = (float)_c * 100.0f / (float)g_n_test;
+                        _seed_eval = (float)_c * 100.0f / (float)eval_denom();
                     }
                     printf("\n══╡ TRY %d/%d ══ seed=%d (%.2f%%) bestN=%d ╞═══════════════════════════════\n",
                            ti + 1, _n_tries, _seed_idx, _seed_eval, g_beam_bestN);
 
                     /* g_best_used zurücksetzen — merge_and_beam füllt es neu für diesen Try */
                     free(g_best_used); g_best_used = NULL;
+                    free(g_best_order); g_best_order = NULL; g_best_order_n = 0;
                     g_best_eval = -1.0f;
                     /* --tries-no-lock: the beam gets a FRESH empty pool so it can
                      * re-use members found by earlier tries (full-space search →
@@ -4398,6 +5939,21 @@ int main(int argc, char **argv) {
                         free(_global_best_used);
                         _global_best_used = (uint8_t *)malloc((size_t)n_blocks);
                         memcpy(_global_best_used, g_best_used, (size_t)n_blocks);
+                        /* INTENTIONAL (2026-08-14): Additionsreihenfolge des
+                         * besten Trys mitkopieren, damit --debug-member nach
+                         * dem Multi-Try-Merge weiter die kumulative acc[%] in
+                         * der richtigen Reihenfolge zeigen kann. */
+                        free(_global_best_order);
+                        _global_best_order = NULL;
+                        _global_best_order_n = 0;
+                        if (g_best_order_n > 0) {
+                            _global_best_order = (int *)malloc((size_t)g_best_order_n * sizeof(int));
+                            if (_global_best_order) {
+                                memcpy(_global_best_order, g_best_order,
+                                       (size_t)g_best_order_n * sizeof(int));
+                                _global_best_order_n = g_best_order_n;
+                            }
+                        }
                     }
 
                     /* Member dieses Trys für alle folgenden Trys sperren:
@@ -4416,21 +5972,27 @@ int main(int argc, char **argv) {
 
                 /* g_best_used = global best (für --member-out + write_member_file_from_best) */
                 free(g_best_used); g_best_used = _global_best_used;
+                free(g_best_order); g_best_order = _global_best_order;
+                g_best_order_n = _global_best_order_n;
                 g_best_eval = _global_best_eval;
                 g_best_n    = _global_best_n;
 
                 /* Output global best */
                 strncpy(g_member_out, saved_member_out, sizeof(g_member_out));
-                int _corr = (int)(g_best_eval * (float)g_n_test / 100.0f + 0.5f);
+                int _corr = (int)(g_best_eval * (float)eval_denom() / 100.0f + 0.5f);
                 printf("\n══╡ GLOBAL BEST ╞════════════════════════════════════════\n");
                 printf("  Best:  %d members  acc=%.2f%%  (%d/%d)  (best of %d tries)\n",
-                       g_best_n, g_best_eval, _corr, g_n_test, n_active_tries);
+                       g_best_n, g_best_eval, _corr, eval_denom(), n_active_tries);
                 printf("  Report: H=%d  EP=%d  VN=%d  HN=%d  TE=%d  eval=%.2f%%  err=%d  N=%d  best_en=%d  beam=%d  tries=%d\n",
                        g_hidden, g_epochs, g_split_vn, g_split_hn, g_target_err_x100,
-                       g_best_eval, g_n_test - _corr, g_n_test, g_best_n, beam_width, n_active_tries);
+                       g_best_eval, eval_denom() - _corr, eval_denom(), g_best_n, beam_width, n_active_tries);
                  /* --optimal: exchange AFTER the beam result, BEFORE the
                   * member-out export so the exported set is the fixpoint. */
                  if (g_optimal) merge_and_exchange(beam_width);
+                 if (g_debug_member)
+                     print_debug_members(g_best_used, g_best_order, g_best_order_n, g_best_n, n_blocks, g_best_eval);
+                 if (g_debug_confusion)
+                     print_ensemble_confusion(g_best_used, n_blocks);
                  if (g_member_out[0]) {
                      export_member_file(g_member_out, g_best_used, g_best_n, g_best_eval, beam_width);
                      backup_member_to_dir(dir, g_member_out);
@@ -4446,9 +6008,10 @@ int main(int argc, char **argv) {
                 double _ms = (double)(_mt1.tv_sec - _mt0.tv_sec) * 1000.0
                            + (double)(_mt1.tv_usec - _mt0.tv_usec) / 1000.0;
                 ki_report_show(0, 0, _corr, g_n_test, (int)_ms, omp_get_max_threads(),
-                               g_n_test - _corr, (float)g_bestN_winner, g_best_n);
+                               g_n_test - _corr, (float)g_bestN_winner, g_best_n, n_blocks);
             }
             free(g_best_used); g_best_used = NULL;
+            free(g_best_order); g_best_order = NULL; g_best_order_n = 0;
             g_best_eval = -1.0f;
         }
     } else if (greedy) {

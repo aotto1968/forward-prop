@@ -114,19 +114,24 @@ static inline int ki_batch_correct(COUNTER_TYPE *target, int H,
                 } else if (gap > 0) {
                     COUNTER_TYPE step_i = _Generic((COUNTER_TYPE)0,
                         float: (COUNTER_TYPE)((float)gap < (float)OT_F
-#ifdef KI_SHIFT_STEP
-                            /* Experiment 2026-08-05 (KI_SHIFT_STEP): der
-                             * float-Zweig nutzt denselben INTEGER-Shift wie
-                             * der int-Zweig statt der fraktionalen Division.
-                             * Isoliert die fraktionale Korrektur-Akkumulation
-                             * als Ursache der 68.2-vs-69.6-Lücke
-                             * (flt32-int64=68.32, int32-int64=69.61 → nur
-                             * die Rundung/shift unterscheidet sie). */
-                            ? (float)(((int64_t)step * (int64_t)gap) >> OT_PRECISION)
-#else
                             ? (float)step * (float)gap / (float)OT_F
-#endif
                             : (float)step),
+                                        /* Lossless float correction (2026-08-16):
+                                         * IDENTICAL to the int32 branch: for
+                                         * gap < OT_F scale proportionally
+                                         * (step×gap/OT_F), else use the full
+                                         * step. OT_F is 131072 in float mode too
+                                         * (fixed int32 scale), so with the
+                                         * typical gap ~3.4e7 > OT_F this yields
+                                         * step = lr×F = 6554 — the SAME
+                                         * correction as int32. The earlier
+                                         * always-proportional step×gap/F was
+                                         * 260× too strong (1.7e6 vs 6554). */
+                        double: (COUNTER_TYPE)((double)gap < (double)OT_F
+                            ? (double)step * (double)gap / (double)OT_F
+                            : (double)step),
+                                        /* Lossless float64 correction — identical
+                                         * logic to float/int32 (2026-08-16). */
                         default: (COUNTER_TYPE)((int64_t)gap < (int64_t)OT_F
                             ? (((int64_t)step * (int64_t)gap) >> OT_PRECISION)
                             : (int64_t)step));

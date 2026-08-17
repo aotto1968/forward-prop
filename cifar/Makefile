@@ -15,10 +15,15 @@
 # =====================================================================
 
 CC       = gcc
+# GLib + tprint — ki-common.h uses TPrint/tprint_* (needs <glib.h> and tprint.c).
+# Resolved via pkg-config so it works on any system; tprint.c linked as a source.
+TPRINT_SRC  = ../lib/tprint.c
+GLIB_CFLAGS = $(shell pkg-config --cflags glib-2.0)
+GLIB_LIBS   = $(shell pkg-config --libs glib-2.0)
 CFLAGS   = -O3 -g -march=native -fopenmp -Wall -Wextra -Werror \
            -Wconversion -Wsign-conversion -Wfloat-equal -Wundef -Wshadow -Wunused \
-           -I. -I../lib -I..
-LDLIBS   = -lm -lz
+           -I. -I../lib -I.. $(GLIB_CFLAGS)
+LDLIBS   = -lm -lz $(TPRINT_SRC) $(GLIB_LIBS)
 
 HDRS = $(wildcard *.h) $(wildcard ../lib/*.h)
 
@@ -50,11 +55,13 @@ otto: cifar-mlp-bin32-otto-trn-xnor.exe
 cifar-mlp-bin32-otto-trn-xnor.exe: $(OTTO_SRC) $(HDRS)
 	$(CC) $(CFLAGS) $(OTTO_MODE) \
 	  -Wno-sign-conversion -Wno-unused-parameter -Wno-unused-variable \
+	  -Wno-error=unused-but-set-variable -Wno-error=format-truncation \
 	  -o $@ $< $(LDLIBS)
 
 cifar-mlp-bin32-otto-trn-xor.exe: $(OTTO_SRC) $(HDRS)
 	$(CC) $(CFLAGS) $(OTTO_MODE) \
 	  -Wno-sign-conversion -Wno-unused-parameter -Wno-unused-variable \
+	  -Wno-error=unused-but-set-variable -Wno-error=format-truncation \
 	  -DH0_XOR -o $@ $< $(LDLIBS)
 
 model-otto: cifar-mlp-bin32-otto-trn-xnor.exe
@@ -117,7 +124,7 @@ model-adam: cifar-mlp-flt32-adam-trn.exe
 bitvote: cifar-mlp-bin32-otto-trn-bitvoting.exe
 
 cifar-mlp-bin32-otto-trn-bitvoting.exe: mlp-bin32-otto-trn-seq-prof.c $(HDRS)
-	$(CC) $(CFLAGS) -Wno-sign-conversion -Wno-unused-parameter -Wno-unused-variable -DKI_BITVOTING -o $@ $< $(LDLIBS)
+	$(CC) $(CFLAGS) -Wno-sign-conversion -Wno-unused-parameter -Wno-unused-variable -Wno-error=unused-but-set-variable -Wno-error=format-truncation -DKI_BITVOTING -o $@ $< $(LDLIBS)
 
 model-bitvote: cifar-mlp-bin32-otto-trn-bitvoting.exe
 	@mkdir -p $(MODEL_DIR)/cifar-bitvoting-e5

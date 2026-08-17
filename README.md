@@ -168,8 +168,8 @@ The `@` syntax enables sequential chaining of xforms:
 # Any number of steps
 --xform rot45@avg2@avg4
 
-# id@X = X (identity is automatically filtered)
---xform id@avg4  # → identical to --xform avg4
+# id steps are preserved (the name equals what was entered)
+--xform id@avg4  # → member name "id@avg4" (no filtering)
 ```
 
 Each pipeline is **one member** (not multiple). `rot90@avg4 = 1×`, `avg4,rot45@avg4 = 2×`.
@@ -213,6 +213,27 @@ differ only in computation format (multiply-add vs XNOR+popcount), not in
 capacity. The Bit-Voting baseline proves that the +5–7pp gap between Otto and
 linear voting is due to **nonlinear feature abstraction from W0 + majority**,
 not from more parameters or higher precision.
+
+### W0 advantage is dataset-dependent (Fashion-MNIST, 2026-08-16)
+
+On Fashion-MNIST the W0 gap nearly vanishes when both confounders are
+controlled (identical member matrix via `--filter-t1` = all-rot@filter-bv,
+7800 members; equal ensemble size via `--max 12`):
+
+| Approach | H | Bit-mass | eval (12 members) |
+| -------- | - | -------- | ----------------- |
+| Bit-Voting (no W0) | 196 | 245 KB | 91.58% |
+| Otto Score (W0)    | 196 | 395 KB | **91.93%** (+0.35 pp) |
+| Otto Score (W0)    | 198 | 399 KB | 91.79% (+0.21 pp) |
+
+- On CIFAR W0 buys +7pp (dense projection matters for noisy color data);
+  on Fashion it buys only +0.35 pp at +61% bit-mass. The projection's value
+  scales with input entropy, not with H.
+- An apparent H198 > H196 result (92.19% vs 91.93%) was an **ensemble-size
+  artifact** (22 vs 12 members): at `--max 12`, H196 beats H198. H-scalability
+  is not monotonic around the container count (196).
+- Bit-Voting's structural cost is H-fixation (H = container count; scaling
+  requires BV16/BV32), while Otto buys free H-scaling with the W0 matrix.
 
 **Precision caveat (2026-08-06):** the container is format-neutral, but the
 **score accumulation must be exact (int64/double)**. The float32 accumulator

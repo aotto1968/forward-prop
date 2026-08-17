@@ -34,6 +34,19 @@
 extern "C" {
 #endif
 
+/* Portable case-insensitive string comparison (avoids POSIX strcasecmp) */
+static inline int ki_strcasecmp(const char *a, const char *b) {
+    while (*a && *b) {
+        unsigned char ca = (unsigned char)*a;
+        unsigned char cb = (unsigned char)*b;
+        if (ca >= 'A' && ca <= 'Z') ca += 32;
+        if (cb >= 'A' && cb <= 'Z') cb += 32;
+        if (ca != cb) return (int)ca - (int)cb;
+        a++; b++;
+    }
+    return (int)(unsigned char)*a - (int)(unsigned char)*b;
+}
+
 /* ═══════════════════════════════════════════════════════════════════════
  * IMAGE TRANSFORMS — Spiegelung an Achsen + Diagonalen
  * ═══════════════════════════════════════════════════════════════════════
@@ -52,6 +65,16 @@ enum ki_xform {
     KI_XFORM_ROT45      ,
     KI_XFORM_ROT67      ,
     KI_XFORM_ROT90      ,
+    KI_XFORM_ROT112     ,
+    KI_XFORM_ROT135     ,
+    KI_XFORM_ROT157     ,
+    KI_XFORM_ROT202     ,
+    KI_XFORM_ROT225     ,
+    KI_XFORM_ROT247     ,
+    KI_XFORM_ROT270     ,
+    KI_XFORM_ROT292     ,
+    KI_XFORM_ROT315     ,
+    KI_XFORM_ROT337     ,
     KI_XFORM_SFT_U1     ,
     KI_XFORM_SFT_U2     ,
     KI_XFORM_SFT_U3     ,
@@ -82,6 +105,15 @@ enum ki_xform {
     KI_XFORM_AVG2       ,
     KI_XFORM_AVG3       ,
     KI_XFORM_AVG4       ,
+    /* rot0 (2026-08-15): 0° rotation — identical output to KI_XFORM_ID,
+     * but a DISTINCT name + ID so score files can be generated as
+     * "rot0:chan:enc" instead of "id:chan:enc". It is a stable, named
+     * member on its own (the BV8 corpus already contains rot0: files);
+     * combined with id it yields explicit "rot0@id" pipelines. Placed at
+     * the END of the enum so existing xform IDs stay stable (the .ens
+     * archive format stores xform_id values — inserting mid-enum would
+     * silently reinterpret old archives). */
+    KI_XFORM_ROT0       ,
     KI_XFORM_COUNT
 };
 
@@ -94,7 +126,10 @@ enum ki_xform {
  * change. Without this the .pre cache reproduced old behaviour even after
  * fixes (bug 2026-08-04: colswap cache stayed stale).
  */
-#define KI_XFORM_IMPL_VERSION 2   /* v2: colswap OLD row-crossing default restored (2026-08-04) */
+#define KI_XFORM_IMPL_VERSION 4   /* v4: id steps PRESERVED in pipelines (rot0@id
+                                     stays "rot0@id", 2026-08-15); v3: +KI_XFORM_ROT0
+                                     (identity alias); v2: colswap OLD row-crossing
+                                     default restored (2026-08-04) */
 
 /* ── Xform meta-info table — single source of truth for name + description ─── */
 typedef struct {
@@ -104,45 +139,56 @@ typedef struct {
 } ki_XformInfo;
 
 static const ki_XformInfo ki_xform_table[] = {
-    {KI_XFORM_ID,      "id",       "Identity (original image)"},
-    {KI_XFORM_HFLIP,   "hflip",    "Horizontal flip (left<->right)"},
-    {KI_XFORM_VFLIP,   "vflip",    "Vertical flip (top<->bottom)"},
-    {KI_XFORM_DFLIP1,  "dflip1",   "Main diagonal flip (transpose)"},
-    {KI_XFORM_DFLIP2,  "dflip2",   "Anti-diagonal flip"},
-    {KI_XFORM_ROT22,   "rot22",    "Rotate 22\302\260 clockwise (nearest-neighbor, fill 0)"},
-    {KI_XFORM_ROT45,   "rot45",    "Rotate 45\302\260 clockwise (nearest-neighbor, fill 0)"},
-    {KI_XFORM_ROT67,   "rot67",    "Rotate 67\302\260 clockwise (nearest-neighbor, fill 0)"},
-    {KI_XFORM_ROT90,   "rot90",    "Rotate 90\302\260 clockwise"},
-    {KI_XFORM_SFT_U1,  "sft-u1",   "Shift up 1 px"},
-    {KI_XFORM_SFT_U2,  "sft-u2",   "Shift up 2 px"},
-    {KI_XFORM_SFT_U3,  "sft-u3",   "Shift up 3 px"},
-    {KI_XFORM_SFT_D1,  "sft-d1",   "Shift down 1 px"},
-    {KI_XFORM_SFT_D2,  "sft-d2",   "Shift down 2 px"},
-    {KI_XFORM_SFT_D3,  "sft-d3",   "Shift down 3 px"},
-    {KI_XFORM_SFT_L1,  "sft-l1",   "Shift left 1 px"},
-    {KI_XFORM_SFT_L2,  "sft-l2",   "Shift left 2 px"},
-    {KI_XFORM_SFT_L3,  "sft-l3",   "Shift left 3 px"},
-    {KI_XFORM_SFT_R1,  "sft-r1",   "Shift right 1 px"},
-    {KI_XFORM_SFT_R2,  "sft-r2",   "Shift right 2 px"},
-    {KI_XFORM_SFT_R3,  "sft-r3",   "Shift right 3 px"},
-    {KI_XFORM_SHUFFLE, "shuffle",  "Random pixel permutation (pairwise swaps, seed 42)"},
-    {KI_XFORM_SHUFFLE1,"shuffle1", "Random pixel permutation (pairwise swaps, seed 1)"},
-    {KI_XFORM_SHUFFLE2,"shuffle2", "Random pixel permutation (pairwise swaps, seed 2)"},
-    {KI_XFORM_SHUFFLE3,"shuffle3", "Random pixel permutation (pairwise swaps, seed 3)"},
-    {KI_XFORM_SHUFFLE4,"shuffle4", "Random pixel permutation (pairwise swaps, seed 4)"},
-    {KI_XFORM_SHUFFLE5,"shuffle5", "Random pixel permutation (pairwise swaps, seed 5)"},
-    {KI_XFORM_SHUFFLE6,"shuffle6", "Random pixel permutation (pairwise swaps, seed 6)"},
-    {KI_XFORM_SHUFFLE7,"shuffle7", "Random pixel permutation (pairwise swaps, seed 7)"},
-    {KI_XFORM_SHUFFLE8,"shuffle8", "Random pixel permutation (pairwise swaps, seed 8)"},
-    {KI_XFORM_SHUFFLE9,"shuffle9", "Random pixel permutation (pairwise swaps, seed 9)"},
-    {KI_XFORM_SHUFFLE10,"shuffle10","Random pixel permutation (pairwise swaps, seed 10)"},
-    {KI_XFORM_SPIRAL,  "spiral",   "Spiral distortion (bilinear, strongest at center)"},
-    {KI_XFORM_COLSWAP34,"colswap-3-4","Swap col 3+4k <-> 4+4k per row (triple (0,3,7))"},
-    {KI_XFORM_COLSWAP24,"colswap-2-4","Swap col 2+4k <-> 4+4k per row (triple (0,2,6))"},
-    {KI_XFORM_COLSWAP14,"colswap-1-4","Swap col 1+4k <-> 4+4k per row (triple (0,1,5))"},
-    {KI_XFORM_AVG2,    "avg2",     "2-tap row-wise running avg (wrap-right)"},
-    {KI_XFORM_AVG3,    "avg3",     "3-tap row-wise running avg (wrap-right)"},
-    {KI_XFORM_AVG4,    "avg4",     "4-tap row-wise running avg (wrap-right)"},
+    {KI_XFORM_ID,         "id",           "Identity (original image)"},
+    {KI_XFORM_HFLIP,      "hflip",        "Horizontal flip (left<->right)"},
+    {KI_XFORM_VFLIP,      "vflip",        "Vertical flip (top<->bottom)"},
+    {KI_XFORM_DFLIP1,     "dflip1",       "Main diagonal flip (transpose)"},
+    {KI_XFORM_DFLIP2,     "dflip2",       "Anti-diagonal flip"},
+    {KI_XFORM_ROT0,       "rot0",         "Rotate 0\302\260 (identity — same output as id, distinct name for score files)"},
+    {KI_XFORM_ROT22,      "rot22",        "Rotate 22.5\302\260 clockwise (nearest-neighbor, fill 0)"},
+    {KI_XFORM_ROT45,      "rot45",        "Rotate 45\302\260 clockwise (nearest-neighbor, fill 0)"},
+    {KI_XFORM_ROT67,      "rot67",        "Rotate 67.5\302\260 clockwise (nearest-neighbor, fill 0)"},
+    {KI_XFORM_ROT90,      "rot90",        "Rotate 90\302\260 clockwise"},
+    {KI_XFORM_ROT112,     "rot112",       "Rotate 112.5\302\260 clockwise (nearest-neighbor, fill 0)"},
+    {KI_XFORM_ROT135,     "rot135",       "Rotate 135\302\260 clockwise (nearest-neighbor, fill 0)"},
+    {KI_XFORM_ROT157,     "rot157",       "Rotate 157.5\302\260 clockwise (nearest-neighbor, fill 0)"},
+    {KI_XFORM_ROT202,     "rot202",       "Rotate 202.5\302\260 clockwise (nearest-neighbor, fill 0)"},
+    {KI_XFORM_ROT225,     "rot225",       "Rotate 225\302\260 clockwise (nearest-neighbor, fill 0)"},
+    {KI_XFORM_ROT247,     "rot247",       "Rotate 247.5\302\260 clockwise (nearest-neighbor, fill 0)"},
+    {KI_XFORM_ROT270,     "rot270",       "Rotate 270\302\260 clockwise"},
+    {KI_XFORM_ROT292,     "rot292",       "Rotate 292.5\302\260 clockwise (nearest-neighbor, fill 0)"},
+    {KI_XFORM_ROT315,     "rot315",       "Rotate 315\302\260 clockwise (nearest-neighbor, fill 0)"},
+    {KI_XFORM_ROT337,     "rot337",       "Rotate 337.5\302\260 clockwise (nearest-neighbor, fill 0)"},
+    {KI_XFORM_SFT_U1,     "sft-u1",       "Shift up 1 px"},
+    {KI_XFORM_SFT_U2,     "sft-u2",       "Shift up 2 px"},
+    {KI_XFORM_SFT_U3,     "sft-u3",       "Shift up 3 px"},
+    {KI_XFORM_SFT_D1,     "sft-d1",       "Shift down 1 px"},
+    {KI_XFORM_SFT_D2,     "sft-d2",       "Shift down 2 px"},
+    {KI_XFORM_SFT_D3,     "sft-d3",       "Shift down 3 px"},
+    {KI_XFORM_SFT_L1,     "sft-l1",       "Shift left 1 px"},
+    {KI_XFORM_SFT_L2,     "sft-l2",       "Shift left 2 px"},
+    {KI_XFORM_SFT_L3,     "sft-l3",       "Shift left 3 px"},
+    {KI_XFORM_SFT_R1,     "sft-r1",       "Shift right 1 px"},
+    {KI_XFORM_SFT_R2,     "sft-r2",       "Shift right 2 px"},
+    {KI_XFORM_SFT_R3,     "sft-r3",       "Shift right 3 px"},
+    {KI_XFORM_SHUFFLE,    "shuffle",      "Random pixel permutation (pairwise swaps, seed 42)"},
+    {KI_XFORM_SHUFFLE1,   "shuffle1",     "Random pixel permutation (pairwise swaps, seed 1)"},
+    {KI_XFORM_SHUFFLE2,   "shuffle2",     "Random pixel permutation (pairwise swaps, seed 2)"},
+    {KI_XFORM_SHUFFLE3,   "shuffle3",     "Random pixel permutation (pairwise swaps, seed 3)"},
+    {KI_XFORM_SHUFFLE4,   "shuffle4",     "Random pixel permutation (pairwise swaps, seed 4)"},
+    {KI_XFORM_SHUFFLE5,   "shuffle5",     "Random pixel permutation (pairwise swaps, seed 5)"},
+    {KI_XFORM_SHUFFLE6,   "shuffle6",     "Random pixel permutation (pairwise swaps, seed 6)"},
+    {KI_XFORM_SHUFFLE7,   "shuffle7",     "Random pixel permutation (pairwise swaps, seed 7)"},
+    {KI_XFORM_SHUFFLE8,   "shuffle8",     "Random pixel permutation (pairwise swaps, seed 8)"},
+    {KI_XFORM_SHUFFLE9,   "shuffle9",     "Random pixel permutation (pairwise swaps, seed 9)"},
+    {KI_XFORM_SHUFFLE10,  "shuffle10",    "Random pixel permutation (pairwise swaps, seed 10)"},
+    {KI_XFORM_SPIRAL,     "spiral",       "Spiral distortion (bilinear, strongest at center)"},
+    {KI_XFORM_COLSWAP34,  "colswap-3-4",  "Swap col 3+4k <-> 4+4k per row (triple (0, 3, 7))"},
+    {KI_XFORM_COLSWAP24,  "colswap-2-4",  "Swap col 2+4k <-> 4+4k per row (triple (0, 2, 6))"},
+    {KI_XFORM_COLSWAP14,  "colswap-1-4",  "Swap col 1+4k <-> 4+4k per row (triple (0, 1, 5))"},
+    {KI_XFORM_AVG2,       "avg2",         "2-tap row-wise running avg (wrap-right)"},
+    {KI_XFORM_AVG3,       "avg3",         "3-tap row-wise running avg (wrap-right)"},
+    {KI_XFORM_AVG4,       "avg4",         "4-tap row-wise running avg (wrap-right)"},
 };
 
 /* ── Xform info lookup by ID ───────────────────────────────────── */
@@ -158,6 +204,73 @@ static inline const char *ki_xform_name(int xf) {
 static inline const char *ki_xform_desc(int xf) {
     const ki_XformInfo *info = ki_xform_info(xf);
     return info ? info->desc : "?";
+}
+
+/* ── Xform parser: single token → xform enum value ────────────
+ * Handles only individual xform names. Aliases like "all", "performance",
+ * "shift" are expanded by ki_xform_alias_expand() before calling this.
+ * Returns -1 for unknown tokens.
+ */
+static inline int ki_xform_parse(const char *tok) {
+    for (int i = 0; i < (int)(sizeof(ki_xform_table)/sizeof(ki_xform_table[0])); i++)
+        if (ki_strcasecmp(tok, ki_xform_table[i].name) == 0)
+            return ki_xform_table[i].id;
+    return -1;
+}
+
+/* ── Xform alias lookup: token → comma-separated expansion string ──
+ * Like encoding aliases (ki_encoding_alias_lookup). Returns a string
+ * of xform tokens (which are then recursively expanded via
+ * strtok+ki_xform_parse) or NULL if 'name' is not an alias.
+ *
+ * The expansion may itself contain aliases (e.g. "augmentation"→"all").
+ * The caller iterates up to 5× to resolve, just like encoding aliases.
+ *
+ * Flexible: simply edit the table — tokens are resolved by ki_xform_parse
+ * and must be valid xform names (not IDs).
+ */
+/* ── Xform alias table (like color/encoding aliases) ────────── */
+typedef struct {
+    const char *name;       /* CLI token: "performance", "all", "shift" */
+    const char *expansion;  /* comma-sep expansion: "id,hflip,rot90,..." */
+    const char *desc;       /* human description */
+} ki_XformAlias;
+
+#ifndef KI_SWEEP_PERFORMANCE_XFORM
+# define KI_SWEEP_PERFORMANCE_XFORM "sweep"
+#endif
+
+static const ki_XformAlias ki_xform_alias_table[] = {
+    {"all-basic",     "id,hflip,vflip,dflip1,dflip2,rot90,rot22,rot67,rot45,spiral,colswap-3-4,colswap-2-4,colswap-1-4",
+                      "8 geometric + 3 colswap + spiral + rot45"},
+    {"all-shuffle",   "shuffle,shuffle1,shuffle2,shuffle3,shuffle4,shuffle5,shuffle6,shuffle7,shuffle8,shuffle9,shuffle10",
+                      "11 pixel shuffles (seeds 0..10)"},
+    {"all-shift",     "sft-u1,sft-u2,sft-u3,sft-d1,sft-d2,sft-d3,sft-l1,sft-l2,sft-l3,sft-r1,sft-r2,sft-r3",
+                      "12 pixel shifts (4 dir × 3 dist)"},
+    {"shift",         "sft-u1,sft-u2,sft-u3,sft-d1,sft-d2,sft-d3,sft-l1,sft-l2,sft-l3,sft-r1,sft-r2,sft-r3",
+                      "12 pixel shifts (4 dir × 3 dist)"},
+    {"all-colswap",   "colswap-3-4,colswap-2-4,colswap-1-4", "colswap"},
+    {"all-rot",       "rot0,rot22,rot45,rot67,rot90,rot112,rot135,rot157,rot202,rot225,rot247,rot270,rot292,rot315,rot337",
+                      "14 rotations on the 22.5° grid (2026-08-14)"},
+    {"performance",   "id,hflip,rot90,rot45,spiral",
+                      "5 fast transforms for quick experiments"},
+    {"performance-2", "id,hflip,vflip,dflip1,dflip2,rot90,rot45,spiral",
+                      "8 transforms (includes D4 flips)"},
+    {"augmentation",  "all-basic,all-shift",
+                      "all geometric + shifts (no shuffle)"},
+    {"all",           "all-basic,all-shift,all-shuffle",
+                      "all available transforms"},
+    {"sweep",         "id,hflip,vflip,dflip1,dflip2,shuffle,spiral,colswap-3-4,colswap-2-4,colswap-1-4,avg2,avg3,avg4", "all for sweep"},
+    {"filter",        "id,spiral,colswap-1-4,colswap-2-4,colswap-3-4,avg2,avg3,avg4", "used for @"},
+    {"filter-bv",     "id,spiral,avg2,avg3,avg4", "used for @"},
+    {"sweep-performance", KI_SWEEP_PERFORMANCE_XFORM, "sweep performance"},
+};
+
+static inline const char *ki_xform_alias_expand(const char *name) {
+    for (int i = 0; i < (int)(sizeof(ki_xform_alias_table)/sizeof(ki_xform_alias_table[0])); i++)
+        if (ki_strcasecmp(name, ki_xform_alias_table[i].name) == 0)
+            return ki_xform_alias_table[i].expansion;
+    return NULL;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
@@ -207,11 +320,24 @@ extern void ki_xform_shuffle10_apply(uint8_t *restrict out,
  * ch:    number of color planes (3 for CIFAR, 1 for MNIST/Fashion)
  * xf:    ki_xform enum value
  * The buffer layout is: [plane0[w*h]][plane1[w*h]]...[planeN[w*h]]
- * Each plane is row-major. */
+ * Each plane is row-major.
+ *
+ * VERIFIED 2026-08-11: xforms are BIT-WIDTH INDEPENDENT. They operate on
+ * the raw uint8 GRAYSCALE buffer (0-255) BEFORE the thermometer encoding,
+ * so each "pixel" is always one uint8 byte no matter which KI_BIT_WIDTH
+ * (8/16/32) the member uses downstream. colswap swaps grayscale pixels,
+ * avg2/3/4 average grayscale values — all correct for 16-bit builds too.
+ * The 16-bit pixel width exists only AFTER this point, inside the packed
+ * container (enc_lut_get + pack=32/w, see ki-load.h). The same holds for
+ * @-chained pipes (ki_xform_apply_buf): every pipe step is one of these
+ * same uint8-grayscale transforms chained via uint8 temp buffers
+ * (ki-common.h:1034) — never a 16-bit stream. No systematic xform error. */
 static inline void ki_xform_raw(uint8_t *restrict out,
                                  const uint8_t *restrict in,
                                  int w, int h, int ch, int xf) {
-    if (xf == KI_XFORM_ID) {
+    if (xf == KI_XFORM_ID || xf == KI_XFORM_ROT0) {
+        /* rot0: 0° rotation = identity (2026-08-15) — same output as id,
+         * distinct name so score files can carry the "rot0" prefix. */
         if (out != in) memcpy(out, in, (size_t)(w * h * ch));
         return;
     }
@@ -249,13 +375,45 @@ static inline void ki_xform_raw(uint8_t *restrict out,
                 for (int x = 0; x < w; x++)
                     dst[(size_t)y * (size_t)w + (size_t)x] = src[((size_t)h - 1 - (size_t)x) * (size_t)w + (size_t)y];
             break;
+        case KI_XFORM_ROT270:
+            /* Rotate 270° clockwise (90° counterclockwise): out[y][x] = in[x][h-1-y] */
+            for (int y = 0; y < h; y++)
+                for (int x = 0; x < w; x++)
+                    dst[(size_t)y * (size_t)w + (size_t)x] = src[(size_t)x * (size_t)w + (size_t)(h - 1 - y)];
+            break;
         case KI_XFORM_ROT22:
-        case KI_XFORM_ROT67: {
-            /* Rotate by angle° clockwise, nearest-neighbor, fill borders with 0 */
+        case KI_XFORM_ROT45:
+        case KI_XFORM_ROT67:
+        case KI_XFORM_ROT112:
+        case KI_XFORM_ROT135:
+        case KI_XFORM_ROT157:
+        case KI_XFORM_ROT202:
+        case KI_XFORM_ROT225:
+        case KI_XFORM_ROT247:
+        case KI_XFORM_ROT292:
+        case KI_XFORM_ROT315:
+        case KI_XFORM_ROT337: {
+            /* Rotate by angle° clockwise, nearest-neighbor, fill borders with 0.
+             * 22.5° grid (2026-08-14): all-rot alias = 12 non-90 steps,
+             * rot90/rot270 use the exact pixel-swap path above. */
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
 #endif
-            float angle = (xf == KI_XFORM_ROT22) ? 22.0f : 67.0f;
+            float angle;
+            switch (xf) {
+            case KI_XFORM_ROT22:  angle = 22.5f;  break;
+            case KI_XFORM_ROT45:  angle = 45.0f;  break;
+            case KI_XFORM_ROT67:  angle = 67.5f;  break;
+            case KI_XFORM_ROT112: angle = 112.5f; break;
+            case KI_XFORM_ROT135: angle = 135.0f; break;
+            case KI_XFORM_ROT157: angle = 157.5f; break;
+            case KI_XFORM_ROT202: angle = 202.5f; break;
+            case KI_XFORM_ROT225: angle = 225.0f; break;
+            case KI_XFORM_ROT247: angle = 247.5f; break;
+            case KI_XFORM_ROT292: angle = 292.5f; break;
+            case KI_XFORM_ROT315: angle = 315.0f; break;
+            default:              angle = 337.5f; break;
+            }
             float rad = angle * (float)M_PI / 180.0f;
             float _c = cosf(rad), _s = sinf(rad);
             float cx = (float)(w - 1) * 0.5f, cy = (float)(h - 1) * 0.5f;
@@ -321,28 +479,6 @@ static inline void ki_xform_raw(uint8_t *restrict out,
         case KI_XFORM_SHUFFLE8: ki_xform_shuffle8_apply(out, in, stride, ch); break;
         case KI_XFORM_SHUFFLE9: ki_xform_shuffle9_apply(out, in, stride, ch); break;
         case KI_XFORM_SHUFFLE10:ki_xform_shuffle10_apply(out, in, stride, ch); break;
-        case KI_XFORM_ROT45: {
-            /* Rotate 45° clockwise around center, nearest-neighbor, fill borders with 0 */
-#ifndef M_PI
-#define M_PI 3.14159265358979323846
-#endif
-            float rad = 45.0f * (float)M_PI / 180.0f;
-            float _c = cosf(rad), _s = sinf(rad);
-            float cx = (float)(w - 1) * 0.5f, cy = (float)(h - 1) * 0.5f;
-            for (int y = 0; y < h; y++) {
-                for (int x = 0; x < w; x++) {
-                    float fx = (float)x, fy = (float)y;
-                    float sx = _c * (fx - cx) + _s * (fy - cy) + cx;
-                    float sy = -_s * (fx - cx) + _c * (fy - cy) + cy;
-                    int isx = (int)(sx + 0.5f), isy = (int)(sy + 0.5f);
-                    if (isx >= 0 && isx < w && isy >= 0 && isy < h)
-                        dst[(size_t)y * (size_t)w + (size_t)x] = src[(size_t)isy * (size_t)w + (size_t)isx];
-                    else
-                        dst[(size_t)y * (size_t)w + (size_t)x] = 0;
-                }
-            }
-            break;
-        }
         case KI_XFORM_SPIRAL: {
             /* Spiral distortion: strongest rotation at center, chromatic offset per plane.
              * Bilinear interpolation, borders filled with 128.
@@ -602,18 +738,6 @@ static inline const char *ki_enc_names_all(void) {
  *         "exp"   → returns KI_ENC_EXP, *out_width=KI_ENC_WIDTH_DEFAULT
  * Returns -1 on unknown encoding. */
 
-/* Portable case-insensitive string comparison (avoids POSIX strcasecmp) */
-static inline int ki_strcasecmp(const char *a, const char *b) {
-    while (*a && *b) {
-        unsigned char ca = (unsigned char)*a;
-        unsigned char cb = (unsigned char)*b;
-        if (ca >= 'A' && ca <= 'Z') ca += 32;
-        if (cb >= 'A' && cb <= 'Z') cb += 32;
-        if (ca != cb) return (int)ca - (int)cb;
-        a++; b++;
-    }
-    return (int)(unsigned char)*a - (int)(unsigned char)*b;
-}
 
 /* Helper: look up a bare encoding token (no width suffix) in ki_enc_table[] */
 static inline int ki_enc_parse_name(const char *tok) {
@@ -667,68 +791,6 @@ static inline int ki_enc_parse(const char *tok, int *out_width) {
     }
     if (id >= 0 && out_width) *out_width = KI_ENC_WIDTH_DEFAULT;
     return id;
-}
-
-/* ── Xform parser: single token → xform enum value ────────────
- * Handles only individual xform names. Aliases like "all", "performance",
- * "shift" are expanded by ki_xform_alias_expand() before calling this.
- * Returns -1 for unknown tokens.
- */
-static inline int ki_xform_parse(const char *tok) {
-    for (int i = 0; i < (int)(sizeof(ki_xform_table)/sizeof(ki_xform_table[0])); i++)
-        if (ki_strcasecmp(tok, ki_xform_table[i].name) == 0)
-            return ki_xform_table[i].id;
-    return -1;
-}
-
-/* ── Xform alias lookup: token → comma-separated expansion string ──
- * Like encoding aliases (ki_encoding_alias_lookup). Returns a string
- * of xform tokens (which are then recursively expanded via
- * strtok+ki_xform_parse) or NULL if 'name' is not an alias.
- *
- * The expansion may itself contain aliases (e.g. "augmentation"→"all").
- * The caller iterates up to 5× to resolve, just like encoding aliases.
- *
- * Flexible: simply edit the table — tokens are resolved by ki_xform_parse
- * and must be valid xform names (not IDs).
- */
-/* ── Xform alias table (like color/encoding aliases) ────────── */
-typedef struct {
-    const char *name;       /* CLI token: "performance", "all", "shift" */
-    const char *expansion;  /* comma-sep expansion: "id,hflip,rot90,..." */
-    const char *desc;       /* human description */
-} ki_XformAlias;
-
-#ifndef KI_SWEEP_PERFORMANCE_XFORM
-# define KI_SWEEP_PERFORMANCE_XFORM "sweep"
-#endif
-
-static const ki_XformAlias ki_xform_alias_table[] = {
-    {"all-basic",     "id,hflip,vflip,dflip1,dflip2,rot90,rot22,rot67,rot45,spiral,colswap-3-4,colswap-2-4,colswap-1-4",
-                      "8 geometric + 3 colswap + spiral + rot45"},
-    {"all-shuffle",   "shuffle,shuffle1,shuffle2,shuffle3,shuffle4,shuffle5,shuffle6,shuffle7,shuffle8,shuffle9,shuffle10",
-                      "11 pixel shuffles (seeds 0..10)"},
-    {"all-shift",     "sft-u1,sft-u2,sft-u3,sft-d1,sft-d2,sft-d3,sft-l1,sft-l2,sft-l3,sft-r1,sft-r2,sft-r3",
-                      "12 pixel shifts (4 dir × 3 dist)"},
-    {"shift",         "sft-u1,sft-u2,sft-u3,sft-d1,sft-d2,sft-d3,sft-l1,sft-l2,sft-l3,sft-r1,sft-r2,sft-r3",
-                      "12 pixel shifts (4 dir × 3 dist)"},
-    {"performance",   "id,hflip,rot90,rot45,spiral",
-                      "5 fast transforms for quick experiments"},
-    {"performance-2", "id,hflip,vflip,dflip1,dflip2,rot90,rot45,spiral",
-                      "8 transforms (includes D4 flips)"},
-    {"augmentation",  "all-basic,all-shift",
-                      "all geometric + shifts (no shuffle)"},
-    {"all",           "all-basic,all-shift,all-shuffle",
-                      "all available transforms"},
-    {"sweep",         "id,hflip,vflip,dflip1,dflip2,rot22,rot45,rot67,rot90,shuffle,spiral,colswap-3-4,colswap-2-4,colswap-1-4,avg2,avg3,avg4", "all for sweep"},
-    {"sweep-performance", KI_SWEEP_PERFORMANCE_XFORM, "sweep performance"},
-};
-
-static inline const char *ki_xform_alias_expand(const char *name) {
-    for (int i = 0; i < (int)(sizeof(ki_xform_alias_table)/sizeof(ki_xform_alias_table[0])); i++)
-        if (ki_strcasecmp(name, ki_xform_alias_table[i].name) == 0)
-            return ki_xform_alias_table[i].expansion;
-    return NULL;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
@@ -1010,6 +1072,10 @@ static const ki_ColorAlias ki_color_alias_table[] = {
     {"grey",  "Y,YL",     "2 ITU luminance variants"},
     {"rgb",   "R,G,B",    "3 raw RGB channels"},
     {"diff",  "RG,RB,GB", "3-channel color difference set"},
+    {"all-channel", "R,G,B,Y,AL,AM,AP,RG,RB,GB,BL,BM,BP,H,S,C,CL,CM,CP,edge,bin,lbp,dog,var,dir,range,lbp-rg,lbp-rb,lbp-gb",
+                   "every channel incl. structure channels (2026-08-14)"},
+    {"sweep-fashion", "mnist,edge,lbp,dog,var,dir,range",
+                   "every channel incl. structure channels for fashion (2026-08-14)"},
     {"sweep", "R,G,B,Y,AL,AM,AP,RG,RB,GB,BL,BM,BP,H,S,C,CL,CM,CP,edge,bin,lbp,dog,var,dir,range,lbp-rg,lbp-rb,lbp-gb", "all for sweep test"},
     {"sweep-performance", KI_SWEEP_PERFORMANCE_CHANNEL, "sweep performance"},
 };
@@ -1071,6 +1137,7 @@ static const ki_EncAlias ki_enc_alias_table[] = {
     {"latest-2",  "g:down,bl:gamma,bm:sig,bp:sig,b:sqrt,al:down,am:sig,ap:sig,h:lin,c:cbrt,gb:sig",
                                                                 "Optimized 11-member set"},
     {"sweep", "raw,lin,down,up,mid,log,exp,sig,sqrt,cbrt,gamma,tri,inv-exp", "all for sweep test"},
+    {"sweep-fashion", "raw,lin,down,up,mid,log,exp,sig,sqrt,cbrt,gamma,tri,inv-exp", "all for sweep test"},
     {"sweep-performance", KI_SWEEP_PERFORMANCE_ENCODING,        "optimized sweep"},
 
     {"debug", "exp", "debug sweep"},
@@ -1101,6 +1168,34 @@ static inline const char *ki_color_names_all(void) {
 /* ── clamp to 0..255 (helper for ki_blocks_from_rgb) ───────── */
 static inline int ki_clamp_u8(int x) {
     return (x < 0) ? 0 : (x > 255) ? 255 : x;
+}
+
+/* ── Source block for the derived structure channels (2026-08-14) ──
+ * CIFAR (KI_COLORS>1): the derived channels (edge/bin/lbp/dog/var/dir/
+ * range) compute on COLOR_Y (ITU-601 luminance from RGB).
+ * Fashion/MNIST (KI_COLORS==1): there is no Y block — the single
+ * grayscale block COLOR_MNIST is the source. This macro makes the
+ * ki_compute_* functions channel-agnostic without duplicating them.
+ * See: plans/plan-2026-08-13-fashion-edge-channel.md */
+#if KI_COLORS == 1
+#  define KI_EDGE_SRC COLOR_MNIST
+#else
+#  define KI_EDGE_SRC COLOR_Y
+#endif
+
+/* ── Grayscale-compatible channels (2026-08-14) ───────────────
+ * On KI_COLORS==1 (MNIST/Fashion) the RGB-derived channels (COLOR_R..
+ * COLOR_CP plus the chromatic LBP_RG/RB/GB) do not exist — only the raw
+ * grayscale block (COLOR_MNIST) and the structure channels computed on it
+ * (COLOR_EDGE..COLOR_RANGE). rebuild_enc_array() uses this to decide which
+ * channels survive a --channel mnist,lbp sweep on grayscale: the RGB ones
+ * are folded back to COLOR_MNIST, the structure ones are kept. */
+static inline int ki_color_is_cifar_rgb(int col) {
+    return (col >= COLOR_R && col <= COLOR_CP) || col >= COLOR_LBP_RG;
+}
+static inline int ki_color_is_grayscale_ok(int col) {
+    return col == COLOR_MNIST ||
+           (col >= COLOR_EDGE && col <= COLOR_RANGE);
 }
 
 /* ── RGB.*blocks per pixel) ──────────
@@ -1208,12 +1303,50 @@ static inline void ki_print_member_structure(const int *colors,
  * w=32, h=32 (CIFAR-10 resolution).
  */
 __attribute__((unused))
+/* ── Grayscale Sobel edge (Fashion/MNIST, KI_COLORS==1) ──────────
+ * Same 3×3 Sobel as ki_compute_edge, but reads COLOR_MNIST (the single
+ * grayscale block) instead of COLOR_Y (which only exists for CIFAR RGB).
+ * Result → COLOR_EDGE. Plan: plan-2026-08-13-fashion-edge-channel.md —
+ * the missing structure layer to separate Shirt/Pullover/Coat (button
+ * placket = vertical edges, sleeve hems, lapels). */
+static inline void ki_compute_edge_gray(uint8_t px[COLOR_NB][1024], int w, int h) {
+    if (w < 3 || h < 3) return;
+    int gn[1024];
+    for (int p = 0; p < w * h; p++) gn[p] = px[COLOR_MNIST][p];
+    for (int y = 1; y < h - 1; y++) {
+        for (int x = 1; x < w - 1; x++) {
+            int i = y * w + x;
+            int gx = -gn[i-w-1] + gn[i-w+1]
+                     -2*gn[i-1]  + 2*gn[i+1]
+                     -gn[i+w-1] + gn[i+w+1];
+            int gy = -gn[i-w-1] -2*gn[i-w] -gn[i-w+1]
+                     +gn[i+w-1] +2*gn[i+w] +gn[i+w+1];
+            int mag = (int)(sqrtf((float)(gx*gx + gy*gy)) / 6.0f + 0.5f);
+            if (mag > 255) mag = 255;
+            px[COLOR_EDGE][i] = (uint8_t)mag;
+        }
+    }
+    /* Left/right borders: copy from col 1 / w-2 */
+    for (int y = 1; y < h - 1; y++) {
+        int ro = y * w;
+        uint8_t lv = px[COLOR_EDGE][ro + 1];
+        uint8_t rv = px[COLOR_EDGE][ro + w - 2];
+        px[COLOR_EDGE][ro + 0]     = lv;
+        px[COLOR_EDGE][ro + w - 1] = rv;
+    }
+    /* Top/bottom rows: copy from row 1 / h-2 (covers corners) */
+    for (int x = 0; x < w; x++) {
+        px[COLOR_EDGE][0 * w + x]       = px[COLOR_EDGE][1 * w + x];
+        px[COLOR_EDGE][(h - 1) * w + x] = px[COLOR_EDGE][(h - 2) * w + x];
+    }
+}
+
 static inline void ki_compute_edge(uint8_t px[COLOR_NB][1024], int w, int h) {
     /* 3×3 Sobel kernel needs at least 3×3 pixels */
     if (w < 3 || h < 3) return;
     /* Sobel on Y (ITU-601) → COLOR_EDGE */
     {   int yn[1024];
-        for (int p = 0; p < w * h; p++) yn[p] = px[COLOR_Y][p];
+        for (int p = 0; p < w * h; p++) yn[p] = px[KI_EDGE_SRC][p];
         for (int y = 1; y < h - 1; y++) {
             for (int x = 1; x < w - 1; x++) {
                 int i = y * w + x;
@@ -1291,7 +1424,7 @@ static inline void ki_compute_binary(uint8_t px[COLOR_NB][1024], int w, int h) {
     /* Histogram der Y-Werte (0..255) */
     int hist[256] = {0};
     for (int p = 0; p < N; p++)
-        hist[px[COLOR_Y][p]]++;
+        hist[px[KI_EDGE_SRC][p]]++;
 
     /* Otsu: find threshold T that maximizes sigma_b² */
     int total = N;
@@ -1322,7 +1455,7 @@ static inline void ki_compute_binary(uint8_t px[COLOR_NB][1024], int w, int h) {
 
     /* Binarize: Y > threshold → 255, otherwise 0 */
     for (int p = 0; p < N; p++)
-        px[COLOR_BIN][p] = (px[COLOR_Y][p] > threshold) ? 255 : 0;
+        px[COLOR_BIN][p] = (px[KI_EDGE_SRC][p] > threshold) ? 255 : 0;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
@@ -1339,17 +1472,17 @@ static inline void ki_compute_lbp(uint8_t px[COLOR_NB][1024], int w, int h) {
     for (int y = 1; y < h - 1; y++) {
         for (int x = 1; x < w - 1; x++) {
             int i = y * w + x;
-            uint8_t center = px[COLOR_Y][i];
+            uint8_t center = px[KI_EDGE_SRC][i];
             uint8_t code = 0;
             /* Clockwise from top-left (standard LBP ordering) */
-            if (px[COLOR_Y][i-w-1] >= center) code |= 0x80;  /* top-left      */
-            if (px[COLOR_Y][i-w  ] >= center) code |= 0x40;  /* top           */
-            if (px[COLOR_Y][i-w+1] >= center) code |= 0x20;  /* top-right     */
-            if (px[COLOR_Y][i+1  ] >= center) code |= 0x10;  /* right         */
-            if (px[COLOR_Y][i+w+1] >= center) code |= 0x08;  /* bottom-right  */
-            if (px[COLOR_Y][i+w  ] >= center) code |= 0x04;  /* bottom        */
-            if (px[COLOR_Y][i+w-1] >= center) code |= 0x02;  /* bottom-left   */
-            if (px[COLOR_Y][i-1  ] >= center) code |= 0x01;  /* left          */
+            if (px[KI_EDGE_SRC][i-w-1] >= center) code |= 0x80;  /* top-left      */
+            if (px[KI_EDGE_SRC][i-w  ] >= center) code |= 0x40;  /* top           */
+            if (px[KI_EDGE_SRC][i-w+1] >= center) code |= 0x20;  /* top-right     */
+            if (px[KI_EDGE_SRC][i+1  ] >= center) code |= 0x10;  /* right         */
+            if (px[KI_EDGE_SRC][i+w+1] >= center) code |= 0x08;  /* bottom-right  */
+            if (px[KI_EDGE_SRC][i+w  ] >= center) code |= 0x04;  /* bottom        */
+            if (px[KI_EDGE_SRC][i+w-1] >= center) code |= 0x02;  /* bottom-left   */
+            if (px[KI_EDGE_SRC][i-1  ] >= center) code |= 0x01;  /* left          */
             px[COLOR_LBP][i] = code;
         }
     }
@@ -1387,9 +1520,9 @@ static inline void ki_compute_dog(uint8_t px[COLOR_NB][1024], int w, int h) {
     for (int y = 1; y < h - 1; y++) {
         for (int x = 1; x < w - 1; x++) {
             int i = y * w + x;
-            int s3 = (int)px[COLOR_Y][i-w-1] + (int)px[COLOR_Y][i-w] + (int)px[COLOR_Y][i-w+1]
-                   + (int)px[COLOR_Y][i-1]   + (int)px[COLOR_Y][i]   + (int)px[COLOR_Y][i+1]
-                   + (int)px[COLOR_Y][i+w-1] + (int)px[COLOR_Y][i+w] + (int)px[COLOR_Y][i+w+1];
+            int s3 = (int)px[KI_EDGE_SRC][i-w-1] + (int)px[KI_EDGE_SRC][i-w] + (int)px[KI_EDGE_SRC][i-w+1]
+                   + (int)px[KI_EDGE_SRC][i-1]   + (int)px[KI_EDGE_SRC][i]   + (int)px[KI_EDGE_SRC][i+1]
+                   + (int)px[KI_EDGE_SRC][i+w-1] + (int)px[KI_EDGE_SRC][i+w] + (int)px[KI_EDGE_SRC][i+w+1];
             blur3[i] = s3 / 9;
         }
     }
@@ -1400,7 +1533,7 @@ static inline void ki_compute_dog(uint8_t px[COLOR_NB][1024], int w, int h) {
             int s5 = 0;
             for (int dy = -2; dy <= 2; dy++)
                 for (int dx = -2; dx <= 2; dx++)
-                    s5 += (int)px[COLOR_Y][i + dy*w + dx];
+                    s5 += (int)px[KI_EDGE_SRC][i + dy*w + dx];
             blur5[i] = s5 / 25;
         }
     }
@@ -1450,20 +1583,20 @@ static inline void ki_compute_var(uint8_t px[COLOR_NB][1024], int w, int h) {
         for (int x = 1; x < w - 1; x++) {
             int i = y * w + x;
             /* Local mean (3×3) */
-            int sum = (int)px[COLOR_Y][i-w-1] + (int)px[COLOR_Y][i-w] + (int)px[COLOR_Y][i-w+1]
-                    + (int)px[COLOR_Y][i-1]   + (int)px[COLOR_Y][i]   + (int)px[COLOR_Y][i+1]
-                    + (int)px[COLOR_Y][i+w-1] + (int)px[COLOR_Y][i+w] + (int)px[COLOR_Y][i+w+1];
+            int sum = (int)px[KI_EDGE_SRC][i-w-1] + (int)px[KI_EDGE_SRC][i-w] + (int)px[KI_EDGE_SRC][i-w+1]
+                    + (int)px[KI_EDGE_SRC][i-1]   + (int)px[KI_EDGE_SRC][i]   + (int)px[KI_EDGE_SRC][i+1]
+                    + (int)px[KI_EDGE_SRC][i+w-1] + (int)px[KI_EDGE_SRC][i+w] + (int)px[KI_EDGE_SRC][i+w+1];
             int mean = sum / 9;
             /* Mean absolute deviation */
-            int mad = abs((int)px[COLOR_Y][i-w-1] - mean)
-                    + abs((int)px[COLOR_Y][i-w]   - mean)
-                    + abs((int)px[COLOR_Y][i-w+1] - mean)
-                    + abs((int)px[COLOR_Y][i-1]   - mean)
-                    + abs((int)px[COLOR_Y][i]     - mean)
-                    + abs((int)px[COLOR_Y][i+1]   - mean)
-                    + abs((int)px[COLOR_Y][i+w-1] - mean)
-                    + abs((int)px[COLOR_Y][i+w]   - mean)
-                    + abs((int)px[COLOR_Y][i+w+1] - mean);
+            int mad = abs((int)px[KI_EDGE_SRC][i-w-1] - mean)
+                    + abs((int)px[KI_EDGE_SRC][i-w]   - mean)
+                    + abs((int)px[KI_EDGE_SRC][i-w+1] - mean)
+                    + abs((int)px[KI_EDGE_SRC][i-1]   - mean)
+                    + abs((int)px[KI_EDGE_SRC][i]     - mean)
+                    + abs((int)px[KI_EDGE_SRC][i+1]   - mean)
+                    + abs((int)px[KI_EDGE_SRC][i+w-1] - mean)
+                    + abs((int)px[KI_EDGE_SRC][i+w]   - mean)
+                    + abs((int)px[KI_EDGE_SRC][i+w+1] - mean);
             int v = mad / 9;  /* normalize to 0..255 (max=9*255/9=255) */
             px[COLOR_VAR][i] = (uint8_t)v;
         }
@@ -1496,11 +1629,11 @@ static inline void ki_compute_dir(uint8_t px[COLOR_NB][1024], int w, int h) {
     for (int y = 1; y < h - 1; y++) {
         for (int x = 1; x < w - 1; x++) {
             int i = y * w + x;
-            int gx = -(int)px[COLOR_Y][i-w-1] + (int)px[COLOR_Y][i-w+1]
-                     -2*(int)px[COLOR_Y][i-1]  + 2*(int)px[COLOR_Y][i+1]
-                     -(int)px[COLOR_Y][i+w-1] + (int)px[COLOR_Y][i+w+1];
-            int gy = -(int)px[COLOR_Y][i-w-1] -2*(int)px[COLOR_Y][i-w] -(int)px[COLOR_Y][i-w+1]
-                     +(int)px[COLOR_Y][i+w-1] +2*(int)px[COLOR_Y][i+w] +(int)px[COLOR_Y][i+w+1];
+            int gx = -(int)px[KI_EDGE_SRC][i-w-1] + (int)px[KI_EDGE_SRC][i-w+1]
+                     -2*(int)px[KI_EDGE_SRC][i-1]  + 2*(int)px[KI_EDGE_SRC][i+1]
+                     -(int)px[KI_EDGE_SRC][i+w-1] + (int)px[KI_EDGE_SRC][i+w+1];
+            int gy = -(int)px[KI_EDGE_SRC][i-w-1] -2*(int)px[KI_EDGE_SRC][i-w] -(int)px[KI_EDGE_SRC][i-w+1]
+                     +(int)px[KI_EDGE_SRC][i+w-1] +2*(int)px[KI_EDGE_SRC][i+w] +(int)px[KI_EDGE_SRC][i+w+1];
             /* Quantize to 8 bins based on sign ratios (no atan2) */
             int bin = 0;
             int agx = abs(gx), agy = abs(gy);
@@ -1546,7 +1679,7 @@ static inline void ki_compute_range(uint8_t px[COLOR_NB][1024], int w, int h) {
             uint8_t mn = 255, mx = 0;
             for (int dy = -1; dy <= 1; dy++) {
                 for (int dx = -1; dx <= 1; dx++) {
-                    uint8_t val = px[COLOR_Y][i + dy*w + dx];
+                    uint8_t val = px[KI_EDGE_SRC][i + dy*w + dx];
                     if (val < mn) mn = val;
                     if (val > mx) mx = val;
                 }

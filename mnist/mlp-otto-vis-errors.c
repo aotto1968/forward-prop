@@ -19,6 +19,7 @@
  *   uint8[N] preds = vorhergesagte Klassen
  */
 #include "ki-config.h"
+#include "../lib/tprint.h"   /* before ki-common.h: ki-common.h uses TPrint/tprint_* */
 #include "ki-common.h"
 #include "maj3.h"
 #include <inttypes.h>

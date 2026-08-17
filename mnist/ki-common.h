@@ -111,18 +111,34 @@ static inline int ki_color_parse(const char *tok) {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
- * MODE_FLT32 — Single computation-mode switch (before ki-local.h)
+ * MODE_FLT32 / MODE_FLT64 / MODE_INT32 — computation-mode switches
  * ═══════════════════════════════════════════════════════════════════════
  * Define -DMODE_FLT32 to enable IEEE 754 float counters/scores/types.
+ * Define -DMODE_FLT64 to enable IEEE 754 DOUBLE counters/scores — full
+ * precision, no fixed-point quantization (2026-08-16: flt64 = the
+ * quantization-free control for the 92%-wall investigation; each rounding
+ * loses information, float64 removes it).
  * Derived defines (COUNTER_TYPE, COUNTER_TYPE_IS_FLOAT, SCORE_TYPE) are
- * all set centrally from this one switch.
+ * all set centrally from these switches.
  *
- * Default (no -DMODE_FLT32): int32_t counters, int64_t scores.
+ * Default (no mode switch): float counters, double scores.
  *
  * NOTE: Individual -D overrides (COUNTER_TYPE, SCORE_TYPE) still work.
  */
 #ifdef MODE_FLT32
 /* Legacy alias — float is now the default, this is a no-op. */
+#endif
+
+#ifdef MODE_FLT64
+#  ifndef COUNTER_TYPE
+#    define COUNTER_TYPE double
+#  endif
+#  ifndef COUNTER_TYPE_IS_FLOAT
+#    define COUNTER_TYPE_IS_FLOAT 1
+#  endif
+#  ifndef SCORE_TYPE
+#    define SCORE_TYPE double
+#  endif
 #endif
 
 #ifdef MODE_INT32
@@ -299,8 +315,8 @@ typedef struct {
     int    rows_mode;         			/* --rows-mode flat|rows: 0=flat, 1=per-row members */
     int    no_precompute;   			/* --no-precompute: skip h0/gb caches, compute on-the-fly per batch (default: 0) */
     int    ensembleN;       			/* --ensembleN N: independent W0 copies (default: 1) */
-    int    splitVN;         			/* --splitVN N: vertical H split (default: 1) */
-    int    splitHN;         			/* --splitHN N: horizontal NC split (default: 1) */
+    int    splitVN;        			/* --splitVN N: vertical H split (default: 1) */
+    int    splitHN;  			        /* --splitHN N: horizontal NC split (default: 1) */
     int    channel;        			/* --channel bitmask of selected blocks */
     int    channel_explicit; 			/* 1=--channel was set explicitly */
     int    packedB;    			        /* 1=4px/cont (256/blk), 0=1px/cont (1024/blk) */
@@ -324,6 +340,10 @@ typedef struct {
     int    ensemble_seed;    			/* ENS_SEED_ONCE|CONST|INCR (default: CONST) */
     int    debug_class_voting; 			/* --debug-class-voting: Member × Class accuracy (end only) */
     int    debug_class_voting_all; 		/* --debug-class-voting-all: every epoch */
+    int    member_target_mask; 			/* from member-file "# META: ... TARGET=3,7":
+                                           bitmask of the specialist's target class(es)
+                                           (0 = no target info). Drives the target-column
+                                           marker in --debug-class-voting (2026-08-12). */
     int    debug_confusion;    			/* --debug-confusion-matrix: confusion matrix (end only) */
     int    debug_confusion_all; 		/* --debug-confusion-matrix-all: every epoch */
     int    debug_member;        		/* --debug-member: verbose member-by-member output (seq only) */
@@ -409,8 +429,12 @@ static inline void rebuild_enc_array(void) {
     for (int i = 0; i < aa.member_spec_count && aa.enc_count < KI_ENC_MAX; i++) {
         ki_MemberSpec *sp = &aa.member_spec[i];
         int col = sp->color;
-        /* MNIST: reassign CIFAR colors to COLOR_MNIST */
-        if (KI_COLORS <= 1 && col >= 0 && col != COLOR_MNIST) col = COLOR_MNIST;
+        /* MNIST/Fashion (KI_COLORS<=1): the RGB-derived channels do not
+         * exist — fold them back to COLOR_MNIST. The grayscale structure
+         * channels (edge/bin/lbp/dog/var/dir/range, COLOR_EDGE..RANGE)
+         * are KEPT so --channel mnist,lbp works (plan-2026-08-13). */
+        if (KI_COLORS <= 1 && col >= 0 && ki_color_is_cifar_rgb(col))
+            col = COLOR_MNIST;
         int dup = 0;
         for (int j = 0; j < aa.enc_count && !dup; j++)
             if (aa.enc_array[j].type  == (int8_t)sp->enc_type &&
@@ -680,26 +704,45 @@ static int _xf_pipe_steps[KI_XFORM_PIPE_MAX][KI_XFORM_PIPE_MAX_STEPS];
 static int _xf_pipe_nsteps[KI_XFORM_PIPE_MAX];
 static int _xf_pipe_count = 0;
 
-/* Find existing pipe by its steps (dedup). Returns virtual xform ID or -1. */
+/* Find existing pipe by its steps (dedup). Returns virtual xform ID or -1.
+ * Serialized with the same critical section as ki_xform_pipe_create so a
+ * reader never observes a half-written registry slot (FIX 2026-08-12). */
 static inline int ki_xform_pipe_find(const int *steps, int n) {
-    for (int i = 0; i < _xf_pipe_count; i++) {
-        if (_xf_pipe_nsteps[i] != n) continue;
-        int match = 1;
-        for (int j = 0; j < n; j++)
-            if (_xf_pipe_steps[i][j] != steps[j]) { match = 0; break; }
-        if (match) return KI_XFORM_COUNT + i;
+    int found = -1;
+    #pragma omp critical(xform_pipe_registry)
+    {
+        for (int i = 0; i < _xf_pipe_count; i++) {
+            if (_xf_pipe_nsteps[i] != n) continue;
+            int match = 1;
+            for (int j = 0; j < n; j++)
+                if (_xf_pipe_steps[i][j] != steps[j]) { match = 0; break; }
+            if (match) { found = KI_XFORM_COUNT + i; break; }
+        }
     }
-    return -1;
+    return found;
 }
 
-/* Register a pipeline from an array of xform IDs. Returns virtual xform ID. */
+/* Register a pipeline from an array of xform IDs. Returns virtual xform ID.
+ * THREAD-SAFE (FIX 2026-08-12): the PRF trainer exports one .ens per member
+ * from parallel threads; ki_xform_parse_or_pipe() → ki_xform_pipe_create()
+ * mutates the GLOBAL registry. Without serialization two threads could read
+ * the same _xf_pipe_count and hand out the SAME virtual id for two different
+ * pipes → wrong internal xform name in the exported .ens (filename ≠ meta).
+ * See: bugs/bug-2026-08-12-trainer-pipe-registry-race.md. All trainers build
+ * with -fopenmp, so omp critical is always available. */
 static inline int ki_xform_pipe_create(const int *steps, int n) {
-    if (_xf_pipe_count >= KI_XFORM_PIPE_MAX || n < 2 || n > KI_XFORM_PIPE_MAX_STEPS)
-        return -1;
-    int id = KI_XFORM_COUNT + _xf_pipe_count;
-    for (int i = 0; i < n; i++) _xf_pipe_steps[_xf_pipe_count][i] = steps[i];
-    _xf_pipe_nsteps[_xf_pipe_count] = n;
-    _xf_pipe_count++;
+    int id;
+    #pragma omp critical(xform_pipe_registry)
+    {
+        if (_xf_pipe_count >= KI_XFORM_PIPE_MAX || n < 2 || n > KI_XFORM_PIPE_MAX_STEPS) {
+            id = -1;
+        } else {
+            id = KI_XFORM_COUNT + _xf_pipe_count;
+            for (int i = 0; i < n; i++) _xf_pipe_steps[_xf_pipe_count][i] = steps[i];
+            _xf_pipe_nsteps[_xf_pipe_count] = n;
+            _xf_pipe_count++;
+        }
+    }
     return id;
 }
 static inline int  ki_xform_is_pipe(int xf) { return xf >= KI_XFORM_COUNT; }
@@ -735,10 +778,59 @@ static inline const char *ki_xform_str(int xf) {
   return ki_xform_is_pipe(xf) ? ki_xform_pipe_name(xf) : ki_xform_name(xf);
 }
 
+/* ── Iterative alias expansion (2026-08-12) ─────────────────────────
+ * Fully expands an xform alias string into a comma-separated list of
+ * PLAIN xform names, resolving nested aliases (e.g. "all" → "all-basic,
+ * all-shift,..." → "id,hflip,...,sft-u1,..."). Copies into dst (size).
+ * Non-alias input is copied verbatim. Bounded by 5 passes (an alias
+ * cycle would loop forever; the table has no cycles). Used by the
+ * --xform parser's cross-product so BOTH sides of "a@b" support aliases
+ * at any nesting depth. Returns dst. */
+static inline char *ki_xform_alias_expand_full(const char *in, char *dst, size_t size) {
+    strncpy(dst, in, size - 1);
+    dst[size - 1] = '\0';
+    for (int _iter = 0; _iter < 5; _iter++) {
+        /* Phase 1: full-string alias match */
+        const char *_full = ki_xform_alias_expand(dst);
+        if (_full) {
+            strncpy(dst, _full, size - 1);
+            dst[size - 1] = '\0';
+            continue;
+        }
+        /* Phase 2: per-token expansion */
+        char _tmp[4096], _new[4096] = "";
+        strncpy(_tmp, dst, sizeof(_tmp) - 1);
+        _tmp[sizeof(_tmp) - 1] = '\0';
+        int _any = 0;
+        char *_save2 = NULL;
+        for (char *_t = strtok_r(_tmp, ",", &_save2); _t; _t = strtok_r(NULL, ",", &_save2)) {
+            while (*_t == ' ' || *_t == '\t') _t++;
+            const char *_pe = ki_xform_alias_expand(_t);
+            if (_pe) {
+                if (_new[0]) strncat(_new, ",", sizeof(_new) - 1);
+                strncat(_new, _pe, sizeof(_new) - strlen(_new) - 1);
+                _any = 1;
+            } else {
+                if (_new[0]) strncat(_new, ",", sizeof(_new) - 1);
+                strncat(_new, _t, sizeof(_new) - strlen(_new) - 1);
+            }
+        }
+        if (!_any) break;
+        strncpy(dst, _new, size - 1);
+        dst[size - 1] = '\0';
+    }
+    return dst;
+}
+
 /* ── Parse xform with optional @-pipeline chaining.
  * Returns xform_id (regular or pipe virtual ID), or -1 on error.
  * Does NOT modify aa.xforms or aa.xform_list — caller handles that.
- * KI_XFORM_ID steps in a pipeline are silently skipped (id@avg4 = avg4). */
+ * INTENTIONAL (2026-08-15): KI_XFORM_ID steps are PRESERVED in pipelines
+ * (rot0@id → "rot0@id", id@rot67 → "id@rot67"). The old behaviour skipped
+ * them (id@avg4 = avg4), which silently erased the "@id" suffix from
+ * member names — that made `--filter regex 'rot[0-9]+@id'` impossible and
+ * hid the difference between rotXX (bare) and rotXX@id (explicit). The
+ * name must equal what was entered: no representation mangling. */
 static inline int ki_xform_parse_or_pipe(const char *xf_str) {
     if (!strchr(xf_str, '@')) {
         return ki_xform_parse(xf_str);
@@ -757,7 +849,7 @@ static inline int ki_xform_parse_or_pipe(const char *xf_str) {
             fprintf(stderr, "[ERROR] unknown xform step '%s' in pipeline '%s'\n", _st, xf_str);
             return -1;
         }
-        if (_s != KI_XFORM_ID) _steps[_n++] = _s;
+        _steps[_n++] = _s;   /* id steps preserved (2026-08-15) */
     }
     if (_n < 1) return KI_XFORM_ID;
     if (_n == 1) return _steps[0];
@@ -1020,8 +1112,28 @@ static inline void ki_member_file_apply_meta(void) {
             else                               aa.maj_mode = KI_MAJ_1;
         }
         if (_MAJT >= -2) aa.maj1_thresh = _MAJT;
-        printf("  [MEMBER-FILE] meta defaults: H=%d EP=%d VN=%d HN=%d MAJ=%s MAJ1_THRESH=%d\n",
-               _H, _EP, _VN, _HN, _MAJ, _MAJT);
+        /* TARGET=3,7 (specialist classes, written by merge-ensemble when
+         * --target was given). Parsed separately from sscanf so the mask
+         * survives even if MAJ/MAJ1_THRESH fields change. Feature
+         * 2026-08-12: --debug-class-voting marks the target column(s). */
+        char tgt_spec[64] = "";
+        char *tg = strstr(line, "TARGET=");
+        if (tg) {
+            char *sp = strchr(tg, '\n');
+            if (sp) *sp = '\0';
+            snprintf(tgt_spec, sizeof(tgt_spec), "%.48s", tg + 7);
+            aa.member_target_mask = 0;
+            for (char *tok = strtok(tgt_spec, ","); tok;
+                 tok = strtok(NULL, ",")) {
+                int c = atoi(tok);
+                if (c >= 0 && c < KI_NCLASSES)
+                    aa.member_target_mask |= (1 << c);
+            }
+        }
+        printf("  [MEMBER-FILE] meta defaults: H=%d EP=%d VN=%d HN=%d MAJ=%s MAJ1_THRESH=%d%s%s\n",
+               _H, _EP, _VN, _HN, _MAJ, _MAJT,
+               aa.member_target_mask ? "  TARGET=" : "",
+               aa.member_target_mask ? tgt_spec : "");
         break;
     }
     fclose(f);
@@ -1233,7 +1345,20 @@ static inline void ki_parse_args(int argc, char *argv[]) {
             printf("  lbp-rg        : LBP on RG opponent (chromatic texture)\n");
             printf("  dist          : Center distance (positional encoding, 255=center)\n");
 #else
-            printf("  mnist         : single grayscale block (only available channel)\n");
+            printf("  Grayscale (KI_COLORS==1, MNIST/Fashion) channels:\n");
+            printf("  mnist         : raw grayscale pixels (default, single block)\n");
+            printf("  edge          : Sobel edge magnitude on grayscale — button placket\n");
+            printf("                  (Shirt), sleeve hems, lapels (Coat) become explicit\n");
+            printf("                  edges. The structure layer missing for Shirt/\n");
+            printf("                  Pullover/Coat (plan-2026-08-13-fashion-edge-channel.md)\n");
+            printf("  bin           : Otsu-binarized grayscale (filled black/white regions)\n");
+            printf("  lbp           : Local Binary Pattern (8-bit texture descriptor)\n");
+            printf("  dog           : Difference of Gaussians (band-pass edges)\n");
+            printf("  var           : Local variance (texture roughness)\n");
+            printf("  dir           : Gradient direction (8-bin quantized, 0..248)\n");
+            printf("  range         : Local range (max-min in 3×3, texture sharpness)\n");
+            printf("  Use comma-sep: --channel edge,mnist  (multiple blocks per member)\n");
+            printf("  Combine with --encoding and --xform per block: edge:exp8,mnist:lin8\n");
 #endif
             exit(1);   /* INTENTIONAL: non-zero so run-research.sh suppresses logging */
         } else if (strcmp(argv[i], "--help-encoding") == 0) {
@@ -1326,8 +1451,9 @@ static inline void ki_parse_args(int argc, char *argv[]) {
             printf("    X@Y        : apply X first, then Y on the result\n");
             printf("    Example: rot90@avg4  → rotate 90°, then 4-tap blur\n");
             printf("    Example: avg2@avg4   → 2-tap then 4-tap = ~6-tap\n");
-            printf("    Example: rot45@avg2@avg4  → rotate 45°, avg2, avg4\n");
-            printf("    Note: id@X = X (identity steps are filtered out)\n");
+             printf("    Example: rot45@avg2@avg4  → rotate 45°, avg2, avg4\n");
+             printf("    Note: id steps are preserved (rot0@id stays 'rot0@id',\n");
+             printf("          no filtering — the name equals what was entered)\n");
             printf("  Pixel shifts (12) — fill vacated pixels with 0:\n");
             printf("    sft-u1/2/3  : shift up by 1/2/3 px\n");
             printf("    sft-d1/2/3  : shift down by 1/2/3 px\n");
@@ -1648,9 +1774,16 @@ static inline void ki_parse_args(int argc, char *argv[]) {
                     }
                 } else if (strchr(tok, '@')) {
                     /* Pipeline: rot90@avg4 → create pipe, store virtual ID.
-                     * If the prefix (@-part before first @) is an alias,
-                     * expand it and create pipelines for each expanded token + suffix.
-                     * Example: sweep@spiral → id@spiral, hflip@spiral, vflip@spiral, ... */
+                     * ALIAS CROSS-PRODUCT (2026-08-12): an alias on EITHER side
+                     * of "@" expands to a cross-product of pipelines:
+                     *   all-shift@filter-bv → sft-u1@id, sft-u1@spiral, ...,
+                     *                          sft-r3@rot90  (12 × 6 = 72 pipes)
+                     *   sweep@spiral        → id@spiral, hflip@spiral, ... (16×1)
+                     *   id@filter-bv        → id@id, id@spiral, ...        (1×6)
+                     * A CHAIN (a@b@c) is supported: the LAST token is the
+                     * suffix, everything before it is the prefix — both sides
+                     * may be aliases. The cross-product is bounded by
+                     * KI_XFORM_PIPE_MAX (512); too many pipelines abort. */
                     const char *_at = strchr(tok, '@');
                     size_t _pre_len = (size_t)(_at - tok);
                     char _pre[256], _suf[256];
@@ -1658,25 +1791,59 @@ static inline void ki_parse_args(int argc, char *argv[]) {
                     memcpy(_pre, tok, _pre_len); _pre[_pre_len] = '\0';
                     strncpy(_suf, _at + 1, sizeof(_suf) - 1);
                     _suf[sizeof(_suf) - 1] = '\0';
+                    /* Suffix may itself be a chain (b@c) — keep it intact for
+                     * ki_xform_parse_or_pipe, only expand if it is a plain alias. */
                     const char *_alias_exp = ki_xform_alias_expand(_pre);
-                    if (_alias_exp) {
-                        /* Expand alias: create pipeline for each expanded token + suffix */
-                        char _exp_buf[4096];
-                        strncpy(_exp_buf, _alias_exp, sizeof(_exp_buf) - 1);
-                        _exp_buf[sizeof(_exp_buf) - 1] = '\0';
+                    const char *_suf_exp   = strchr(_suf, '@') ? NULL
+                                                               : ki_xform_alias_expand(_suf);
+                    if (_alias_exp || _suf_exp) {
+                        /* Cross-product: for every expanded prefix token × every
+                         * expanded suffix token create one pipeline. Both sides
+                         * are fully alias-expanded (nested aliases included).
+                         * Suffix tokens are parsed into a fixed array FIRST
+                         * (strtok is not reentrant — re-parsing per prefix
+                         * token would lose the stream). */
+                        char _pre_buf[4096], _suf_buf[4096];
+                        ki_xform_alias_expand_full(_alias_exp ? _alias_exp : _pre,
+                                                   _pre_buf, sizeof(_pre_buf));
+                        ki_xform_alias_expand_full(_suf_exp ? _suf_exp : _suf,
+                                                   _suf_buf, sizeof(_suf_buf));
+                        char _suf_toks[256][64];
+                        int _suf_n = 0;
+                        for (char *_st = strtok(_suf_buf, ","); _st && _suf_n < 256;
+                             _st = strtok(NULL, ",")) {
+                            while (*_st == ' ' || *_st == '\t') _st++;
+                            if (!*_st) continue;
+                            snprintf(_suf_toks[_suf_n], 64, "%s", _st);
+                            _suf_n++;
+                        }
                         int _has_pipe = 0;
-                        for (char *_et = strtok(_exp_buf, ","); _et; _et = strtok(NULL, ",")) {
-                            char _pipe_token[512];
-                            snprintf(_pipe_token, sizeof(_pipe_token), "%s@%s", _et, _suf);
-                            int _pid = ki_xform_parse_or_pipe(_pipe_token);
-                            if (_pid < 0) {
-                                fprintf(stderr, "[ERROR] --xform: bad pipeline '%s' (from alias '%s@%s')\n",
-                                        _pipe_token, _pre, _suf);
-                                exit(1);
+                        int _prod_count = 0;
+                        for (char *_pt = strtok(_pre_buf, ","); _pt;
+                             _pt = strtok(NULL, ",")) {
+                            while (*_pt == ' ' || *_pt == '\t') _pt++;
+                            if (!*_pt) continue;
+                            for (int _si = 0; _si < _suf_n; _si++) {
+                                char _pipe_token[512];
+                                /* %.240s bounds both tokens so the combined
+                                 * string always fits _pipe_token (240+1+240). */
+                                snprintf(_pipe_token, sizeof(_pipe_token),
+                                         "%.240s@%.240s", _pt, _suf_toks[_si]);
+                                int _pid = ki_xform_parse_or_pipe(_pipe_token);
+                                if (_pid < 0) {
+                                    fprintf(stderr, "[ERROR] --xform: bad pipeline '%s' (from alias '%s@%s')\n",
+                                            _pipe_token, _pre, _suf);
+                                    exit(1);
+                                }
+                                ki_xform_bit_set(_pid);
+                                ki_xform_list_add(_pid);
+                                _has_pipe = 1;
+                                if (++_prod_count > KI_XFORM_PIPE_MAX) {
+                                    fprintf(stderr, "[ERROR] --xform: cross-product '%s@%s' exceeds %d pipelines\n",
+                                            _pre, _suf, KI_XFORM_PIPE_MAX);
+                                    exit(1);
+                                }
                             }
-                            ki_xform_bit_set(_pid);
-                            ki_xform_list_add(_pid);
-                            _has_pipe = 1;
                         }
                         if (!_has_pipe) {
                             ki_xform_bit_set(KI_XFORM_ID);
@@ -1943,18 +2110,46 @@ static inline void ki_parse_args(int argc, char *argv[]) {
                     if (enc == KI_ENC_RAW) has_raw = 1;
                 } else {
                     /* Single token: encoding name ± width suffix.
-                     * Each token means ONE entry in enc_array[]. */
+                     * Each token means ONE entry in enc_array[].
+                     * KANAL-KREUZPRODUKT (2026-08-14): when --channel selects
+                     * MULTIPLE channels explicitly (e.g. mnist,lbp), one
+                     * encoding token expands to one entry PER channel — the
+                     * same cross-product --encoding all already does (Z.
+                     * 2020-2042). Without this, --channel mnist,lbp with
+                     * --encoding sweep silently dropped lbp (only 13 members
+                     * instead of 26). Single-channel (default mnist) keeps
+                     * the legacy color=-1 entry. */
                     enc = ki_enc_parse(tok, &w);
                     if (enc < 0) {
                         fprintf(stderr, "[ERROR] --encoding: unknown '%s'. "
                                 "Valid: %s\n", tok, ki_enc_names_all());
                         exit(1);
                     }
-                    if (aa.enc_count < KI_ENC_MAX) {
-                        aa.enc_array[aa.enc_count].type  = (int8_t)enc;
-                        aa.enc_array[aa.enc_count].width = (int8_t)w;
-                        aa.enc_array[aa.enc_count].color = -1;  /* default/all */
-                        aa.enc_count++;
+                    int _nch = 0;
+                    for (int _ch = 0; _ch < COLOR_NB; _ch++)
+                        if (aa.channel & (1 << _ch)) _nch++;
+                    if (aa.channel_explicit && _nch > 1) {
+                        /* Cross-product: one enc entry per selected channel.
+                         * On grayscale, CIFAR-RGB channels in the mask are
+                         * skipped (ki_color_is_cifar_rgb); structure channels
+                         * (edge/lbp/...) are kept (plan-2026-08-13). */
+                        for (int _ch = 0; _ch < COLOR_NB; _ch++) {
+                            if (!(aa.channel & (1 << _ch))) continue;
+                            if (KI_COLORS <= 1 && ki_color_is_cifar_rgb(_ch)) continue;
+                            if (aa.enc_count < KI_ENC_MAX) {
+                                aa.enc_array[aa.enc_count].type  = (int8_t)enc;
+                                aa.enc_array[aa.enc_count].width = (int8_t)w;
+                                aa.enc_array[aa.enc_count].color = (int8_t)_ch;
+                                aa.enc_count++;
+                            }
+                        }
+                    } else {
+                        if (aa.enc_count < KI_ENC_MAX) {
+                            aa.enc_array[aa.enc_count].type  = (int8_t)enc;
+                            aa.enc_array[aa.enc_count].width = (int8_t)w;
+                            aa.enc_array[aa.enc_count].color = -1;  /* default/all */
+                            aa.enc_count++;
+                        }
                     }
                     /* First token also sets enc_default (Backward compat) */
                     if (aa.enc_count == 1) {
@@ -2227,13 +2422,36 @@ static inline const char *ki_score_type_str(void) {
 /* ═══════════════════════════════════════════════════════════════════════
  * OT_PRECISION / OT_F — Scaling factor for fixed-point mode
  * ═══════════════════════════════════════════════════════════════════════
- * int32_t mode: F = (1<<OT_PRECISION), logit values scaled by F.
- * float mode:   F = 1 (no scaling).
+ * int32_t mode (COUNTER_TYPE_IS_FLOAT=0): F = (1<<OT_PRECISION), logit
+ *   values scaled by F. ot_precision() applies the fixed-point round
+ *   (×F + ±0.5) — needed to store logits in int32.
+ * float mode (COUNTER_TYPE_IS_FLOAT=1): F = 1, ot_precision() = IDENTITY.
+ *   A float/double stores logits exactly — the old code still applied
+ *   ×F + ±0.5 (the "float mode: F=1" comment was a lie; no #ifdef branch
+ *   existed). The ±0.5 round is a REAL, non-linear distortion (not a
+ *   linear shift) and the ×F is redundant for floats. Lossless since
+ *   2026-08-16 (plan-2026-08-16-lossless-float-mode.md). The distinction
+ *   is COUNTER_TYPE_IS_FLOAT, NOT MODE_FLT64 — both FLT32 and FLT64 are
+ *   lossless (the code already branches on COUNTER_TYPE_IS_FLOAT
+ *   everywhere, e.g. merge-ensemble.c fp_scale).
  */
-#define OT_F (1 << OT_PRECISION)  /* always 1024 — scaling for gap, independent of COUNTER_TYPE */
+#if COUNTER_TYPE_IS_FLOAT
+#  define OT_F (1 << OT_PRECISION)
+static inline double ot_precision(double in) { return in * (double)OT_F; }
+                        /* Lossless float mode (2026-08-16): scale by F (same
+                         * int32 dynamic range) but WITHOUT the ±0.5 rounding.
+                         * The F-scale is REQUIRED: the correction branch uses
+                         * the SAME gap<OT_F logic as int32 (step×gap/OT_F vs
+                         * step), so targets must live on the int32 scale
+                         * (±8.7×F) for the comparison to work. The dropped
+                         * ±0.5 is the actual precision gain — no rounding
+                         * distortion, only the F-scale remains. */
+#else
+#  define OT_F (1 << OT_PRECISION)  /* always 131072 at OP17 — scaling for gap */
 static inline double ot_precision(double in) {
     return in * (double)OT_F + (in >= 0 ? 0.5 : -0.5);
 }
+#endif
 
 /* ── Mode string with parameter (for TRAINING header and --help) ── */
 /* Returns "pow()", "const()", "cos-time" etc..
@@ -2495,7 +2713,8 @@ static inline uint32_t ki_float_to_lr_uint(float lr) {
 static inline void ki_report_show(int train_ok, int train_n,
                                    int eval_ok,  int eval_n,
                                    int elapsed_ms, int threadN,
-                                   int err, float lr, int members) {
+                                   int err, float lr, int members,
+                                   int pool_n) {
     float tp  = (train_n > 0) ? (float)train_ok * 100.0f / (float)train_n : 0.0f;
     float ep  = (eval_n  > 0) ? (float)eval_ok  * 100.0f / (float)eval_n  : 0.0f;
     printf("\n============================================================\n");
@@ -2508,7 +2727,13 @@ static inline void ki_report_show(int train_ok, int train_n,
          * complexity penalty (DRAM inference cost scales with member count).
          * λ = aa.eff_lambda (--eff-lambda, default 0.02). */
         float eff = ep - aa.eff_lambda * (float)(members - 1);
-        printf(" members=%d eff=%.2f", members, (double)eff);
+        /* members=11/3363: SELECTED members / pool size AFTER filtering
+         * (merge-ensemble passes n_blocks; trainers pass 0 = unknown).
+         * run-research.sh parses members= into the status log. 2026-08-16. */
+        if (pool_n > 0)
+            printf(" members=%d/%d eff=%.2f", members, pool_n, (double)eff);
+        else
+            printf(" members=%d eff=%.2f", members, (double)eff);
     }
     printf("\n");
      printf("============================================================\n");
@@ -2519,7 +2744,8 @@ static inline void ki_report_show(int train_ok, int train_n,
  * ═══════════════════════════════════════════════════════════════════
  * Can be used by any trainer.
  * is_final: 1 = Endausgabe, 0 = per-epoch
- */
+ * libtprint (2026-08-12): exact column alignment via the vendored table
+ * library, same as --debug-class-voting. */
 __attribute__((unused))
 static void print_confusion_debug(const uint8_t *y_true, const uint8_t *y_pred,
                                    int N, int ep, int is_final) {
@@ -2543,20 +2769,20 @@ static void print_confusion_debug(const uint8_t *y_true, const uint8_t *y_pred,
     }
     if (n_active == 0) return;
 
-    printf("\n  ── Confusion Matrix %s ─────────────────────────────\n", is_final ? "(final)" : "(per epoch)");
-    if (!is_final)
-        printf("  Ep %d\n", ep + 1);
-    else
-        (void)ep;
-    printf("  %-12s", "true \\ pred");
-    for (int ai = 0; ai < n_active; ai++)
-        printf("  %-7s", ki_class_names[active_cols[ai]]);
-    printf("  %-7s\n", "err%");
+    printf("\n  ── Confusion Matrix %s%s%s ─────────────────────────────\n",
+           is_final ? "(final" : "(per epoch",
+           !is_final ? ", Ep " : "",
+           !is_final ? "" : ")");
+    if (!is_final) printf("  Ep %d\n", ep + 1);
+    else (void)ep;
 
-    printf("  %-12s", "────────────");
+    TPrint *tp = tprint_create(stdout, TRUE, TRUE, 2, 2);
+    tprint_set_double_fmt(tp, "%5.1f%%");
+    tprint_column_add(tp, "true \\ pred", TPAlign_center, TPAlign_left);
     for (int ai = 0; ai < n_active; ai++)
-        printf("  %-7s", "───────");
-    printf("  %-7s\n", "───────");
+        tprint_column_add(tp, ki_class_names[active_cols[ai]],
+                          TPAlign_center, TPAlign_right);
+    tprint_column_add(tp, "err%", TPAlign_center, TPAlign_right);
 
     for (int ri = 0; ri < n_active; ri++) {
         int r = active_cols[ri];
@@ -2567,16 +2793,19 @@ static void print_confusion_debug(const uint8_t *y_true, const uint8_t *y_pred,
             if (cc != r) row_err += cm[r][cc];
         }
         if (row_tot == 0) continue;  /* only show rows with samples */
-        float err_pct = (float)row_err * 100.0f / (float)row_tot;
-        printf("  %-12s", ki_class_names[r]);
+        tprint_data_add_str(tp, 0, ki_class_names[r]);
         for (int ci = 0; ci < n_active; ci++) {
             int cc = active_cols[ci];
-            float col_pct = (float)cm[r][cc] * 100.0f / (float)row_tot;
-            printf("  %6.1f%%", (double)col_pct);
+            double col_pct = (double)cm[r][cc] * 100.0 / (double)row_tot;
+            tprint_data_add_double(tp, ci + 1, col_pct);
         }
-        printf("  %6.1f%%\n", (double)err_pct);
+        double err_pct = (double)row_err * 100.0 / (double)row_tot;
+        tprint_data_add_double(tp, n_active + 1, err_pct);
     }
-    printf("  ─────────────────────────────────────────────────────\n\n");
+
+    tprint_print(tp);
+    tprint_free(tp);
+    printf("\n");
     fflush(stdout);
 }
 

@@ -397,6 +397,12 @@ Member grid: ENSEMBLE[EN] × XFORM[XF] × COLOR[C] × HN[H]
 
 1. **Raw transform:** `ki_xform_raw(out, in, w, h, ch, xform_id)` applies the
    geometric transformation to the raw pixel buffer (before channel computation).
+   **Bit-width independent (verified 2026-08-11):** all xforms (colswap,
+   avg2/3/4, geometric) and their `@`-chained pipes operate on the raw uint8
+   grayscale buffer (0-255) BEFORE the thermometer encoding — each pixel is
+   always one byte, no matter which KI_BIT_WIDTH (8/16/32) is used downstream.
+   The 16-bit pixel width exists only later, inside the packed container
+   (`enc_lut_get` + `pack=32/w`). No systematic 16-bit xform error.
 2. **Channel+Encoding pipeline** runs on the transformed image — Sobel, LBP, DoG,
    var, dir, range are computed from transformed pixel values, giving genuinely
    new texture signatures.

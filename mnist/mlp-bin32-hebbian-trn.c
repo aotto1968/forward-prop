@@ -19,6 +19,7 @@
 #define _POSIX_C_SOURCE 200809L
 #define KI_COMMON_LOAD_INPUT
 #include "ki-config.h"
+#include "../lib/tprint.h"   /* before ki-common.h: ki-common.h uses TPrint/tprint_* */
 #include "ki-common.h"
 #include "maj3.h"
 #include "w0_random.h"
@@ -414,7 +415,7 @@ int main(int argc, char *argv[]) {
 
         printf("\n══╡ RESULT ╞══  %d members  H=%d  Hebbian %s  Eval: %.1f%%  time=%dms\n",
                n_loaded, models[0]->H, H0_STR, acc, el);
-        ki_report_show(0, 0, (int)(acc * (float)te / 100.0f + 0.5f), te, el, aa.threadN, 0, 0.0f, 0);
+        ki_report_show(0, 0, (int)(acc * (float)te / 100.0f + 0.5f), te, el, aa.threadN, 0, 0.0f, 0, 0);
         free(X_all); ki_dataset_free(&data);
         for (int i = 0; i < n_loaded; i++) model_free(models[i]);
         return 0;
@@ -584,7 +585,7 @@ int main(int argc, char *argv[]) {
            H, aa.ensembleN, total_members, epochs, (double)trn_acc, (double)acc, (double)best_acc, ms);
     int eval_ok = (int)(acc * (float)te / 100.0f + 0.5f);
     int train_ok = (int)(trn_acc * (float)aa.trainN / 100.0f + 0.5f);
-    ki_report_show(train_ok, aa.trainN, eval_ok, te, ms, aa.threadN, 0, 0.0f, 0);
+    ki_report_show(train_ok, aa.trainN, eval_ok, te, ms, aa.threadN, 0, 0.0f, 0, 0);
 
     /* ── Confusion matrix (end only) ───────────────────────────── */
     if ((aa.debug_confusion || aa.debug_confusion_all) && !aa.dry_run) {

@@ -49,8 +49,12 @@
 
 /* ── Sweep encoding preset (dataset-specific, resolved by
  *    ki_encoding_alias_expand "sweep-performance") ──
- * Fashion-MNIST: placeholder — run the hierarchy analysis first and set
- * the top-6 encodings here (like MNIST/CIFAR did on 2026-08-01). */
+ * Fashion-MNIST: top-6. tri2 (inverted triangle) was added on 2026-08-16
+ * and REMOVED again — it added no ensemble value (91.94% unchanged, only
+ * +2 redundant members) and its only "advantage" (bin-collapse fix) is
+ * moot because bin is excluded from the fashion sweep. The real diversity
+ * source is tri on lbp/dir, not tri2. See:
+ * plans/plan-2026-08-16-ensemble-tri-diversity.md */
 #ifndef KI_SWEEP_PERFORMANCE_ENCODING
 #define KI_SWEEP_PERFORMANCE_ENCODING "cbrt8,exp8,inv-exp8,gamma8,log8,sqrt8"
 #endif

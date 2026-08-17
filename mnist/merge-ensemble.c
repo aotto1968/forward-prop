@@ -55,7 +55,6 @@
 #include "ki-config.h"
 /* libtprint BEFORE ki-common.h: print_confusion_debug() in ki-common.h uses
  * TPrint for the confusion table (2026-08-12). */
-#include "../lib/tprint.h"
 #include "../lib/ki-encoding.h"
 #include "../lib/ki-ens.h"   /* .ens format: reader (all version logic central) */
 #include "ki-common.h"

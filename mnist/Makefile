@@ -25,7 +25,6 @@ HDRS = $(wildcard *.h) $(wildcard ../lib/*.h)
 # GLib + tprint — tprint.h includes <glib.h> for gboolean/gint types.
 # Resolve include/library paths via pkg-config so builds work on any system
 # (previously these vars were undefined -> glib.h not found / tprint.c not linked).
-TPRINT_SRC  = ../lib/tprint.c
 GLIB_CFLAGS = $(shell pkg-config --cflags glib-2.0)
 GLIB_LIBS   = $(shell pkg-config --libs glib-2.0)
 
@@ -57,23 +56,23 @@ otto: mnist-mlp-bin32-otto-trn-xnor.exe
 mnist-mlp-bin32-otto-trn-xnor.exe: $(OTTO_SRC) $(HDRS)
 	$(CC) $(CFLAGS) $(OTTO_MODE) \
 	  -Wno-sign-conversion -Wno-unused-parameter \
-	  -o $@ $< $(TPRINT_SRC) $(GLIB_CFLAGS) $(LDLIBS) $(GLIB_LIBS)
+	  -o $@ $< $(GLIB_CFLAGS) $(LDLIBS) $(GLIB_LIBS)
 
 mnist-mlp-bin32-otto-trn-xor.exe: $(OTTO_SRC) $(HDRS)
 	$(CC) $(CFLAGS) $(OTTO_MODE) \
 	  -Wno-sign-conversion -Wno-unused-parameter \
-	  -DH0_XOR -o $@ $< $(TPRINT_SRC) $(GLIB_CFLAGS) $(LDLIBS) $(GLIB_LIBS)
+	  -DH0_XOR -o $@ $< $(GLIB_CFLAGS) $(LDLIBS) $(GLIB_LIBS)
 
 model-otto: mnist-mlp-bin32-otto-trn-xnor.exe
 	@mkdir -p $(MODEL_DIR)/mnist-otto-h512-e10
 	@echo -n $(@) ": "
-	@./mnist-mlp-bin32-otto-trn-xnor.exe --hiddenN 512 --epochsN 10 --threadN 8 \
-	  --encoding latest --export $(MODEL_DIR)/mnist-otto-h512-e10 2>&1 | grep '^REPORT'
+	@./mnist-mlp-bin32-otto-trn-xnor.exe --threadN 8 --member-file member-H196-E10-OT8-M1-105-INT32.out \
+	  --export $(MODEL_DIR)/mnist-otto-h512-e10 2>&1 | grep '^REPORT'
 
 model-otto-dbg: mnist-mlp-bin32-otto-trn-xnor.exe
 	@mkdir -p $(MODEL_DIR)/mnist-otto-h512-e10
-	./mnist-mlp-bin32-otto-trn-xnor.exe --hiddenN 512 --epochsN 10 --threadN 8 \
-	  --encoding latest --export $(MODEL_DIR)/mnist-otto-h512-e10
+	./mnist-mlp-bin32-otto-trn-xnor.exe --threadN 8 --member-file member-H196-E10-OT8-M1-105-INT32.out \
+	  --export $(MODEL_DIR)/mnist-otto-h512-e10
 
 # ═══════════════════════════════════════════════════════════
 # Hebbian Trainer (unified: MNIST + CIFAR via ki-local.h)
@@ -86,12 +85,12 @@ hebbian: mnist-mlp-bin32-hebbian-trn-xnor.exe mnist-mlp-bin32-hebbian-trn-xor.ex
 mnist-mlp-bin32-hebbian-trn-xnor.exe: $(HEBB_SRC) $(HDRS)
 	$(CC) $(CFLAGS) \
 	  -Wno-sign-conversion -Wno-unused-parameter -Wno-unused-variable \
-	  -o $@ $< $(TPRINT_SRC) $(GLIB_CFLAGS) $(LDLIBS) $(GLIB_LIBS)
+	  -o $@ $< $(GLIB_CFLAGS) $(LDLIBS) $(GLIB_LIBS)
 
 mnist-mlp-bin32-hebbian-trn-xor.exe: $(HEBB_SRC) $(HDRS)
 	$(CC) $(CFLAGS) \
 	  -Wno-sign-conversion -Wno-unused-parameter -Wno-unused-variable \
-	  -DH0_XOR -o $@ $< $(TPRINT_SRC) $(GLIB_CFLAGS) $(LDLIBS) $(GLIB_LIBS)
+	  -DH0_XOR -o $@ $< $(GLIB_CFLAGS) $(LDLIBS) $(GLIB_LIBS)
 
 
 model-hebbian: mnist-mlp-bin32-hebbian-trn-xnor.exe
@@ -111,7 +110,7 @@ adam: mnist-mlp-flt32-adam-trn.exe
 mnist-mlp-flt32-adam-trn.exe: $(ADAM_SRC) $(HDRS)
 	$(CC) $(CFLAGS) \
 	  -Wno-sign-conversion -Wno-unused-parameter -Wno-unused-variable \
-	  -Wno-format-truncation -Wno-pointer-to-int-cast -o $@ $< $(TPRINT_SRC) $(GLIB_CFLAGS) $(LDLIBS) $(GLIB_LIBS)
+	  -Wno-format-truncation -Wno-pointer-to-int-cast -o $@ $< $(GLIB_CFLAGS) $(LDLIBS) $(GLIB_LIBS)
 
 model-adam: mnist-mlp-flt32-adam-trn.exe
 	@mkdir -p $(MODEL_DIR)/mnist-adam-h512-e10
@@ -130,13 +129,13 @@ model-adam: mnist-mlp-flt32-adam-trn.exe
 bitvote: mnist-mlp-bin32-otto-trn-bitvoting.exe
 
 mnist-mlp-bin32-otto-trn-bitvoting.exe: mlp-bin32-otto-trn-seq-prof.c $(HDRS)
-	$(CC) $(CFLAGS) -Wno-sign-conversion -Wno-unused-parameter -Wno-unused-variable -Wno-error=unused-but-set-variable -Wno-error=format-truncation -DKI_BITVOTING -DMODE_INT32 -o $@ $< $(TPRINT_SRC) $(GLIB_CFLAGS) $(LDLIBS) $(GLIB_LIBS)
+	$(CC) $(CFLAGS) -Wno-sign-conversion -Wno-unused-parameter -Wno-unused-variable -Wno-error=unused-but-set-variable -Wno-error=format-truncation -DKI_BITVOTING -DMODE_INT32 -o $@ $< $(GLIB_CFLAGS) $(LDLIBS) $(GLIB_LIBS)
 
 model-bitvote: mnist-mlp-bin32-otto-trn-bitvoting.exe
 	@mkdir -p $(MODEL_DIR)/mnist-bitvoting-e10
 	@echo -n $(@) ": "
-	@./mnist-mlp-bin32-otto-trn-bitvoting.exe --epochsN 10 --threadN 8 \
-	  --encoding latest --export $(MODEL_DIR)/mnist-bitvoting-e10 2>&1 | grep '^REPORT'
+	@./mnist-mlp-bin32-otto-trn-bitvoting.exe --threadN 8 --member-file member-H196-E10-BV8-INT32.out \
+	  --export $(MODEL_DIR)/mnist-bitvoting-e10 2>&1 | grep '^REPORT'
 
 # ═══════════════════════════════════════════════════════════════
 # Fast single tests (use cached model if available, train if missing)
@@ -182,7 +181,7 @@ vis-errors: mnist-mlp-otto-vis-errors.exe
 mnist-mlp-otto-vis-errors.exe: $(VIS_SRC) $(HDRS)
 	$(CC) $(CFLAGS) \
 	  -Wno-sign-conversion -Wno-unused-parameter \
-	  -o $@ $< $(TPRINT_SRC) $(GLIB_CFLAGS) $(LDLIBS) $(GLIB_LIBS)
+	  -o $@ $< $(GLIB_CFLAGS) $(LDLIBS) $(GLIB_LIBS)
 
 # ═══════════════════════════════════════════════════════════════
 # Merge-Ensemble — score archive merger
@@ -193,7 +192,7 @@ MERGE_SRC = merge-ensemble.c
 merge-ensemble: mnist-merge-ensemble.exe
 
 mnist-merge-ensemble.exe: $(MERGE_SRC) $(HDRS)
-	$(CC) $(CFLAGS) -Wno-sign-conversion -Wno-unused-parameter -o $@ $< $(TPRINT_SRC) $(GLIB_CFLAGS) $(LDLIBS) $(GLIB_LIBS)
+	$(CC) $(CFLAGS) -Wno-sign-conversion -Wno-unused-parameter -o $@ $< $(GLIB_CFLAGS) $(LDLIBS) $(GLIB_LIBS)
 
 # ── Clean ──────────────────────────────────────────────────
 clean:

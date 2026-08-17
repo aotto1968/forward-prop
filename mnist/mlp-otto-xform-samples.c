@@ -20,7 +20,6 @@
                             * redefined, make all-all). */
 /* libtprint BEFORE ki-common.h: print_confusion_debug() in ki-common.h uses
  * TPrint (2026-08-14). */
-#include "../lib/tprint.h"
 #include "ki-common.h"
 #include <inttypes.h>
 #include <zlib.h>

@@ -29,6 +29,21 @@
 #include <zlib.h>
 #include <omp.h>
 
+/* ═══════════════════════════════════════════════════════════════════════
+ * libtprint embedded (2026-08-17) — print_confusion_debug() below uses
+ * TPrint, so the tprint implementation is compiled into EVERY translation
+ * unit that includes ki-common.h. All tprint.c functions are static, so
+ * each TU gets its own copy — no linker symbol conflicts, no per-Makefile
+ * $(TPRINT_SRC) needed. Requires glib-2.0 (pkg-config --cflags/lib).
+ * ═══════════════════════════════════════════════════════════════════════ */
+#include "../lib/tprint.h"
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-function"
+#pragma GCC diagnostic ignored "-Wsign-conversion"
+#pragma GCC diagnostic ignored "-Wconversion"
+#include "../lib/tprint.c"
+#pragma GCC diagnostic pop
+
 #define printC(_nme) printf("%s[%d] : " #_nme "=%s\n",__func__,__LINE__,_nme)
 
 /* ═══════════════════════════════════════════════════════════════════════

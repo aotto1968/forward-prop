@@ -19,7 +19,6 @@
 #define _POSIX_C_SOURCE 200809L
 #define KI_COMMON_LOAD_INPUT
 #include "ki-config.h"
-#include "../lib/tprint.h"   /* before ki-common.h: ki-common.h uses TPrint/tprint_* */
 #include "ki-common.h"
 #include "maj3.h"
 #include "w0_random.h"
@@ -156,7 +155,7 @@ static inline void member_score(const uint32_t *h0, const uint32_t *W1,
     for (int k = 0; k < N_CLASSES; k++) {
         int64_t sum = 0;
         for (int h = 0; h < H; h++)
-            sum += (int64_t)__builtin_popcount(~(W1[(size_t)k * (size_t)H + h] ^ h0[h]));
+            sum += (int64_t)__builtin_popcount(~(W1[(size_t)k * (size_t)H + (size_t) h] ^ h0[h]));
         scores[k] = sum;
     }
 }

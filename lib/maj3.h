@@ -246,7 +246,10 @@ static inline uint32_t majority_tree3_pixel_step(const uint32_t *vals, int n,
             PIXEL_TYPE v2 = px[i + 2 * px_step];
             PIXEL_TYPE pb = 0;
             for (int bit = 0; bit < bpw; bit++) {
-                int cnt = ((v0>>bit)&1) + ((v1>>bit)&1) + ((v2>>bit)&1);
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wsign-conversion"
+                int cnt = (int) ((v0>>bit)&1) + ((v1>>bit)&1) + ((v2>>bit)&1);
+#pragma GCC diagnostic pop
                 if (cnt >= 2) pb |= (PIXEL_TYPE)(1u << bit);
             }
             cont |= (uint32_t)pb << (slot * bpw);
@@ -286,7 +289,10 @@ static inline uint32_t majority_tree3_pixel_step(const uint32_t *vals, int n,
                 PIXEL_TYPE v2 = px[base + slot + 2 * px_step];
                 PIXEL_TYPE pb = 0;
                 for (int bit = 0; bit < bpw; bit++) {
-                    int cnt = ((v0>>bit)&1) + ((v1>>bit)&1) + ((v2>>bit)&1);
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wsign-conversion"
+                    int cnt = (int) ((v0>>bit)&1) + ((v1>>bit)&1) + ((v2>>bit)&1);
+#pragma GCC diagnostic pop
                     if (cnt >= 2) pb |= (PIXEL_TYPE)(1u << bit);
                 }
                 buf[pn++] = pb;
@@ -314,7 +320,10 @@ static inline uint32_t majority_tree3_pixel_step(const uint32_t *vals, int n,
                 PIXEL_TYPE v4 = px[base_px + slot + 4*px_step];
                 uint32_t pb = 0;
                 for (int bit = 0; bit < bpw; bit++) {
-                    int cnt = ((v0>>bit)&1)+((v1>>bit)&1)+((v2>>bit)&1)+((v3>>bit)&1)+((v4>>bit)&1);
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wsign-conversion"
+                    int cnt = (int) ((v0>>bit)&1)+((v1>>bit)&1)+((v2>>bit)&1)+((v3>>bit)&1)+((v4>>bit)&1);
+#pragma GCC diagnostic pop
                     if (cnt >= 3) pb |= (1u<<bit);
                 }
                 buf[pn++] = (PIXEL_TYPE)pb;

@@ -10,7 +10,6 @@
  * Single source for both MNIST and CIFAR (via ki-local.h dataset aliases).
  */
 #include "ki-config.h"
-#include "../lib/tprint.h"   /* before ki-common.h: ki-common.h uses TPrint/tprint_* */
 #include "ki-common.h"
 #include "ki-adamw.h"
 

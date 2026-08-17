@@ -15,15 +15,14 @@
 # ========================================================================
 
 CC       = gcc
-# GLib + tprint — ki-common.h uses TPrint/tprint_* (needs <glib.h> and tprint.c).
-# Resolved via pkg-config so it works on any system; tprint.c linked as a source.
-TPRINT_SRC  = ../lib/tprint.c
+# GLib — ki-common.h embeds tprint.c (static funcs) which calls glib
+# functions. Resolved via pkg-config so it works on any system.
 GLIB_CFLAGS = $(shell pkg-config --cflags glib-2.0)
 GLIB_LIBS   = $(shell pkg-config --libs glib-2.0)
 CFLAGS   = -O3 -g -march=native -fopenmp -Wall -Wextra -Werror \
            -Wconversion -Wsign-conversion -Wfloat-equal -Wundef -Wshadow -Wunused \
            -I. -I../lib -I.. $(GLIB_CFLAGS)
-LDLIBS   = -lm -lz $(TPRINT_SRC) $(GLIB_LIBS)
+LDLIBS   = -lm -lz $(GLIB_LIBS)
 
 HDRS = $(wildcard *.h) $(wildcard ../lib/*.h)
 

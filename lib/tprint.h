@@ -18,6 +18,14 @@
 #ifndef _T_PRINT_H_
 #define _T_PRINT_H_
 
+/*
+ * NOTE (2026-08-17): This header is HEADER-ONLY — all functions are static
+ * and tprint.c is embedded into ki-common.h (which includes this header
+ * first). Every TU that includes ki-common.h gets its own copy of the
+ * implementation; there is NO separate tprint.c link unit anymore.
+ * The static declarations match the static definitions in tprint.c.
+ */
+
 #include <stdio.h>
 #include <glib.h>
 
@@ -35,27 +43,27 @@ typedef enum {
 // show_header: set to TRUE to display table header row
 // spaces_left: spaces on the left side of the table
 // spaces_between: spaces between columns
-TPrint *tprint_create (FILE *fout, gboolean borders, gboolean show_header, gint spaces_left, gint spaces_between);
+static TPrint *tprint_create (FILE *fout, gboolean borders, gboolean show_header, gint spaces_left, gint spaces_between);
 // destroy TPrint object
-void tprint_free (TPrint *tprint);
+static void tprint_free (TPrint *tprint);
 
 // Append column to the table
 // caption: label of the column, can be NULL
 // caption_align: how to align column caption
 // data_align: how to align data in the column
-void tprint_column_add (TPrint *tprint, const gchar *caption, TPrintAlign caption_align, TPrintAlign data_align);
+static void tprint_column_add (TPrint *tprint, const gchar *caption, TPrintAlign caption_align, TPrintAlign data_align);
 
 // set table format for double numbers
-void tprint_set_double_fmt (TPrint *tprint, const gchar *fmt);
+static void tprint_set_double_fmt (TPrint *tprint, const gchar *fmt);
 // set table format for int32 numbers
-void tprint_set_int32_fmt (TPrint *tprint, const gchar *fmt);
+static void tprint_set_int32_fmt (TPrint *tprint, const gchar *fmt);
 
-void tprint_data_add_int32 (TPrint *tprint, gint col, gint32 data);
-void tprint_data_add_uint64 (TPrint *tprint, gint col, guint64 data);
-void tprint_data_add_str (TPrint *tprint, gint col, const gchar *data);
-void tprint_data_add_double (TPrint *tprint, gint col, gdouble data);
+static void tprint_data_add_int32 (TPrint *tprint, gint col, gint32 data);
+static void tprint_data_add_uint64 (TPrint *tprint, gint col, guint64 data);
+static void tprint_data_add_str (TPrint *tprint, gint col, const gchar *data);
+static void tprint_data_add_double (TPrint *tprint, gint col, gdouble data);
 
 // output table to the specified FILE
-void tprint_print (TPrint *tprint);
+static void tprint_print (TPrint *tprint);
 
 #endif

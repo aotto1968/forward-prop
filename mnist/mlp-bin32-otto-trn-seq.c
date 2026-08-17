@@ -21,7 +21,6 @@
 #include "ki-config.h"
 /* libtprint BEFORE ki-common.h: print_confusion_debug() in ki-common.h uses
  * TPrint for the confusion table (2026-08-12). */
-#include "../lib/tprint.h"        /* ASCII table output (debug-class-voting + confusion) */
 /* ki-common.h with KI_COMMON_LOAD_INPUT: suppress the default raw-packing
  * load_input (ki-load.h provides the encoding-aware one). Explicit include —
  * ki-load.h does NOT pull ki-common.h in anymore (flat include level). */

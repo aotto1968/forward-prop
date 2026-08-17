@@ -54,7 +54,7 @@ typedef struct  {
 
 static void tprint_column_free (TPrintColumn *col);
 
-TPrint *tprint_create (FILE *fout, gboolean borders, gboolean show_header, gint spaces_left, gint spaces_between)
+static TPrint *tprint_create (FILE *fout, gboolean borders, gboolean show_header, gint spaces_left, gint spaces_between)
 {
     TPrint *tprint;
 
@@ -75,7 +75,7 @@ TPrint *tprint_create (FILE *fout, gboolean borders, gboolean show_header, gint 
     return tprint;
 }
 
-void tprint_free (TPrint *tprint)
+static void tprint_free (TPrint *tprint)
 {
     GList *l;
 
@@ -92,14 +92,14 @@ void tprint_free (TPrint *tprint)
     g_free (tprint);
 }
 
-void tprint_set_double_fmt (TPrint *tprint, const gchar *fmt)
+static void tprint_set_double_fmt (TPrint *tprint, const gchar *fmt)
 {
     if (tprint->fmt_double)
         g_free (tprint->fmt_double);
     tprint->fmt_double = g_strdup (fmt);
 }
 
-void tprint_set_int32_fmt (TPrint *tprint, const gchar *fmt)
+static void tprint_set_int32_fmt (TPrint *tprint, const gchar *fmt)
 {
     if (tprint->fmt_int32)
         g_free (tprint->fmt_int32);
@@ -114,7 +114,7 @@ static void column_add_str (TPrintColumn *column, gchar *str)
     column->l_data = g_list_append (column->l_data, str);
 }
 
-void tprint_column_add (TPrint *tprint, const gchar *caption, TPrintAlign caption_align, TPrintAlign data_align)
+static void tprint_column_add (TPrint *tprint, const gchar *caption, TPrintAlign caption_align, TPrintAlign data_align)
 {
     TPrintColumn *col;
 
@@ -148,7 +148,7 @@ static void tprint_column_free (TPrintColumn *col)
 }
 
 // convert data to string
-void tprint_data_add_int32 (TPrint *tprint, gint col, gint32 data)
+static void tprint_data_add_int32 (TPrint *tprint, gint col, gint32 data)
 {
     TPrintColumn *column;
     gchar *str;
@@ -160,7 +160,7 @@ void tprint_data_add_int32 (TPrint *tprint, gint col, gint32 data)
     column_add_str (column, str);
 }
 
-void tprint_data_add_uint64 (TPrint *tprint, gint col, guint64 data)
+static void tprint_data_add_uint64 (TPrint *tprint, gint col, guint64 data)
 {
     TPrintColumn *column;
     gchar *str;
@@ -172,7 +172,7 @@ void tprint_data_add_uint64 (TPrint *tprint, gint col, guint64 data)
     column_add_str (column, str);
 }
 
-void tprint_data_add_str (TPrint *tprint, gint col, const gchar *data)
+static void tprint_data_add_str (TPrint *tprint, gint col, const gchar *data)
 {
     TPrintColumn *column;
     gchar *str;
@@ -184,7 +184,7 @@ void tprint_data_add_str (TPrint *tprint, gint col, const gchar *data)
     column_add_str (column, str);
 }
 
-void tprint_data_add_double (TPrint *tprint, gint col, gdouble data)
+static void tprint_data_add_double (TPrint *tprint, gint col, gdouble data)
 {
     TPrintColumn *column;
     gchar *str;
@@ -413,7 +413,7 @@ static void tprint_print_with_borders (TPrint *tprint)
     g_free (str);
 }
 
-void tprint_print (TPrint *tprint)
+static void tprint_print (TPrint *tprint)
 {
     if (tprint->borders)
         tprint_print_with_borders (tprint);

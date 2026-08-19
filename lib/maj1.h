@@ -39,6 +39,21 @@ static inline int ki_default_half(int n) {
 }
 
 /**
+ * ki_compute_half — Centralized half-threshold computation.
+ *
+ * Computes the majority threshold (half) from aa.maj1_thresh and NC_slice.
+ * Replaces the inline ternary repeated in 5+ places.
+ *
+ * @param NC_slice  number of containers per member slice
+ * @return          computed half threshold
+ */
+static inline int ki_compute_half(int NC_slice) {
+    return (aa.maj1_thresh == -2) ? ki_default_half(NC_slice) :
+           (aa.maj1_thresh < 0)  ? NC_slice / 2 :
+           aa.maj1_thresh;
+}
+
+/**
  * majority_tree1 — Exact bitwise majority over n uint32 values.
  *
  * For each of the 32 bits:

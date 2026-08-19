@@ -58,8 +58,7 @@ OTTO_MODE = -DMODE_INT32
 # Trained with --member-file + --maj1-thresh 105 (the corpus' calibration)
 # → ~90.8-91.1% (vs 86.7% for the single --encoding latest member).
 # See: mnist-fashion/README.md, www/papers/mnist-fashion.html
-FASHION_MEMBER = fashion-105.member
-FASHION_M1T   = 105
+FASHION_MEMBER = member-H196-E10-OT8-M1-105-INT32.out
 
 otto: fashion-mlp-bin32-otto-trn-xnor.exe
 
@@ -147,20 +146,22 @@ model-adam-debug: fashion-mlp-flt32-adam-trn.exe
 # Bit-Voting = Otto with identity W0 (gb = input) and I=H width,
 # enabled via -DKI_BITVOTING on the shared seq.c trainer.
 
+BITVOTE_MEMBER = member-H196-E10-BV8-INT32.out
+
 bitvote: fashion-mlp-bin32-otto-trn-bitvoting.exe
 
 fashion-mlp-bin32-otto-trn-bitvoting.exe: mlp-bin32-otto-trn-seq-prof.c $(HDRS)
 	$(CC) $(CFLAGS) -Wno-sign-conversion -Wno-unused-parameter -Wno-unused-variable -Wno-error=unused-but-set-variable -Wno-error=format-truncation -DKI_BITVOTING -DMODE_INT32 -o $@ $< $(LDLIBS)
 
-model-bitvote: fashion-mlp-bin32-otto-trn-bitvoting.exe
+model-bitvote: fashion-mlp-bin32-otto-trn-bitvoting.exe $(BITVOTE_MEMBER)
 	@mkdir -p $(MODEL_DIR)/fashion-bitvoting-e10
 	@echo -n $(@) ": "
-	@./fashion-mlp-bin32-otto-trn-bitvoting.exe --member-file fashion-bv.member --export $(MODEL_DIR)/fashion-bitvoting-e10 2>&1 | grep '^REPORT'
+	@./fashion-mlp-bin32-otto-trn-bitvoting.exe --member-file $(BITVOTE_MEMBER) --export $(MODEL_DIR)/fashion-bitvoting-e10 2>&1 | grep '^REPORT'
 
-model-bitvote-debug: fashion-mlp-bin32-otto-trn-bitvoting.exe
+model-bitvote-debug: fashion-mlp-bin32-otto-trn-bitvoting.exe $(BITVOTE_MEMBER)
 	@mkdir -p $(MODEL_DIR)/fashion-bitvoting-e10
 	@echo -n $(@) ": "
-	./fashion-mlp-bin32-otto-trn-bitvoting.exe --member-file fashion-bv.member --export $(MODEL_DIR)/fashion-bitvoting-e10
+	./fashion-mlp-bin32-otto-trn-bitvoting.exe --member-file $(BITVOTE_MEMBER) --export $(MODEL_DIR)/fashion-bitvoting-e10
 
 # ═══════════════════════════════════════════════════════════
 # merge-ensemble (public score archive merger)

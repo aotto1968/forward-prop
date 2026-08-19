@@ -1633,6 +1633,7 @@ static int load_directory(const char *dir) {
         n_files = n_build;
         for (int i = 0; i < n_build; i++) free(build[i].members);
         free(build);
+        free(snap);  /* snapshot no longer needed after full build */
     } else {
         /* Incremental merge of the cache (idx, name-sorted) with the current
          * snapshot (snap, name-sorted). Entries whose (ctime,size) match are
@@ -1779,7 +1780,6 @@ static int merge_and_eval(const char *save_path, int max_en)
     float best_acc = 0.0f;
     int best_en = 0;
     const char *prev_file = "";
-    int file_idx = 0;
     int files_merged = 0;
     for (int en = 1; en <= n_blocks; en++) {
         int m = en - 1;
@@ -1787,7 +1787,6 @@ static int merge_and_eval(const char *save_path, int max_en)
         /* Print file separator when source file changes */
         if (strcmp(blocks[m].source_file, prev_file) != 0) {
             prev_file = blocks[m].source_file;
-            file_idx++;
             files_merged++;
             if (max_en > 0 && files_merged > max_en) break;
         }
@@ -5503,13 +5502,40 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+    /* NORMALIZE DIR (2026-08-18): strip trailing slashes ONCE, centrally.
+     * dir may arrive as "scores-.../" (shell completion / user typing with a
+     * trailing slash). Without this every "%s/.index", "%s/.meta", "%s/%s"
+     * would produce "//" and --member-out-default's basename extraction
+     * returned an empty tag → "member-.out". Central normalization fixes all
+     * downstream uses. dir is re-pointed at a static copy, bounded to 512 so
+     * that dir + a small suffix (e.g. "/.index") is guaranteed to fit in the
+     * downstream 1024-byte path buffers (keeps -Werror=format-truncation
+     * satisfied without enlarging every path buffer). */
+    {
+        static char _dir_clean[512];
+        size_t _l = strlen(dir);
+        while (_l > 0 && dir[_l - 1] == '/') _l--;
+        if (_l >= sizeof(_dir_clean)) _l = sizeof(_dir_clean) - 1;
+        memcpy(_dir_clean, dir, _l);
+        _dir_clean[_l] = '\0';
+        dir = _dir_clean;
+    }
+
     /* --member-out-default: derive member-{DIR}.out from the corpus dir
      * (2026-08-16). "scores-H196-E10-BV8-FLT64" → "member-H196-E10-BV8-FLT64.out"
      * (a leading "scores-" prefix is stripped). An explicit --member-out
-     * always wins (checked here, AFTER parsing). */
+     * always wins (checked here, AFTER parsing). dir is already normalized
+     * (trailing slashes stripped centrally above), so strrchr() lands on the
+     * real basename separator. */
     if (g_member_out_default && !g_member_out[0]) {
-        const char *_base = strrchr(dir, '/');
-        _base = _base ? _base + 1 : dir;
+        char _base[256];
+        const char *_p = dir + strlen(dir);
+        while (_p > dir && _p[-1] != '/') _p--;
+        const char *_start = (_p > dir) ? _p : dir;
+        size_t _bl = (size_t)((dir + strlen(dir)) - _start);
+        if (_bl >= sizeof(_base)) _bl = sizeof(_base) - 1;
+        memcpy(_base, _start, _bl);
+        _base[_bl] = '\0';
         const char *_tag = _base;
         if (strncmp(_base, "scores-", 7) == 0) _tag = _base + 7;
         snprintf(g_member_out, sizeof(g_member_out), "member-%s.out", _tag);

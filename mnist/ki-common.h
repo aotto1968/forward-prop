@@ -2468,6 +2468,54 @@ static inline double ot_precision(double in) {
 }
 #endif
 
+/* ═══════════════════════════════════════════════════════════════════════
+ * DEFAULT-NAME-STAMM — H512-E10-OT8-M1-105-INT32 (2026-08-18)
+ * ═══════════════════════════════════════════════════════════════════════
+ * Zentrale Ableitung des "Stamms" aus bekannten Parametern — identisch fuer
+ * Trainer (--export-default → export-{STAMM}) und MERGE (--member-out-default
+ * → member-{STAMM}.out). KEIN Bezug auf Datei-/Dir-Namen.
+ *
+ * Schema: H{h}-E{ep}-{OT|BV}{KI_BIT_WIDTH}-M{maj}[-{m1t}]-{INT32|FLT32|FLT64}
+ *
+ *   - maj1_thresh (m1t) kommt AUFGELOEST herein (expliziter Wert oder
+ *     ki_default_half()-Ergebnis — die Aufloesung macht der Trainer, weil nur
+ *     er maj1.h inkludiert). m1t < 0 ⇒ kein Suffix (M3 / Bit-Voting).
+ *   - M-Kennung ist die Majority-Kennung ("1"/"3"/"-1"), NICHT der Enum-Wert
+ *     (KI_MAJ_1=0, KI_MAJ_3=1). Wird via maj_mode uebergeben.
+ *   - Arch = "OT" (Otto) oder "BV" (Bit-Voting), via KI_BITVOTING.
+ */
+static inline void ki_default_tag(char *buf, size_t bufsz, int H, int ep,
+                                  int maj_mode, int m1t) {
+    const char *arch =
+#ifdef KI_BITVOTING
+        "BV";
+#else
+        "OT";
+#endif
+    const char *mode =
+#ifdef MODE_INT32
+        "INT32";
+#elif defined(MODE_FLT64)
+        "FLT64";
+#else
+        "FLT32";
+#endif
+    const char *maj;
+    if (maj_mode == KI_MAJ_1) {
+        maj = "1";
+        if (m1t >= 0)
+            snprintf(buf, bufsz, "H%d-E%d-%s%d-M%s-%d-%s", H, ep, arch, KI_BIT_WIDTH, maj, m1t, mode);
+        else
+            snprintf(buf, bufsz, "H%d-E%d-%s%d-M%s-%s", H, ep, arch, KI_BIT_WIDTH, maj, mode);
+    } else if (maj_mode == KI_MAJ_3) {
+        maj = "3";
+        snprintf(buf, bufsz, "H%d-E%d-%s%d-M%s-%s", H, ep, arch, KI_BIT_WIDTH, maj, mode);
+    } else {
+        maj = "-1";   /* Bit-Voting: no majority */
+        snprintf(buf, bufsz, "H%d-E%d-%s%d-M%s-%s", H, ep, arch, KI_BIT_WIDTH, maj, mode);
+    }
+}
+
 /* ── Mode string with parameter (for TRAINING header and --help) ── */
 /* Returns "pow()", "const()", "cos-time" etc..
  * Uses static buffer for snprintf-Modi.

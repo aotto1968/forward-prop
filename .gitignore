@@ -4,6 +4,9 @@
 # macOS
 .DS_Store
 
+# 3rd-party build artifacts (carquet — built locally, not committed)
+3rdparty/
+
 logs/*
 models/*
 data/*

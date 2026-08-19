@@ -263,6 +263,7 @@ static const ki_XformAlias ki_xform_alias_table[] = {
     {"sweep",         "id,hflip,vflip,dflip1,dflip2,shuffle,spiral,colswap-3-4,colswap-2-4,colswap-1-4,avg2,avg3,avg4", "all for sweep"},
     {"filter",        "id,spiral,colswap-1-4,colswap-2-4,colswap-3-4,avg2,avg3,avg4", "used for @"},
     {"filter-bv",     "id,spiral,avg2,avg3,avg4", "used for @"},
+    {"sweep-fashion", "all-rot@filter-bv", "used for sweep on mnist-fashion"},
     {"sweep-performance", KI_SWEEP_PERFORMANCE_XFORM, "sweep performance"},
 };
 
@@ -1136,8 +1137,8 @@ static const ki_EncAlias ki_enc_alias_table[] = {
     {"best-mnist","exp,log,log",                               "Best MNIST encoding (reference)"},
     {"latest-2",  "g:down,bl:gamma,bm:sig,bp:sig,b:sqrt,al:down,am:sig,ap:sig,h:lin,c:cbrt,gb:sig",
                                                                 "Optimized 11-member set"},
-    {"sweep", "raw,lin,down,up,mid,log,exp,sig,sqrt,cbrt,gamma,tri,inv-exp", "all for sweep test"},
-    {"sweep-fashion", "raw,lin,down,up,mid,log,exp,sig,sqrt,cbrt,gamma,tri,inv-exp", "all for sweep test"},
+    {"sweep",         "lin,down,up,mid,log,exp,sig,sqrt,cbrt,gamma,tri,inv-exp", "all for sweep test"},
+    {"sweep-fashion", "lin,down,up,mid,log,exp,sig,sqrt,cbrt,gamma,tri,inv-exp", "all for sweep test"},
     {"sweep-performance", KI_SWEEP_PERFORMANCE_ENCODING,        "optimized sweep"},
 
     {"debug", "exp", "debug sweep"},

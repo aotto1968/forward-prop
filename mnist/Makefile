@@ -14,7 +14,7 @@
 #   make setup       — download MNIST dataset
 # ================================================================
 
-CC       = gcc
+CC       = ccache gcc-15
 CFLAGS   = -O3 -g -march=native -fopenmp -Wall -Wextra -Werror \
            -Wconversion -Wsign-conversion -Wfloat-equal -Wundef -Wshadow -Wunused \
            -I. -I../lib -I..
@@ -27,6 +27,14 @@ HDRS = $(wildcard *.h) $(wildcard ../lib/*.h)
 # (previously these vars were undefined -> glib.h not found / tprint.c not linked).
 GLIB_CFLAGS = $(shell pkg-config --cflags glib-2.0)
 GLIB_LIBS   = $(shell pkg-config --libs glib-2.0)
+
+# carquet (Parquet-Writer für --sample-index) — merge-ensemble.c needs it.
+# The ORIGINAL lives here (otto-score-ifc/3rdparty) so this tree is autonomous;
+# ../3rdparty in the forward-prop dev dirs is a symlink to it.
+CARQUET_ROOT   = $(abspath ../3rdparty/carquet-install)
+CARQUET_CFLAGS = -I$(CARQUET_ROOT)/include
+CARQUET_LIBS   = $(CARQUET_ROOT)/lib64/libcarquet.a \
+                 $(CARQUET_ROOT)/lib64/liblz4.a -lzstd -lz -lm -lpthread -fopenmp
 
 MODEL_DIR = ../models
 
@@ -192,7 +200,7 @@ MERGE_SRC = merge-ensemble.c
 merge-ensemble: mnist-merge-ensemble.exe
 
 mnist-merge-ensemble.exe: $(MERGE_SRC) $(HDRS)
-	$(CC) $(CFLAGS) -Wno-sign-conversion -Wno-unused-parameter -o $@ $< $(GLIB_CFLAGS) $(LDLIBS) $(GLIB_LIBS)
+	$(CC) $(CFLAGS) -Wno-sign-conversion -Wno-unused-parameter -o $@ $< $(GLIB_CFLAGS) $(LDLIBS) $(GLIB_LIBS) $(CARQUET_LIBS) $(CARQUET_CFLAGS)
 
 # ── Clean ──────────────────────────────────────────────────
 clean:

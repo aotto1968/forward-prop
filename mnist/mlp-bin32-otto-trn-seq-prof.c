@@ -306,6 +306,12 @@ static int debug_epoch = 0;
  * the production flt32 trainer without the flag. */
 static int g_prof = 0;
 
+/* ── [EXPORT] --export-default (2026-08-18) ──
+ * Derive the export directory name from ki_default_tag() (H512-E10-OT8-M1-105-INT32),
+ * analog zum MERGE --member-out-default. Off by default → only an explicit
+ * --export DIR exports. */
+static int g_export_default = 0;
+
 /* ── [DBG] explicit --debug-member (local, prof trainer only) ──
  * Per-member progress (mem=... id:...) is ALWAYS printed (PRF default,
  * visual feedback). The extra fields W0 / MIN / MAX / pxz are only shown
@@ -636,9 +642,7 @@ static __attribute__((unused)) COUNTER_TYPE *ki_build_target(const uint32_t *X, 
             const uint32_t *in = X + (size_t)s * (size_t)stride + nc_off;
             for (int h = 0; h < H_local; h++) {
                 int _ws1 = aa.rows_mode && aa.maj_mode == KI_MAJ_1 ? NC_slice * 4 : NC_slice;
-                int _half = (aa.maj1_thresh == -2) ? ki_default_half(NC_slice) :
-                            (aa.maj1_thresh <  0)  ? NC_slice / 2 :
-                            aa.maj1_thresh;
+                int _half = ki_compute_half(NC_slice);
                 uint32_t h0 = ki_gb_for_neuron(in, W0, h, _ws1, NC_slice, _half);
                 uint32_t gbits;
                 if (G == 1) {
@@ -941,9 +945,7 @@ static void scores_otto(const uint32_t *in, const uint32_t *W0,
         scores[k] = (SCORE_TYPE)class_offset[k];
 
     int _ws2 = aa.rows_mode && aa.maj_mode == KI_MAJ_1 ? NC_slice * 4 : NC_slice;
-    int _half = (aa.maj1_thresh == -2) ? ki_default_half(NC_slice) :
-                (aa.maj1_thresh <  0)  ? NC_slice / 2 :
-                aa.maj1_thresh;
+    int _half = ki_compute_half(NC_slice);
     for (int h = 0; h < H_local; h++) {
         uint32_t h0 = ki_gb_for_neuron(in, W0, h, _ws2, NC_slice, _half);
         /* VN-grouped: compile-time-optimierte Makros */
@@ -1169,12 +1171,7 @@ static void print_setup(int H, int epochs, int trainN, int evalN,
         printf("  Majority:    %s (%d)", maj_name, aa.maj_mode);
         if (aa.maj_mode == KI_MAJ_1 || aa.maj_mode == KI_MAJ_1R) {
             int half_v;
-            if (aa.maj1_thresh == -2)
-                half_v = ki_default_half(NC_slice);
-            else if (aa.maj1_thresh < 0)
-                half_v = NC_slice / 2;
-            else
-                half_v = aa.maj1_thresh;
+            half_v = ki_compute_half(NC_slice);
             printf("  half=%d (thresh=%d, nc=%d)", half_v, aa.maj1_thresh, NC_slice);
         }
         printf("\n");
@@ -1782,40 +1779,19 @@ static void export_ensemble(const char *out_dir,
     fflush(stdout);
 }
 
-/* ── Member erzeugen: alloziert target, offset, h0_buf, gb_buf* ── */
-static ki_Member *ki_member_create(int H_local, int NC_slice, int slc_off,
-                                    const uint32_t *W0, int total_train,
-                                    int total_eval) {
-    ki_Member *m = (ki_Member *)malloc(sizeof(ki_Member));
-    if (!m) { fprintf(stderr, "[FATAL] ki_member_create OOM\n"); exit(1); }
-    m->H_local  = H_local;
-    m->NC_slice = NC_slice;
-    m->half     = (aa.maj1_thresh == -2) ? ki_default_half(NC_slice) :
-                   (aa.maj1_thresh <  0)  ? NC_slice / 2 :
-                   aa.maj1_thresh;
-    m->w0_step  = NC_slice;  /* default: stride = containers (can be overridden for pixel-maj) */
-    m->slc_off  = slc_off;
-    m->W0       = W0;
-    m->step     = 0;
-    m->last_err = 0;
-    m->ep       = 0;
-    m->trn_acc  = 100.0f;  /* initially: all members participate */
+/* ── Inline helper: allocate all member buffers (target, offset, h0/gb) ──
+ * Extracted from ki_member_create to reduce boilerplate and centralize
+ * allocation logic. Called once per member at creation. */
+static inline void ki_member_alloc_buffers(ki_Member *m, int H_local, int NC_slice,
+                                           int total_train, int total_eval) {
+    int V = 32 / aa.splitVN;  /* VN_GROUPS_ computed from aa.splitVN */
+    size_t tgt_sz = (size_t)H_local * KI_NCLASSES * (size_t)V;
 
-    size_t tgt_sz = (size_t)H_local * KI_NCLASSES * (size_t)VN_GROUPS_;
-    m->target = (COUNTER_TYPE *)ki_xcalloc(tgt_sz, sizeof(COUNTER_TYPE));
-    m->offset = (SCORE_TYPE *)ki_xcalloc(KI_NCLASSES, sizeof(SCORE_TYPE));
-    m->best_target = (COUNTER_TYPE *)ki_xcalloc(tgt_sz, sizeof(COUNTER_TYPE));
-    m->best_offset = (SCORE_TYPE *)ki_xcalloc(KI_NCLASSES, sizeof(SCORE_TYPE));
-    m->fin_evl = 0.0f;
-    /* CEX input buffers: the member does NOT own them at creation — the
-     * trainer's member loop sets them via load_input_cex_cached() later.
-     * Must be NULL here: ki_member_destroy() frees input_buf unconditionally,
-     * and the IFC/--import path never sets it (created + destroyed without
-     * loading) — without NULL init it freed garbage → ASan SEGV in
-     * ki_member_destroy (repro: make test-import, 0xbebebebe pattern).
-     * See: bugs/bug-2026-08-05-import-uninit-input-buf.md */
-    m->input_buf    = NULL;
-    m->input_buf_te = NULL;
+    m->target       = (COUNTER_TYPE *)ki_xcalloc(tgt_sz, sizeof(COUNTER_TYPE));
+    m->offset       = (SCORE_TYPE *)ki_xcalloc(KI_NCLASSES, sizeof(SCORE_TYPE));
+    m->best_target  = (COUNTER_TYPE *)ki_xcalloc(tgt_sz, sizeof(COUNTER_TYPE));
+    m->best_offset  = (SCORE_TYPE *)ki_xcalloc(KI_NCLASSES, sizeof(SCORE_TYPE));
+
     if (aa.err_rollback) {
         m->err_target = (COUNTER_TYPE *)ki_xcalloc(tgt_sz, sizeof(COUNTER_TYPE));
         m->err_offset = (SCORE_TYPE *)ki_xcalloc(KI_NCLASSES, sizeof(SCORE_TYPE));
@@ -1835,10 +1811,57 @@ static ki_Member *ki_member_create(int H_local, int NC_slice, int slc_off,
             m->gb_buf_te = NULL;
         }
     } else {
-        m->h0_buf = NULL;
-        m->gb_buf = NULL;
-        m->gb_buf_te = NULL;
+        m->h0_buf     = NULL;
+        m->gb_buf     = NULL;
+        m->gb_buf_te  = NULL;
     }
+}
+
+/* ── Inline helper: free all member buffers (except input_buf/input_buf_te) ──
+ * Extracted from ki_member_destroy. input_buf/input_buf_te are NOT freed here
+ * because they have different ownership semantics (see ki_member_destroy). */
+static inline void ki_member_free_buffers(ki_Member *m) {
+    free(m->target);       m->target = NULL;
+    free(m->offset);       m->offset = NULL;
+    free(m->best_target);  m->best_target = NULL;
+    free(m->best_offset);  m->best_offset = NULL;
+    free(m->err_target);   m->err_target = NULL;
+    free(m->err_offset);   m->err_offset = NULL;
+    free(m->h0_buf);       m->h0_buf = NULL;
+    free(m->gb_buf);       m->gb_buf = NULL;
+    free(m->gb_buf_te);    m->gb_buf_te = NULL;
+}
+
+/* ── Member erzeugen: alloziert target, offset, h0_buf, gb_buf* ── */
+static ki_Member *ki_member_create(int H_local, int NC_slice, int slc_off,
+                                    const uint32_t *W0, int total_train,
+                                    int total_eval) {
+    ki_Member *m = (ki_Member *)malloc(sizeof(ki_Member));
+    if (!m) { fprintf(stderr, "[FATAL] ki_member_create OOM\n"); exit(1); }
+    m->H_local  = H_local;
+    m->NC_slice = NC_slice;
+    m->half     = ki_compute_half(NC_slice);
+    m->w0_step  = NC_slice;  /* default: stride = containers (can be overridden for pixel-maj) */
+    m->slc_off  = slc_off;
+    m->W0       = W0;
+    m->step     = 0;
+    m->last_err = 0;
+    m->ep       = 0;
+    m->trn_acc  = 100.0f;  /* initially: all members participate */
+
+    /* CEX input buffers: the member does NOT own them at creation — the
+     * trainer's member loop sets them via load_input_cex_cached() later.
+     * Must be NULL here: ki_member_destroy() frees input_buf unconditionally,
+     * and the IFC/--import path never sets it (created + destroyed without
+     * loading) — without NULL init it freed garbage → ASan SEGV in
+     * ki_member_destroy (repro: make test-import, 0xbebebebe pattern).
+     * See: bugs/bug-2026-08-05-import-uninit-input-buf.md */
+    m->input_buf    = NULL;
+    m->input_buf_te = NULL;
+
+    /* Allocate all other buffers via inline helper */
+    ki_member_alloc_buffers(m, H_local, NC_slice, total_train, total_eval);
+
     return m;
 }
 
@@ -1850,15 +1873,10 @@ static void ki_member_destroy(ki_Member *m) {
      * same allocation (train/eval split) — freed once via input_buf. */
     if (m->input_buf) { free(m->input_buf); m->input_buf = NULL; }
     m->input_buf_te = NULL;
-    free(m->target);
-    free(m->offset);
-    free(m->best_target);
-    free(m->best_offset);
-    free(m->err_target);
-    free(m->err_offset);
-    free(m->h0_buf);
-    free(m->gb_buf);
-    free(m->gb_buf_te);
+
+    /* Free all other buffers via inline helper */
+    ki_member_free_buffers(m);
+
     free(m);
 }
 
@@ -2618,6 +2636,7 @@ int main(int argc, char *argv[]) {
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--debug-epoch") == 0) { debug_epoch = 1; }
         else if (strcmp(argv[i], "--prof") == 0) { g_prof = 1; }
+        else if (strcmp(argv[i], "--export-default") == 0) { g_export_default = 1; }
         else if (strcmp(argv[i], "--debug-member") == 0) { g_dbg_member = 1; }
         else if (strcmp(argv[i], "--threadN") == 0 && i + 1 < argc) {
             /* PRF: --threadN N = parallel member width (N members at once,
@@ -2627,7 +2646,29 @@ int main(int argc, char *argv[]) {
             debug_av[debug_ac++] = argv[i];
             debug_av[debug_ac++] = argv[++i];
         }
-        else { debug_av[debug_ac++] = argv[i]; }
+        else if (strcmp(argv[i], "--member-file") == 0 && i + 1 < argc) {
+            /* EXPLICIT --member-file: skip BOTH the flag and its value here.
+             * The value ends in ".out" and exists, so the implicit scan below
+             * would otherwise filter it out of debug_av while leaving the flag
+             * behind — ki_parse_args would then see "--member-file" with no
+             * value and fail with "[ERROR] Unknown argument: --member-file".
+             * The explicit member-file scan (further down) sets aa.member_file,
+             * so the flag does not need to reach ki_parse_args at all. */
+            i++;  /* skip the value */
+        }
+        else {
+            /* IMPLICIT --member-file (2026-08-18): ein Positions-Argument das auf
+             * ".out" endet und als Datei existiert, wird NICHT an ki_parse_args
+             * durchgereicht (es ist kein CLI-Flag) — der member-file-Scan weiter
+             * unten setzt aa.member_file daraus. */
+            size_t _dl = strlen(argv[i]);
+            int _is_implicit_mf = 0;
+            if (argv[i][0] != '-' && _dl > 4 && strcmp(argv[i] + _dl - 4, ".out") == 0) {
+                struct stat _st;
+                if (stat(argv[i], &_st) == 0 && S_ISREG(_st.st_mode)) _is_implicit_mf = 1;
+            }
+            if (!_is_implicit_mf) debug_av[debug_ac++] = argv[i];
+        }
     }
     debug_av[debug_ac] = NULL;
     aa.lr_step = (int)round(aa.lr * (1<<OT_PRECISION));
@@ -2638,17 +2679,52 @@ int main(int argc, char *argv[]) {
      * because ki_parse_args has not run yet — it sets aa.member_file itself
      * (ki-common.h:1491), which is why the parse happens after it. */
     {
+        /* IMPLICIT --member-file (2026-08-18): ein Positions-Argument, das auf
+         * ".out" endet und als Datei existiert, impliziert --member-file <arg>.
+         * bsp: run-research.sh ...x.exe member-H512-E10-OT8-M1-105-INT32.out.
+         * Ein explizites --member-file (naechster Scan) gewinnt immer. */
+        for (int _ai = 1; _ai < argc; _ai++) {
+            if (argv[_ai][0] == '-') continue;          /* Optionen ueberspringen */
+            size_t _l = strlen(argv[_ai]);
+            if (_l > 4 && strcmp(argv[_ai] + _l - 4, ".out") == 0) {
+                struct stat _st;
+                if (stat(argv[_ai], &_st) == 0 && S_ISREG(_st.st_mode)) {
+                    strncpy(aa.member_file, argv[_ai], sizeof(aa.member_file) - 1);
+                    aa.member_file[sizeof(aa.member_file) - 1] = '\0';
+                    break;
+                }
+            }
+        }
+        /* EXPLICIT --member-file: wins over the implicit .out detection above. */
         for (int _ai = 1; _ai + 1 < argc; _ai++)
             if (strcmp(argv[_ai], "--member-file") == 0) {
                 strncpy(aa.member_file, argv[_ai + 1], sizeof(aa.member_file) - 1);
                 aa.member_file[sizeof(aa.member_file) - 1] = '\0';
-                ki_member_file_apply_meta();
                 break;
             }
+        /* Apply META defaults once, for whichever scan (implicit or explicit)
+         * set aa.member_file. */
+        if (aa.member_file[0])
+            ki_member_file_apply_meta();
     }
     ki_parse_args(debug_ac, (char **)debug_av);
     free(debug_av);
     aa.no_precompute = 1;  /* sequential: compute gb per-member */
+    /* ── --export-default (2026-08-18): derive export-{STAMM} dir name from
+     * ki_default_tag(), analog zum MERGE --member-out-default. The maj1_thresh
+     * suffix is ALWAYS resolved: explicit value, or ki_default_half(NC_slice)
+     * when auto (-2). Only if no explicit --export DIR was given. */
+    if (g_export_default && aa.exportD[0] == '\0') {
+        int _nc_slice = KI_NC / (aa.splitHN > 0 ? aa.splitHN : 1);
+        int _m1t = (aa.maj_mode == KI_MAJ_1) ? aa.maj1_thresh : -1;
+        if (_m1t == -2) _m1t = ki_default_half(_nc_slice);
+        char _exp[512];
+        ki_default_tag(_exp + 7, sizeof(_exp) - 8, aa.hidden, aa.epochs, aa.maj_mode, _m1t);
+        memcpy(_exp, "export-", 7);
+        strncpy(aa.exportD, _exp, sizeof(aa.exportD) - 1);
+        aa.exportD[sizeof(aa.exportD) - 1] = '\0';
+        printf("  Export-Default: %s  (--export-default)\n", aa.exportD);
+    }
     /* Precompute encoding LUTs for each active (enc, width) pair */
     for (int _ei = 0; _ei < aa.enc_count; _ei++)
         enc_lut_init_enc((int)aa.enc_array[_ei].type, (int)aa.enc_array[_ei].width);
@@ -4102,9 +4178,7 @@ int main(int argc, char *argv[]) {
                 }
                 int _xid_xf = mem->xform_id;
                 const char *_dep_xn = ki_xform_str(_xid_xf);
-                int _half = (aa.maj1_thresh == -2) ? ki_default_half(mem->NC_slice) :
-                            (aa.maj1_thresh <  0)  ? mem->NC_slice / 2 :
-                            aa.maj1_thresh;
+int _half = ki_compute_half(mem->NC_slice);
                 printf("      [%3d/%d] trn=%5.1f%%  evl=%5.1f%%  err=%d  step=%d  half=%d%s xf=%s\n",
                        mem->ep, epochs,
                        (float)_dep_trn * 100.0f / (float)total_train,

@@ -317,17 +317,22 @@ scores: n_members × (n_test × n_classes) elements
 labels: n_test bytes
 ```
 
-| Version | SCORE_TYPE | bytes/score | `ens_score_bytes` |
-| ------- | ---------- | ----------- | ----------------- |
-| v1-7    | int64      | 8           | 8                 |
-| v8      | int32      | 4           | 4                 |
-| v9-11   | float32    | 4           | 4                 |
-| v12     | double     | 8           | 8                 |
-| v13     | int64      | 8           | 8                 |
+| Version | SCORE_TYPE | bytes/score | `ens_score_bytes` | Notes |
+| ------- | ---------- | ----------- | ----------------- | ----- |
+| v1-7    | int64      | 8           | 8                 | legacy |
+| v8      | int32      | 4           | 4                 | legacy |
+| v9-11   | float32    | 4           | 4                 | **drift** — int32 sum loses precision >1e9 |
+| v12     | double     | 8           | 8                 | exact accumulation |
+| v13     | int64      | 8           | 8                 | exact (MODE_INT32 default) |
+| v14     | int64      | 8           | 8                 | **+ precision block** (ot_precision, bit_width, counter_type) |
+| v15     | double     | 8           | 8                 | **+ precision block** |
 
 The writer version follows the internal `SCORE_TYPE`
 (`ens_version_for_score_type`: float→11, double→12, int64→13) — the export
 preserves the computation precision (decision 2026-08-06).
+
+**v14/v15 Precision Block (2026-08-12):**
+Headers v14+ add a precision block: `ot_precision(4)`, `bit_width(4)`, `counter_type[24]`. This records how the stored logits were computed — the merge `--check` validates archives against these AND against the `.meta`. An archive must not mix float32/double/int64-built scores (float32 drifts on large sums → selection 29→44 members, 2026-08-06).
 
 ### 3.2 Size Computation (Fashion-MNIST, v13)
 

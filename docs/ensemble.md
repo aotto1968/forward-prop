@@ -399,6 +399,36 @@ pipeline is **embarrassingly parallel at every level**:
 This stands in direct contrast to backpropagation, where every training step
 depends on the previous step's weights — **inherently sequential**.
 
+## 5.6 Merge-Ensemble Search Controls (2026-08)
+
+The `merge-ensemble` tool combines `.ens` score archives into an ensemble
+accuracy curve. Key search controls:
+
+| Option | Purpose |
+|--------|---------|
+| `--beam N` / `--greedy` | Beam width N (default); greedy = single-path O(N²) |
+| `--max [--min-gain F]` | **Cumulative acceptance**: buffer sub-threshold members, commit block when accumulated gain crosses `--min-gain` |
+| `--tries N [--tries-no-lock] [--tries-random-seed]` | Multi-start search. `--tries-no-lock` = each try gets fresh pool (full-pool search) |
+| `--beam-bestN K` | Start per-level selection at K-th best candidate (breaks 1st-best fixation) |
+| `--optimal [best\|first]` | 2-opt exchange on beam result. `best` = global-best swap; `first` = first improving swap (faster, different local optimum). `--optimal-passes N` caps passes. |
+| `--target N[,M,...]` | Optimize for specific class(es): recall on target-class samples only |
+| `--filter-sample N[,M,...]` | Sample-level filter: only eval samples with labels in list |
+| `--filter eval gt N%` | **Percentile filter**: keep top N% of members by eval (e.g. `gt 50%` = top half) |
+| `--filter regex 'PATTERN'` | POSIX regex INCLUDE on full XF:CHAN:ENC spec; `!` prefix = EXCLUDE |
+| `--member-start FILE` | Start beam from saved attractor (floor) — only ADD allowed (monotone pool) |
+| `--member-out FILE` | Export optimal subset as XF:CHAN:ENC specs (feeds TRN `--member-file`) |
+| `--member-out-default` | Auto-derive `member-{DIR}.out` from corpus directory name |
+| `--sample-index FILE` | **Parquet export** (opt-in `USE_CARQUET=1`): 3 files (samples/members/pairs) |
+| `--check` | Validate all `.ens` vs `.meta` (incl. v14+ precision), write repair specs to `--member-out` |
+
+Key behaviors:
+- **Beam is add-only attractor** — result is a local optimum (2-opt-stable with `--optimal`), NOT global maximum
+- **More members ≠ better** — adding 312 shuffle members WORSENED 6/10 corpora
+- **`--tries-no-lock` enables full-pool search** — each try gets fresh pool, escapes greedy attractors
+- **`--filter eval gt 50%`** keeps top half by eval (percentile), `gt 58` keeps eval > 58% (absolute)
+
+---
+
 ## 6. Architectural Implication for DRAM
 
 This result directly informs the DRAM chip architecture:

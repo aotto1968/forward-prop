@@ -207,7 +207,21 @@ Step size follows cosine decay with linear warmup.
 
 ---
 
-## 6. Why It Works on DRAM
+## 6. Float32 Drift Fixed — Exact Accumulation (2026-08-06)
+
+The float32 score accumulator drifts once ensemble scores reach ~1e9 (> 2²⁴). Resolution:
+**DRAM chip accumulates popcounts exactly in integer arithmetic** — the exact behavior is chip-faithful.
+
+- `SCORE_TYPE` defaults to **double** (`-DSCORE_TYPE=float` reproduces legacy)
+- `.ens` archive follows internal format: **v12 (double) / v13 (int64)**
+- `.meta` records/validates `COUNTER_TYPE=` / `SCORE_TYPE=`
+- Same corpus: float32 → 29 members (66.79%) vs int64/double → 44 members (67.72%)
+
+**v14/v15 .ens versions (2026-08-12):** Headers v14+ add a precision block: `ot_precision(4)`, `bit_width(4)`, `counter_type[24]`. This records how the stored logits were computed — the merge `--check` validates archives against these AND against the `.meta`. An archive must not mix float32/double/int64-built scores (float32 drifts on large sums → selection 29→44 members, 2026-08-06).
+
+---
+
+## 7. Why It Works on DRAM
 
 Modern processors have fast multiply-add (FMA, SIMD). DRAM does not.
 But DRAM rows can compute `& | ~` on all bits in parallel.
@@ -220,7 +234,7 @@ But DRAM rows can compute `& | ~` on all bits in parallel.
 
 ---
 
-## 7. Key Properties
+## 8. Key Properties
 
 | Property                 | Value                           |
 | ------------------------ | ------------------------------- |
@@ -234,7 +248,7 @@ But DRAM rows can compute `& | ~` on all bits in parallel.
 
 ---
 
-## 8. Ensemble Voting
+## 9. Ensemble Voting
 
 Multiple independent random W0s produce different errors.
 Score-summing across members (product of experts) reduces error:

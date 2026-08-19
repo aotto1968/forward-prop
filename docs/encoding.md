@@ -146,6 +146,22 @@ photographic images.
 
 **Width suffix:** `exp8` = width 8 bits, `exp16` = width 16 bits.
 
+### `--encoding-sizeN 0` — RAW Encoding (July 2026)
+
+With `--encoding-sizeN 0`, NO thermometer encoding is applied — the raw 8-bit pixel values
+go directly into the container (4 pixels per uint32). This corresponds to `KI_ENC_RAW` with `width=8`.
+
+```bash
+# Otto Score with RAW Encoding
+./cifar/cifar-mlp-bin32-otto-trn-xnor.exe --encoding-sizeN 0 ...
+
+# BitVoting with RAW Encoding (no W0 bottleneck)
+./cifar/cifar-mlp-bin32-otto-trn-bitvoting.exe --encoding-sizeN 0 ...
+```
+
+**Result:** Train reaches 99.6% (Otto) resp. 96.8% (BitVoting), but eval generalizes
+differently — BitVoting shows **no ceiling** (eval still climbing at 47.4%, 60 Members).
+
 ---
 
 ## 4. Channels + Encodings Define a Member
@@ -206,6 +222,34 @@ of containers.
 Each comma-separated entry in `--encoding` creates one virtual block = one
 member. When `--channel` has fewer entries than `--encoding`, the last channel
 is reused.
+
+---
+
+## 5. Container Width: 8/16/32 Does Not Help
+
+### Float32 Drift Fixed — Exact Accumulation (2026-08-06)
+
+The float32 score accumulator drifts once ensemble scores reach ~1e9 (> 2²⁴). Resolution:
+**DRAM chip accumulates popcounts exactly in integer arithmetic** — the exact behavior is chip-faithful.
+
+- `SCORE_TYPE` defaults to **double** (`-DSCORE_TYPE=float` reproduces legacy)
+- `.ens` archive follows internal format: **v12 (double) / v13 (int64)**
+- `.meta` records/validates `COUNTER_TYPE=` / `SCORE_TYPE=`
+- Same corpus: float32 → 29 members (66.79%) vs int64/double → 44 members (67.72%)
+
+**v14/v15 .ens versions (2026-08-12):** Headers v14+ add a precision block: `ot_precision(4)`, `bit_width(4)`, `counter_type[24]`. This records how the stored logits were computed — the merge `--check` validates archives against these AND against the `.meta`. An archive must not mix float32/double/int64-built scores (float32 drifts on large sums → selection 29→44 members, 2026-08-06).
+
+### OT_PRECISION Scaling
+
+`OT_PRECISION` (default 17 → F=131072) quantizes logits to int32/int64:
+```c
+#define OT_F (1 << OT_PRECISION)            /* F = 2^17 = 131072 (default) */
+static inline double ot_precision(double in) {
+    return in * (double)OT_F + (in >= 0 ? 0.5 : -0.5);   /* ×F + rounding */
+}
+```
+
+The precision loss is fixed-point resolution `1/F ≈ 7.6e-6`, far below measurement noise.
 
 ---
 

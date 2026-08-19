@@ -39,6 +39,18 @@ int32 H=8:  1 neuron = 1 int32     = 32 bit Container → 8×784×32  + 8×10×3
 | flt32  | 1 float32 (32 bit continuous) | 32          | `W @ x` (matmul)     | SGD / AdamW |
 | int32  | 1 int32 (32 bit integer)      | 32          | `W · x` (int matmul) | SGD (float) |
 
+**Float32 Drift Fixed — Exact Accumulation (2026-08-06)**
+
+The float32 score accumulator drifts once ensemble scores reach ~1e9 (> 2²⁴). Resolution:
+**DRAM chip accumulates popcounts exactly in integer arithmetic** — the exact behavior is chip-faithful.
+
+- `SCORE_TYPE` defaults to **double** (`-DSCORE_TYPE=float` reproduces legacy)
+- `.ens` archive follows internal format: **v12 (double) / v13 (int64)**
+- `.meta` records/validates `COUNTER_TYPE=` / `SCORE_TYPE=`
+- Same corpus: float32 → 29 members (66.79%) vs int64/double → 44 members (67.72%)
+
+**v14/v15 .ens versions (2026-08-12):** Headers v14+ add a precision block: `ot_precision(4)`, `bit_width(4)`, `counter_type[24]`. This records how the stored logits were computed — the merge `--check` validates archives against these AND against the `.meta`. An archive must not mix float32/double/int64-built scores (float32 drifts on large sums → selection 29→44 members, 2026-08-06).
+
 **Key insight (proven 2026-05-31):** Swapping bit32 (XNOR+popcount) for int32 (integer matmul) made everything simpler and faster. Both formats achieve identical accuracy at equal Bit-Masse, with **zero gap** between training and inference. The **Bit-Masse** (total bits in W) determines information capacity — the computation format is secondary.
 
 ## 3. Experimental Validation

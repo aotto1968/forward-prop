@@ -1,21 +1,22 @@
-# Majority Vote (MAJ3) — H0 Computation in Bin32
+# Majority Vote (MAJ1/MAJ3) — H0 Computation in Bin32
 
 ## What It Is
 
 In the forward-prop uint32 (bin32) architecture, the Majority Vote replaces the
 standard dot-product forward pass in the first layer (W0 × Input → H0).
 
+**Current Default: `--maj 1` (MAJ1)** — exact per-bit majority, DRAM-native bit-logic only.
+
 Instead of **one** global sum (`popcount(XNOR(w, x))` → scalar), forward-prop
-runs **32 independent** per-bit majority votes organized as a **3-input majority
-function (MAJ3)**:
+runs **32 independent** per-bit majority votes.
 
 ```
 For each container position c ∈ [0..NC_slice-1]:
-    match[c] = MAJ3( ~(input[c] ⊕ W0[neuron][c]) )
-    # MAJ3(a,b,c) = (a & b) | (a & c) | (b & c)
+    match[c] = MAJ1( ~(input[c] ⊕ W0[neuron][c]) )
+    # MAJ1(a,b,c) = (a & b) | (a & c) | (b & c)  → exact bitwise majority
     # → 1 if at least 2 of 3 bits are 1
 
-H0[neuron] = majority_tree3(match, NC_slice)
+H0[neuron] = majority_tree1(match, NC_slice, half)
 # → 1 bit per position if majority of containers agree
 ```
 
@@ -23,13 +24,13 @@ Each **32-bit uint32 container neuron** makes 32 independent yes/no decisions.
 Unlike standard BNNs that sum all bits into one scalar, forward-prop keeps each
 bit-position decision intact — a neuron is a 32-bit vector, not a number.
 
-### How MAJ3 Works
+### How MAJ1 Works
 
-MAJ3 takes three bits (a, b, c) and returns 1 if at least two of them are 1.
+MAJ1 takes three bits (a, b, c) and returns 1 if at least two of them are 1.
 This maps directly to 3-input AND-OR logic:
 
 ```
-MAJ3(a, b, c) = (a & b) | (a & c) | (b & c)
+MAJ1(a, b, c) = (a & b) | (a & c) | (b & c)
 ```
 
 On a DRAM row, this can be evaluated in a single cycle using three bitwise
@@ -38,11 +39,25 @@ operations — no addition, no carry propagation.
 The full H0 computation for one neuron is:
 
 ```
-match[c] = MAJ3( ~(input[c] ⊕ W0[c]) )       // per container
-H0       = majority_tree3(match, NC_slice)      // per neuron
+match[c] = MAJ1( ~(input[c] ⊕ W0[c]) )       // per container
+H0       = majority_tree1(match, NC_slice, half)      // per neuron
 ```
 
-## Historical Lineage
+### MAJ1 vs MAJ3 (Legacy)
+
+| Feature | MAJ1 (default) | MAJ3 (legacy) |
+|---------|----------------|---------------|
+| Algorithm | Exact bitwise majority (2 of 3) | 3-tree (pairs → MAJ3 → majority) |
+| Threshold | `--maj1-thresh` (auto per encoding) | Fixed (~52.7%) |
+| DRAM-native | ✅ Pure bit-logic | ❌ Tree overhead |
+| Default | **Yes** (`--maj 1`) | `--maj 3` (legacy) |
+
+**`--maj 3` is retired as default** — the old `--maj 3` tree was identified as MAJ1 with effective threshold ~52.7% (135/256). `--maj 1` is DRAM-native (pure bit-logic, no tree overhead) and conceptually cleaner. The threshold is controlled via `--maj1-thresh`:
+- `-2` (default): auto per encoding (lookup: 256→135, 512→269, 1024→540)
+- `-1`: n/2 (exact 50%)
+- `>=0`: exact value
+
+The old maj3 mechanism is considered legacy and is no longer the default.
 
 | Concept                                 | Origin                                                                                           | Year      |
 | --------------------------------------- | ------------------------------------------------------------------------------------------------ | --------- |

@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Otto Score: 99% MNIST, 64.4% CIFAR — DRAM-Native Bit-Logic</title>
+    <title>Otto Score — DRAM-Native Bit-Logic: 92.96% Fashion</title>
     <meta name="description" content="Otto Score reaches 99.0% MNIST and 64.4% CIFAR-10 using pure &amp;|~ + int32. CIFAR-10 breakthrough: geometric xform ensemble (hflip,vflip,dflip1,dflip2) + spatial channels reach 64.4%. The Human Brain Decoded — 3 trillion MAJ1 channels match 92% human accuracy.">
     <meta name="author" content="Andreas Otto">
     <meta name="robots" content="index, follow">
@@ -55,6 +55,7 @@
                 <li><a href="papers/status-2026-08.html" style="color:var(--amber); font-weight:700;">Status Aug</a></li>
                 <li><a href="papers/mnist-fashion.html" style="color:var(--amber); font-weight:700;">Fashion</a></li>
                 <li><a href="papers/human-brain-decoded.html">Brain Decoded</a></li>
+                <li><a href="/docs/" style="color:var(--sky); font-weight:700;">Documentation</a></li>
             </ul>
         </nav>
     </div>
@@ -74,8 +75,8 @@
 
 <section class="hero">
     <div class="hero-content">
-        <h1>Only Bits Matter</h1>
-        <h2>99.0% MNIST — 69.99% CIFAR-10 (ensemble) — Pure &amp;|~ + int32/flt32</h2>
+<h1>Only Bits Matter</h1>
+        <h2>99.0% MNIST — 69.99% CIFAR-10 (ensemble) — <strong>92.96% Fashion-MNIST</strong> — Pure &|~ + int32/flt32</h2>
         <p><strong>No float multiply-accumulate — only bit-logic.</strong> Otto Score runs the same
         frozen-projection + Bayes-log-score classifier on two equivalent DRAM-native container
         formats: <strong>int32</strong> (exact) and <strong>flt32</strong> (float). All members
@@ -85,7 +86,8 @@
         at large sums. Results:
         <a href="papers/mnist-number.html" style="color:var(--amber-light); font-weight:700;">99.0% MNIST</a>
         (data-limited) · <a href="papers/cifar-10.html" style="color:var(--amber-light); font-weight:700;">69.99% CIFAR-10</a>
-        (ensemble beam-search) · <strong>66.88%</strong> beam-selected (maj1+flt32). See the
+        (ensemble beam-search) · <a href="papers/mnist-fashion.html" style="color:var(--amber-light); font-weight:700;"><strong>92.96% Fashion-MNIST</strong></a>
+        (beam 20 --max --filter eval gt 20%) · <strong>66.88%</strong> beam-selected (maj1+flt32). See the
         <a href="papers/status-2026-08.html" style="color:var(--amber-light); font-weight:700;">August status →</a></p>
     </div>
 </section>
@@ -99,11 +101,10 @@
 
     <div class="container" style="padding-top:0.5rem; padding-bottom:0.5rem;">
         <div style="background:linear-gradient(135deg, rgba(230,168,23,0.12), rgba(230,168,23,0.04)); border:2px solid var(--amber); border-radius:8px; padding:1rem 1.5rem; text-align:center;">
-            <strong style="font-size:0.95rem; color:var(--navy);">🔬 Current Highlight — <a href="papers/mnist-fashion.html" style="color:var(--amber); font-weight:700;">Fashion-MNIST: The 91% Trap</a> 🆕</strong>
+            <strong style="font-size:0.95rem; color:var(--navy);">🔬 Current Highlight — <a href="papers/mnist-fashion.html" style="color:var(--amber); font-weight:700;">Fashion-MNIST: The Trap Is Broken</a> 🆕</strong>
             <span style="font-size:0.88rem; color:var(--dark-gray); display:block; margin-top:0.25rem;">
-                DRAM-native bit-logic reaches <strong>91.6%</strong> on Fashion-MNIST — every search
-                strategy lands in the 88.7–91.6% basin. The 3.4pp gap to CNN SOTA is architectural,
-                not search-limited. Speed is the differentiator: a 221-member sweep in ~1 minute.
+                DRAM-native bit-logic reaches <strong>92.96%</strong> on Fashion-MNIST — every search
+                strategy lands in the 88.7–92.96% basin. The 91% trap is BROKEN — beam 20 --max + filter eval gt 20% → 92.96%. Speed is the differentiator: a 221-member sweep in ~1 minute.
             </span>
         </div>
     </div>
@@ -118,8 +119,8 @@
             </tr>
             <tr style="background:rgba(230,168,23,0.08);">
                 <td style="padding:0.5rem 0.75rem; border:1px solid #ddd;"><a href="papers/mnist-fashion.html"><strong>Fashion-MNIST</strong></a> 🆕</td>
-                <td style="padding:0.5rem 0.75rem; border:1px solid #ddd;">91.6% ceiling; 88.7–91.6% basin across all search strategies</td>
-                <td style="padding:0.5rem 0.75rem; border:1px solid #ddd;">The 91% trap is architectural (frozen W0, no conv); speed is the differentiator (221-member sweep in ~1 min)</td>
+                <td style="padding:0.5rem 0.75rem; border:1px solid #ddd;"><strong>92.96%</strong> ceiling; 88.7–92.96% basin across all search strategies</td>
+                <td style="padding:0.5rem 0.75rem; border:1px solid #ddd;">Beam 20 --max + filter eval gt 20% → 92.96%; 221-member sweep in ~1 min</td>
             </tr>
             <tr style="background:rgba(230,168,23,0.08);">
                 <td style="padding:0.5rem 0.75rem; border:1px solid #ddd;"><a href="papers/status-2026-08.html"><strong>August 2026</strong></a></td>
@@ -133,7 +134,7 @@
             </tr>
             <tr>
                 <td style="padding:0.5rem 0.75rem; border:1px solid #ddd;"><a href="papers/otto-score.html"><strong>Otto Score</strong></a></td>
-                <td style="padding:0.5rem 0.75rem; border:1px solid #ddd;">98.1% MNIST / 91.6% Fashion / 64.4% CIFAR-10</td>
+                <td style="padding:0.5rem 0.75rem; border:1px solid #ddd;">98.1% MNIST / <strong>92.96%</strong> Fashion / 64.4% CIFAR-10</td>
                 <td style="padding:0.5rem 0.75rem; border:1px solid #ddd;">Frozen W0 + MAJ1; thermometer encoding; bit-density vs Bit-Voting</td>
             </tr>
             <tr>

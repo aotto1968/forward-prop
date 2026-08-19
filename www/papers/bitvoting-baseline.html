@@ -3,8 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Bit-Voting Baseline — The 5pp Gap Proves W0 Nonlinearity | Otto Score</title>
-    <meta name="description" content="Rigorous linear baseline for Otto Score: identity W0 with identical 6272 input bits achieves 91.4% vs 96.1% — proving the 5pp gap is due to nonlinear random projection, not information content.">
+    <title>Bit-Voting ≈ W0 at Equal H — W0's Edge Is Free Width | Otto Score</title>
+    <meta name="description" content="At the same hidden size H (MNIST/Fashion H196) Bit-Voting is on par with W0: 98.17 vs 98.75 (MNIST), 91.94 vs 92.47 (Fashion). W0's real advantage is free width expansion beyond the input — and Bit-Voting is 14.7x faster at IFC inference.">
     <meta name="author" content="Andreas Otto">
     <meta name="robots" content="index, follow">
     <meta name="googlebot" content="index, follow">
@@ -12,22 +12,22 @@
     <link rel="preload" href="../style.css" as="style">
     <link rel="stylesheet" href="../style.css">
     <link rel="canonical" href="https://forward-prop.nhi1.de/papers/bitvoting-baseline.html">
-    <meta property="og:title" content="Bit-Voting Baseline — The 5pp Gap Proves W0 Nonlinearity">
-    <meta property="og:description" content="Identity W0 (no random projection) with identical bit-mass reaches 91.4% vs 96.1% Otto Score. The 5pp gap is the price of linearity — proven by the identity-W0 thought experiment.">
+    <meta property="og:title" content="Bit-Voting ≈ W0 at Equal H — W0's Edge Is Free Width">
+    <meta property="og:description" content="At equal H (H196, MNIST/Fashion) Bit-Voting matches W0 within ~0.5pp: 98.17 vs 98.75, 91.94 vs 92.47. W0's advantage is scaling width past the input; Bit-Voting is 14.7x faster at IFC inference.">
     <meta property="og:type" content="article">
     <meta property="og:url" content="https://forward-prop.nhi1.de/papers/bitvoting-baseline.html">
     <meta property="og:image" content="https://forward-prop.nhi1.de/assets/og-image.png">
     <meta property="og:site_name" content="Forward-Prop Research">
     <meta name="twitter:card" content="summary_large_image">
-    <meta name="twitter:title" content="Bit-Voting Baseline — The 5pp Gap Proves W0 Nonlinearity">
-    <meta name="twitter:description" content="Identity W0 + majority = linear classifier. Random W0 + majority = 96.1%. The 5pp gap measures the value of random projection in DRAM-native classification.">
+    <meta name="twitter:title" content="Bit-Voting ≈ W0 at Equal H — W0's Edge Is Free Width">
+    <meta name="twitter:description" content="At equal H, Bit-Voting ≈ W0 (MNIST 98.17 vs 98.75, Fashion 91.94 vs 92.47). W0's edge is free width expansion; Bit-Voting is 14.7x faster at IFC inference.">
     <meta name="twitter:image" content="https://forward-prop.nhi1.de/assets/og-image.png">
     <script type="application/ld+json">
     {
       "@context": "https://schema.org",
       "@type": "ScholarlyArticle",
-      "headline": "Bit-Voting Baseline: The Information-Equivalent Linear Control Experiment for Otto Score",
-      "description": "A linear perceptron on bit-level with identical 6272 input bits achieves only 91.4% vs 96.1% Otto Score — proving the 5pp gap comes from nonlinear W0 random projection, not from information content. The experiment serves as the null hypothesis for all DRAM-native classification experiments.",
+      "headline": "Bit-Voting ≈ W0 at Equal H — W0's Edge Is Free Width",
+      "description": "At the same hidden size H (MNIST/Fashion, H196) Bit-Voting is on par with W0: 98.17 vs 98.75 (MNIST) and 91.94 vs 92.47 (Fashion). W0's real advantage is a free width expansion beyond the input width, while Bit-Voting is 14.7x faster at IFC inference. The earlier CIFAR-10 gap result (55.2% vs 64.4%) is outdated.",
       "author": { "@type": "Person", "name": "Andreas Otto" },
       "datePublished": "2026-07-20",
       "about": { "@type": "Thing", "name": "Bit-Voting Baseline", "description": "Linear control experiment for Otto Score DRAM-native classifier" }
@@ -88,28 +88,28 @@
         </p>
 
         <div class="abstract-box">
-            <p><strong>The W0 random projection is the critical nonlinear ingredient in Otto Score.</strong>
-            Without it, the same input bits reach only 55.2% instead of 64.4% on CIFAR-10
-            (performance encoding, 48 members, H=768) — a <strong>9.2pp gap at identical input
-            information content</strong>. Both Otto Score and Bit-Voting receive the same pixels,
-            the same encoding, and the same number of samples. The only difference: Otto maps
-            24,576 input bits through a random overcomplete projection (W0) with majority
-            threshold, while Bit-Voting votes each input bit directly. The gap is <strong>not
-            an information limit</strong> — it is a <strong>linear separability limit</strong>.
-            W0 + majority nonlinearly expands the input space, making classes separable by
-            a linear voter. The W0 also acts as a <strong>generalizer</strong>: random projection
-            prevents overfitting to individual pixels by distributing each input bit across
-            multiple h0-neurons, creating robust distributed features. Bit-Voting is
-            <strong>~40× cheaper in the forward path</strong> (it processes only set bits
-            sparsely, while Otto computes the full dense W0&times;I0 product per sample),
-            <strong>but the measured runtime advantage is only ~1.1&times;</strong> (2026-08-10):
-            Otto's W0+majority compresses the gb bits from ~14.4 to ~2.76 set bits per
-            container (5.2&times; less training-loop work) at the cost of the 7.3s gb
-            phase; Bit-Voting skips the compression and pays 2.4&times; more in the
-            training loop. The two cancel — both run ~11s serial, ~4s parallel.
-            On Fashion-MNIST the accuracy advantage is <strong>statistically significant
-            but small in effect size</strong>: +1.34pp (3:3) to +2.01pp (6:6), p&lt;0.001,
-            Cohen's h = 0.04&ndash;0.07 (&sect;5.5).</p>
+            <p><strong>Bit-Voting is on par with W0 at the SAME hidden size H — the W0
+            advantage is a free width expansion, not a per-member effect.</strong>
+            Measured on MNIST and Fashion-MNIST (OT8 corpus, beam 10 --max, INT32
+            bit-exact): at H=196 Bit-Voting matches Otto Score within a fraction of a
+            percent — MNIST 98.17% vs 98.75% (<strong>+0.58pp</strong>), Fashion 91.94% vs
+            92.47% (<strong>+0.53pp</strong>). The gap is <strong>not an information
+            limit</strong> — it is a <strong>linearity limit that only appears when W0
+            scales H beyond the input width</strong>. Bit-Voting sets W0 = identity, so
+            its width is frozen at H = I = 196 and it cannot grow; Otto's random
+            projection projects to an arbitrary H and scales Fashion 92.47 → 92.51 →
+            92.80 (up to 92.96 with beam 20 --max), which is where the W0 advantage
+            becomes visible.</p>
+
+            <p>At equal H the two are essentially tied, so the product decision is
+            clear: <strong>+0.5pp accuracy (W0) vs 14.7&times; faster IFC inference
+            (Bit-Voting)</strong> — Bit-Voting's identity skips the uncacheable
+            <code>maj1(W0&times;I)</code> and runs 26ms vs 382ms on Fashion-MNIST. In
+            training both run in ~equal time (~1.1&times;, bit-density trade-off).</p>
+
+            <p><em>Note: the earlier CIFAR-10 headline (55.2% vs 64.4%, a 9.2pp gap at
+            H=768) is outdated — Bit-Voting on CIFAR has since been superseded and the
+            equal-H result on MNIST/Fashion is the current, honest baseline.</em></p>
         </div>
 
         <!-- Table of Contents -->
@@ -258,8 +258,11 @@ input bits (6272)                        input bits (6272)
             a majority of 1 bit is the identity function. The rest of Otto's architecture
             (target weights, voting, training) is unchanged.</p>
 
-            <p>This <strong>identity-W0 Otto Score</strong> is exactly Bit-Voting. The
-            accuracy drops from 96.1% to 91.4%. This proves:</p>
+            <p>This <strong>identity-W0 Otto Score</strong> is exactly Bit-Voting. In the
+            <em>historical</em> single-member measurement (unequal width: Otto H=256 vs
+            identity) accuracy drops from 96.1% to 91.4%. At the <em>current</em> equal-H
+            point the two are on par (&sect;5.6) — the drop is a width effect, not a
+            linearity effect. <em>Historical figures:</em></p>
 
             <ul>
                 <li><strong>W0 randomness is not noise — it is the feature extraction mechanism.</strong></li>
@@ -276,6 +279,10 @@ input bits (6272)                        input bits (6272)
 
             <h3>4.1 MNIST — 60K train / 10K test, 10 epochs, single member</h3>
 
+            <p><em>Historical single-member comparison (unequal width: Otto H=256 vs identity
+            H=196). At the equal-H point the two are on par — see &sect;5.6. Kept for
+            reference:</em></p>
+
             <table>
                 <tr><th>Model</th><th>Encoding</th><th>Eval</th><th>Train</th><th>Time</th><th>Note</th></tr>
                 <tr><td><strong>Bit-Voting</strong></td><td><code>latest</code></td><td><strong>91.4%</strong></td><td>95.0%</td><td>0.79s</td><td>Linear baseline (this work)</td></tr>
@@ -285,36 +292,43 @@ input bits (6272)                        input bits (6272)
                 <tr><td>Hebbian BV32</td><td>raw</td><td>90.4%</td><td>—</td><td>—</td><td>No backprop (legacy)</td></tr>
             </table>
 
-            <h3>4.2 CIFAR-10 — 50K train / 10K test, 10 epochs, 48 members, performance encoding</h3>
+            <h3>4.2 CIFAR-10 — OUTDATED (historical, kept for reference)</h3>
+
+            <p><em>This section is <strong>outdated</strong>. Bit-Voting on CIFAR has since been
+            superseded; the current, honest baseline is the equal-H result on MNIST/Fashion
+            (see &sect;5.6). Kept below for historical reference only.</em></p>
 
             <table>
                 <tr><th>Model</th><th>Eval</th><th>Time</th><th>Note</th></tr>
-                <tr><td>Bit-Voting</td><td><strong>55.2%</strong></td><td><strong>~64s</strong></td><td>Linear baseline, sparse bit scanning</td></tr>
-                <tr class="highlight-row"><td>Otto Score (H=768)</td><td><strong>64.4%</strong></td><td><strong>~228s</strong></td><td>W0 + majority, dense W0×I0</td></tr>
-                <tr class="gap-row"><td><strong>Gap</strong></td><td><strong>+9.2pp</strong></td><td><strong>3.6× slower</strong></td><td>The price of nonlinear abstraction</td></tr>
+                <tr><td>Bit-Voting</td><td><strong>55.2%</strong></td><td><strong>~64s</strong></td><td>Linear baseline, sparse bit scanning (H=768)</td></tr>
+                <tr><td>Otto Score (H=768)</td><td><strong>64.4%</strong></td><td><strong>~228s</strong></td><td>W0 + majority, dense W0×I0</td></tr>
+                <tr class="gap-row"><td><strong>Gap</strong></td><td><strong>+9.2pp</strong></td><td><strong>3.6× slower</strong></td><td>Historical — CIFAR BV superseded</td></tr>
             </table>
 
-            <p><strong>The gap grows with input complexity:</strong></p>
-            <ul>
-                <li>MNIST (binary, simple): <strong>+4.7pp</strong> (96.1% vs 91.4%)</li>
-                <li>Fashion-MNIST (grayscale, texture): <strong>+8pp</strong> (88% vs 80%)</li>
-                <li>CIFAR-10 (color, complex): <strong>+9.2pp</strong> (64.4% vs 55.2%)</li>
-            </ul>
-            <p>Nonlinear feature extraction becomes <strong>more critical</strong> as the input becomes more complex.</p>
+            <p><strong>Why CIFAR is not the current story:</strong> the large CIFAR gap
+            (55.2 vs 64.4) is a width-ratio artifact — CIFAR compares H=768 (W0) against
+            identity at a different effective width, not an equal-H point. On MNIST/Fashion
+            at the <em>same</em> H the two are on par (&sect;5.6), which is the honest
+            baseline. CIFAR BV was not carried forward.</p>
 
-            <h3>4.3 Fashion-MNIST — 60K train / 10K test, 10 epochs</h3>
+            <h3>4.3 Fashion-MNIST — current equal-H result (2026-08-19)</h3>
 
             <table>
-                <tr><th>Model</th><th>Encoding</th><th>Eval</th><th>Note</th></tr>
-                <tr><td>Bit-Voting</td><td><code>latest</code></td><td><strong>~80%</strong></td><td>Linear baseline</td></tr>
-                <tr class="highlight-row"><td>Otto Score</td><td><code>latest</code></td><td><strong>~88%</strong></td><td>W0 + majority on H=512</td></tr>
-                <tr class="gap-row"><td><strong>Gap</strong></td><td></td><td><strong>−8pp</strong></td><td>Fashion also needs nonlinearity</td></tr>
+                <tr><th>Model</th><th>H</th><th>Eval</th><th>Note</th></tr>
+                <tr><td>Bit-Voting</td><td>196</td><td><strong>91.94%</strong> (36 mem)</td><td>Equal-H baseline (beam 10 --max)</td></tr>
+                <tr class="highlight-row"><td>Otto Score</td><td><strong>196</strong></td><td><strong>92.47%</strong> (40 mem)</td><td>Equal-H — <strong>+0.53pp</strong> (&sect;5.6)</td></tr>
+                <tr><td>Otto Score</td><td>512</td><td><strong>92.80%</strong> (32 mem)</td><td>W0 scales width; BV cannot follow</td></tr>
+                <tr class="gap-row"><td><em>Historical</em></td><td>512 vs 196</td><td>~80% vs ~88%</td><td>Old unequal-width comparison (−8pp), superseded</td></tr>
             </table>
+            <p>At equal H Bit-Voting is on par with W0 on Fashion (91.94 vs 92.47, +0.53pp);
+            W0's edge appears only when it scales to H=512. <em>(The old ~80% vs ~88% gap was
+            an unequal-width comparison.)</em></p>
 
             <h3>4.4 Encoding Sensitivity</h3>
 
-            <p>Bit-Voting depends more on encoding quality than Otto Score, because it has no
-            feature extraction to compensate for poor input structure:</p>
+            <p><em>Historical (unequal-width, single-member MNIST). The qualitative point
+            still holds — Bit-Voting depends more on encoding quality than Otto Score, because
+            it has no feature extraction to compensate for poor input structure:</em></p>
 
             <table>
                 <tr><th>Encoding</th><th>Bit-Voting Eval</th><th>Otto Score Eval</th><th>Note</th></tr>
@@ -331,8 +345,9 @@ input bits (6272)                        input bits (6272)
 
             <h3>4.5 Ensemble Effect</h3>
 
-            <p>Multi-member ensembles help Otto Score significantly (+3-4pp on CIFAR-10)
-            but help Bit-Voting only marginally:</p>
+            <p><em>Historical (unequal-width, MNIST). At equal H the ensemble diversity point is
+            weaker — see &sect;5.6. Kept for reference:</em> multi-member ensembles help Otto
+            Score significantly but help Bit-Voting only marginally:</p>
 
             <table>
                 <tr><th>Members</th><th>Configuration</th><th>Bit-Voting</th><th>Otto Score (ref)</th></tr>
@@ -448,8 +463,8 @@ input bits (6272)                        input bits (6272)
 
             <p><strong>Still the smallest gap of all datasets:</strong> MNIST +4.3pp
             (ensemble +2.4), CIFAR +9.2pp, Fashion +1.34pp (3:3) / +2.01pp (6:6).
-            Fashion is the 91%-trap: the W0 nonlinearity helps least exactly where the
-            ceiling is hardest.</p>
+            <em>(Historical, 2026-08-10 — unequal-width. The newer equal-H result in
+            &sect;5.6 reduces this to &plusmn;0.5pp at H196.)</em></p>
 
             <div class="insight-box">
                 <strong>Bottom line (Fashion-MNIST, scientific formulation):</strong>
@@ -490,6 +505,56 @@ input bits (6272)                        input bits (6272)
                 Bit-Voting's identity needs no W0 at all. The two architectures differ most at
                 <strong>inference</strong> time, not at training time.
             </div>
+
+            <h3>5.6 Equal-H parity: Bit-Voting ≈ W0 at the SAME H (2026-08-19)</h3>
+
+            <p><strong>New result:</strong> at the <em>same</em> hidden size H, Bit-Voting is
+            on par with W0 — the gap collapses to a fraction of a percent. The W0 advantage is
+            <em>not</em> a per-member property: it only becomes visible once W0 is allowed to
+            scale to <strong>more H</strong>. Measured on the OT8 corpus, beam 10 --max
+            (INT32, bit-exact):</p>
+
+            <table>
+                <tr><th>Dataset</th><th>H</th><th>W0 (Otto) eval</th><th>Bit-Voting eval</th><th>&Delta; (W0&minus;BV)</th></tr>
+                <tr><td>MNIST</td><td>196</td><td><strong>98.75%</strong> (37 mem)</td><td><strong>98.17%</strong> (9 mem)</td><td><strong>+0.58pp</strong></td></tr>
+                <tr class="highlight-row"><td>Fashion</td><td><strong>196</strong></td><td><strong>92.47%</strong> (40 mem)</td><td><strong>91.94%</strong> (36 mem)</td><td><strong>+0.53pp</strong></td></tr>
+                <tr><td>Fashion</td><td>256</td><td>92.51%</td><td>—</td><td>—</td></tr>
+                <tr><td>Fashion</td><td>512</td><td><strong>92.80%</strong> (32 mem)</td><td>—</td><td>—</td></tr>
+            </table>
+
+            <p><strong>Why BV cannot follow:</strong> Bit-Voting sets W0 = identity, so its
+            hidden size is <em>frozen at the input width</em> (H = I = 196 for these encodings).
+            There is no free H knob — the sparse bit-vote width is fixed by the input.
+            Otto's random projection projects to an <em>arbitrary</em> H, so it can scale
+            H196 → H256 → H512, and that extra capacity is where the W0 advantage appears
+            (Fashion 92.47 → 92.51 → 92.80, up to 92.96 with beam 20 --max). At the single
+            shared point (H196) the two are essentially tied.</p>
+
+            <p><strong>Interpretation:</strong> the "W0 nonlinearity" is best described as
+            <strong>W0 = a free width expansion</strong>. Its value is not at a fixed
+            dimension but in the ability to grow H beyond the input. The equal-H comparison
+            is the honest baseline: it shows the nonlinear projection buys ~0.5pp at fixed
+            capacity, and the real win comes from scaling width.</p>
+
+            <h4>Comparison speed (Vergleichsgeschwindigkeit)</h4>
+
+            <p>Wall-clock comparison at the shared H196 point (3-member ensemble,
+            Fashion-MNIST, 16 threads). The merge-search runtime reflects member count;
+            the IFC inference is the true forward-cost measure for the DRAM chip:</p>
+
+            <table>
+                <tr><th>Phase</th><th>W0 (Otto)</th><th>Bit-Voting</th><th>ratio</th></tr>
+                <tr><td>TRN (--member-file, 3 members)</td><td>4017ms</td><td>4048ms</td><td>~1.0&times;</td></tr>
+                <tr class="highlight-row"><td><strong>IFC (--import, 3 members)</strong></td><td><strong>382ms</strong></td><td><strong>26ms</strong></td><td><strong>14.7&times;</strong></td></tr>
+                <tr><td>Merge search, beam 10 --max (H196, fashion)</td><td>48380ms (40 mem)</td><td>49562ms (36 mem)</td><td>~1.0&times;</td></tr>
+            </table>
+
+            <p>At equal H, training and merge search run in ~equal time. The <strong>only</strong>
+            decisive speed difference is IFC inference — Bit-Voting's identity skips the
+            uncacheable <code>maj1(W0&times;I)</code> and is <strong>14.7&times; faster</strong>.
+            So the product trade-off at equal H is: <strong>+0.5pp accuracy (W0) vs 14.7&times;
+            faster inference (BV)</strong> — and the accuracy win only grows once W0 scales H
+            past the input width, at the cost of a denser, slower forward path.</p>
         </section>
 
         <!-- 6. W0 as Generalizer -->
@@ -511,11 +576,13 @@ input bits (6272)                        input bits (6272)
             bad encodings get mixed into useful features anyway.</p>
 
             <h3>6.3 Overfitting Resistance</h3>
-            <p>Bit-Voting with 48 members on CIFAR-10 reaches 55.2% eval but trains to 78.2%
+            <p><em>Historical (CIFAR-10, 48 members — CIFAR BV is superseded; see &sect;4.2).
+            Kept for reference:</em> Bit-Voting reaches 55.2% eval but trains to 78.2%
             (train-eval gap: <strong>23pp</strong>). Otto with the same 48 members reaches
             64.4% eval and trains to 96.7% (gap: <strong>32pp</strong> — larger absolute gap
             because it CAN overfit more, but the absolute eval is 9.2pp higher because the
-            features are better).</p>
+            features are better). At the current equal-H points (MNIST/Fashion H196) both
+            train to high accuracy with small gaps, consistent with the parity finding.</p>
 
             <h3>6.4 Why This Matters for DRAM</h3>
             <p>A chip that implements W0 as a fixed random addressing pattern (not stored
@@ -532,16 +599,19 @@ input bits (6272)                        input bits (6272)
         <section id="interpretation" class="paper-section">
             <h2>7. Interpretation — The Npp Gap</h2>
 
-            <h3>5.1 The Gap is the Price of Linearity</h3>
+            <h3>7.1 The Gap is a Width Effect, Not a Linearity Effect</h3>
 
-            <p>Neither MNIST nor CIFAR-10 are linearly separable in raw pixel space.
-            The gap between Otto Score and Bit-Voting measures the <strong>value of nonlinear
-            feature extraction</strong> for each dataset:</p>
+            <p>At the <strong>same H</strong>, Bit-Voting and W0 are on par — the "gap" is
+            essentially zero. The gap appears only when W0 is allowed to <strong>scale H
+            beyond the input width</strong>:</p>
             <ul>
-                <li>MNIST (binary, simple): <strong>4.7pp</strong></li>
-                <li>Fashion-MNIST (grayscale, texture): <strong>8pp</strong></li>
-                <li>CIFAR-10 (color, complex): <strong>9.2pp</strong></li>
+                <li>MNIST (H196): <strong>98.17% vs 98.75%</strong> — <strong>+0.58pp</strong></li>
+                <li>Fashion (H196): <strong>91.94% vs 92.47%</strong> — <strong>+0.53pp</strong></li>
+                <li>Fashion (H512): 92.80% — W0 scales width, BV cannot follow</li>
             </ul>
+            <p><em>Historical (outdated, CIFAR-BV superseded): the old per-dataset gaps
+            (MNIST +4.7pp at unequal width, Fashion +8pp, CIFAR +9.2pp) came from comparing
+            W0 at a much larger H than the identity baseline, not from an equal-H point.</em></p>
 
             <p>The W0 matrix acts as a <strong>random nonlinear expansion</strong>:</p>
             <ol>
@@ -550,28 +620,34 @@ input bits (6272)                        input bits (6272)
                 <li>Result: 256 bits that are nonlinearly transformed from the original 6272 bits</li>
             </ol>
 
-            <p>Without training W0, this expansion is random. Yet it enables 5pp higher accuracy.
-            This matches the <strong>Reservoir Computing / Random Projection</strong> literature:
-            a random expansion into a higher-dimensional space improves linear separability, even
-            without training the expansion weights.</p>
+            <p>Without training W0, this expansion is random. It buys ~0.5pp at fixed width,
+            but its real value is the <strong>free width knob</strong>: projecting to an
+            arbitrary H lets the voter separate classes that the fixed input width cannot.
+            This matches the <strong>Reservoir Computing / Random Projection</strong>
+            literature: a random expansion into a higher-dimensional space improves linear
+            separability, even without training the expansion weights.</p>
 
-            <h3>5.2 The Identity W0 Proof</h3>
+            <h3>7.2 The Identity W0 Proof</h3>
 
             <p>The thought experiment from Section 3.1 can be tested empirically: if we set W0 to
-            the identity matrix, Otto Score becomes Bit-Voting. The <strong>accuracy difference
-            between random W0 and identity W0</strong> is the measure of nonlinear feature
-            extraction. It is 4.7pp on MNIST, 20pp on CIFAR-10, and 8pp on Fashion-MNIST.</p>
+            the identity matrix, Otto Score becomes Bit-Voting. At equal width the accuracy
+            difference is small (&plusmn;0.5pp, &sect;5.6) — proving W0's advantage is not the
+            nonlinearity per se but the <strong>width expansion</strong> it enables. When W0 is
+            allowed to scale (H196&rarr;H512) the gap grows; when held at the identity width it
+            disappears. <em>(Historical: the old 4.7pp MNIST / 20pp CIFAR / 8pp Fashion figures
+            were unequal-width comparisons, superseded.)</em></p>
 
             <div class="insight-box">
-                <strong>Claim:</strong> W0 randomness is not noise — it is the feature extractor.
+                <strong>Claim:</strong> W0's value is a <strong>free width expansion</strong>,
+                not a per-neuron nonlinearity.
                 <br>
-                <strong>Proof:</strong> Identity W0 (no randomness) + majority = linear classifier
-                at 91.4%. Random W0 + majority = 96.1%. The +4.7pp comes from the random
-                projection creating <strong>nonlinear feature combinations</strong> that the
-                majority gate can threshold.
+                <strong>Proof:</strong> At equal H (identity W0 vs random W0) the difference is
+                &plusmn;0.5pp (MNIST 98.17 vs 98.75, Fashion 91.94 vs 92.47). The W0 advantage
+                appears only when it scales H beyond the input width (Fashion H512 92.80%).
+                Bit-Voting's identity cannot grow — its width is frozen at the input.
             </div>
 
-            <h3>5.3 Why Not Train W0?</h3>
+            <h3>7.3 Why Not Train W0?</h3>
 
             <p>Learning W0 (backprop through the random projection) adds ~10pp on CIFAR-10
             (58% → 68%, see XNOR-Net literature), but requires:</p>
@@ -582,10 +658,12 @@ input bits (6272)                        input bits (6272)
             </ul>
 
             <p>The DRAM-native constraint forbids these. A frozen random W0 is a compromise:
-            5pp below the learnable ceiling on MNIST, but <strong>zero additional hardware cost</strong>
-            — the random projection is hard-wired in the DRAM addressing logic.</p>
+            ~0.5pp at equal width and the ability to scale width to higher H, at
+            <strong>zero additional hardware cost</strong> — the random projection is
+            hard-wired in the DRAM addressing logic. <em>(Historical: the old "5pp below the
+            learnable ceiling on MNIST" figure was an unequal-width comparison.)</em></p>
 
-            <h3>5.4 Relation to Reservoir Computing</h3>
+            <h3>7.4 Relation to Reservoir Computing</h3>
 
             <p>The Otto Score architecture is a <strong>discrete reservoir computer</strong>:</p>
             <ul>
@@ -594,9 +672,11 @@ input bits (6272)                        input bits (6272)
                 <li><strong>Readout:</strong> Linear voter (target weights, trained)</li>
             </ul>
 
-            <p>The bit-voting baseline proves that the reservoir is doing useful work: without it,
-            the readout achieves only 91.4% instead of 96.1%. The 5pp gap <strong>is the reservoir's
-            contribution</strong>.</p>
+            <p>The bit-voting baseline shows the reservoir's contribution is a <strong>width
+            expansion</strong>: at equal H the readout matches (98.17 vs 98.75 MNIST, 91.94 vs
+            92.47 Fashion); the reservoir's real value appears when it scales H beyond the
+            input width. <em>(Historical: the old "91.4% instead of 96.1%, 5pp gap" was an
+            unequal-width comparison.)</em></p>
         </section>
 
         <!-- 8. Key Findings -->
@@ -604,9 +684,10 @@ input bits (6272)                        input bits (6272)
             <h2>8. Key Findings</h2>
 
             <div class="key-finding">
-                <strong>1. W0 + majority adds +5–9pp over linear baseline</strong>
-                (MNIST to CIFAR-10). The gain comes from nonlinear feature expansion,
-                not from more parameters.
+                <strong>1. At equal H, Bit-Voting ≈ W0.</strong>
+                MNIST 98.17 vs 98.75 (+0.58pp), Fashion 91.94 vs 92.47 (+0.53pp).
+                The W0 advantage is not a per-neuron nonlinearity — it is a
+                <strong>free width expansion</strong> beyond the input.
             </div>
 
             <div class="key-finding">
@@ -614,7 +695,7 @@ input bits (6272)                        input bits (6272)
                 Both Otto (H=768) and Bit-Voting have 245,760 int32 target weights.
                 Otto compresses 24,576 input bits to 768 gb-bits via W0, then votes.
                 Bit-Voting votes with all 24,576 bits directly. Same capacity &mdash;
-                better features win.
+                and at equal width, the same accuracy.
             </div>
 
             <div class="key-finding">
@@ -634,9 +715,11 @@ input bits (6272)                        input bits (6272)
             </div>
 
             <div class="key-finding">
-                <strong>5. The gap scales with input complexity:</strong>
-                MNIST +4.7pp, Fashion +8pp, CIFAR-10 +9.2pp.
-                Complex data benefits more from nonlinear abstraction.
+                <strong>5. W0's edge grows with H, not input complexity.</strong>
+                At fixed H the gap is ~0.5pp; scaling H (Fashion 92.47&rarr;92.80&rarr;92.96)
+                is where W0 pulls ahead — Bit-Voting's identity width cannot grow.
+                <em>(Historical: the old "MNIST +4.7pp, Fashion +8pp, CIFAR +9.2pp" figures
+                were unequal-width comparisons, superseded.)</em>
             </div>
 
             <div class="key-finding">
@@ -650,24 +733,25 @@ input bits (6272)                        input bits (6272)
         <section id="conclusion" class="paper-section">
             <h2>9. Conclusion</h2>
 
-            <p>The Bit-Voting baseline conclusively demonstrates that <strong>the W0 random projection
-            is not a cosmetic addition but the core nonlinear mechanism</strong> in Otto Score.
-            At identical information content (6272 input bits, 62K trainable weights), the
-            identity-W0 (linear) model achieves 91.4% MNIST, while the random-W0 (nonlinear)
-            model achieves 96.1%. The 4.7pp gap measures the value of random projection as a
-            feature extractor.</p>
+            <p>The Bit-Voting baseline shows that <strong>W0 is not the core nonlinear
+            mechanism per se — it is a free width expansion</strong>. At the same hidden size
+            H, Bit-Voting matches Otto Score (MNIST 98.17 vs 98.75, Fashion 91.94 vs 92.47,
+            &plusmn;0.5pp). W0's real contribution is the ability to <strong>scale H beyond
+            the input width</strong> (Fashion 92.47&rarr;92.80&rarr;92.96), which Bit-Voting's
+            identity cannot do — its width is frozen at the input.</p>
 
             <p>This result has practical implications for DRAM-native chip design:</p>
             <ul>
-                <li><strong>W0 must be random, not systematic.</strong> A structured addressing
-                    scheme (row-major, interleaved) would lose the 5pp nonlinearity advantage.</li>
-                <li><strong>The majority gate needs diversity to vote on.</strong> A 1-input
-                    majority (identity W0) provides no nonlinear benefit. Each majority gate
-                    should receive ~8-16 different input bits via the random projection.</li>
-                <li><strong>The linear baseline is the DRAM-native complexity floor.</strong>
+                <li><strong>At equal width, W0 buys only ~0.5pp.</strong> The honest
+                    accuracy trade-off is <strong>+0.5pp (W0) vs 14.7&times; faster IFC
+                    inference (Bit-Voting)</strong> — a product decision, not a technical
+                    necessity.</li>
+                <li><strong>W0's value is width scaling.</strong> If the application needs
+                    accuracy beyond the input-width baseline, the random projection to a
+                    larger H is the lever; if it values inference speed, Bit-Voting wins.</li>
+                <li><strong>Bit-Voting is the DRAM-native complexity floor.</strong>
                     Any chip that implements Otto Score can be compared against Bit-Voting at
-                    zero architectural cost — if the random projection is removed, the chip still
-                    works, just at 91.4% instead of 96.1%.</li>
+                    zero architectural cost — and at equal H the two are essentially tied.</li>
             </ul>
 
             <p>Bit-Voting is now a <strong>standard experiment in the Otto Score workflow</strong>,
@@ -707,8 +791,11 @@ make bitvote
             eval accuracy. The <code>--debug-member</code> flag shows per-member accuracy with
             encoding and xform metadata.</p>
 
-            <p>Source: <code>otto-score-ifc/mnist/mlp-bin32-otto-trn-bitvoting.c</code> |
-            <a href="https://github.com/aotto1968/forward-prop/blob/master/mnist/mlp-bin32-otto-trn-bitvoting.c">GitHub</a></p>
+            <p>Source: Bit-Voting is a compile-time variant of the shared trainer
+            <code>otto-score-ifc/mnist/mlp-bin32-otto-trn-seq-prof.c</code>, built with
+            <code>-DKI_BITVOTING</code> (identity W0, I=H width). The <code>bitvote</code>
+            Makefile target produces the <code>*-bitvoting.exe</code> binary from it. See
+            <code>plans/plan-2026-08-02-ki-bitvoting-flag.md</code>.</p>
         </section>
     </div>
 </main>

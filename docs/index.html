@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Otto Score Documentation — DRAM-Native Bit-Logic Classifier</title>
+    <meta name="description" content="Complete technical documentation for the Otto Score DRAM-native bit-logic classifier: workflow, architecture, scoring, encoding, bit-mass theory and baselines.">
+    <meta name="author" content="Andreas Otto">
+    <meta name="robots" content="index, follow">
+    <meta name="googlebot" content="index, follow">
+    <link rel="icon" type="image/svg+xml" href="../assets/favicon.svg">
+    <link rel="stylesheet" href="../style.css">
+    <link rel="canonical" href="https://forward-prop.nhi1.de/docs/">
+    <meta property="og:title" content="Otto Score Documentation — DRAM-Native Bit-Logic Classifier">
+    <meta property="og:description" content="Complete technical documentation for the Otto Score DRAM-native bit-logic classifier: workflow, architecture, scoring, encoding, bit-mass theory and baselines.">
+    <meta property="og:type" content="website">
+    <meta property="og:url" content="https://forward-prop.nhi1.de/docs/">
+    <meta property="og:image" content="https://forward-prop.nhi1.de/assets/og-image.png">
+    <meta property="og:site_name" content="Forward-Prop Research">
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="Otto Score Documentation — DRAM-Native Bit-Logic Classifier">
+    <meta name="twitter:description" content="Complete technical documentation for the Otto Score DRAM-native bit-logic classifier: workflow, architecture, scoring, encoding and baselines.">
+    <meta name="twitter:image" content="https://forward-prop.nhi1.de/assets/og-image.png">
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "CollectionPage",
+      "name": "Otto Score Documentation",
+      "description": "Complete technical documentation for the Otto Score DRAM-native bit-logic classifier: workflow, architecture, scoring, encoding, bit-mass theory and baselines.",
+      "url": "https://forward-prop.nhi1.de/docs/",
+      "author": { "@type": "Person", "name": "Andreas Otto" }
+    }
+    </script>
+</head>
+<body>
+    <header>
+        <div class="header-inner">
+            <div class="header-brand">
+                <span class="header-logo">Otto Score</span>
+                <span class="header-subtitle">Documentation</span>
+            </div>
+            <nav>
+                <ul>
+                    <li><a href="../">Home</a></li>
+                    <li><a href="../papers/mnist-number.html">MNIST</a></li>
+                    <li><a href="../papers/cifar-10.html">CIFAR-10</a></li>
+                    <li><a href="../papers/ensemble.html">Ensemble</a></li>
+                    <li><a href="../papers/status-2026-08.html">Status Aug</a></li>
+                </ul>
+            </nav>
+        </div>
+    </header>
+
+    <main class="container">
+        <h1>Otto Score Documentation</h1>
+        <p class="section-intro">Complete technical documentation for the Otto Score DRAM-Native Classifier. Source: <a href="https://github.com/aotto1968/forward-prop/tree/master/docs" target="_blank">GitHub/docs</a></p>
+
+        <section>
+            <h2>Core Documents</h2>
+            <table style="width:100%; border-collapse:collapse; margin-top:1rem;">
+                <thead>
+                    <tr style="background:var(--navy); color:white;">
+                        <th style="padding:0.75rem; text-align:left; border:1px solid var(--navy);">Document</th>
+                        <th style="padding:0.75rem; text-align:left; border:1px solid var(--navy);">Description</th>
+                        <th style="padding:0.75rem; text-align:left; border:1px solid var(--navy);">Format</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td style="padding:0.75rem; border:1px solid #ddd;"><a href="workflow.md" target="_blank">workflow.md</a> 🆕</td>
+                        <td style="padding:0.75rem; border:1px solid #ddd;">Complete 4-phase result generation & validation (sweep → merge → export → import)</td>
+                        <td style="padding:0.75rem; border:1px solid #ddd;">Markdown</td>
+                    </tr>
+                    <tr>
+                        <td style="padding:0.75rem; border:1px solid #ddd;"><a href="architecture.md" target="_blank">architecture.md</a></td>
+                        <td style="padding:0.75rem; border:1px solid #ddd;">Internal pipeline, caches, parallelism model, .ens contract</td>
+                        <td style="padding:0.75rem; border:1px solid #ddd;">Markdown</td>
+                    </tr>
+                    <tr>
+                        <td style="padding:0.75rem; border:1px solid #ddd;"><a href="scores.md" target="_blank">scores.md</a></td>
+                        <td style="padding:0.75rem; border:1px solid #ddd;">Score math: target counting, logit conversion, class offset, voting</td>
+                        <td style="padding:0.75rem; border:1px solid #ddd;">Markdown</td>
+                    </tr>
+                    <tr>
+                        <td style="padding:0.75rem; border:1px solid #ddd;"><a href="ensemble.md" target="_blank">ensemble.md</a></td>
+                        <td style="padding:0.75rem; border:1px solid #ddd;">Merge-ensemble search algorithms (beam, greedy, tries, optimal)</td>
+                        <td style="padding:0.75rem; border:1px solid #ddd;">Markdown</td>
+                    </tr>
+                    <tr>
+                        <td style="padding:0.75rem; border:1px solid #ddd;"><a href="encoding.md" target="_blank">encoding.md</a></td>
+                        <td style="padding:0.75rem; border:1px solid #ddd;">Input encodings (thermometer, raw, sizeN)</td>
+                        <td style="padding:0.75rem; border:1px solid #ddd;">Markdown</td>
+                    </tr>
+                    <tr>
+                        <td style="padding:0.75rem; border:1px solid #ddd;"><a href="bitmass.md" target="_blank">bitmass.md</a></td>
+                        <td style="padding:0.75rem; border:1px solid #ddd;">Container principle: every neuron = 32-bit container</td>
+                        <td style="padding:0.75rem; border:1px solid #ddd;">Markdown</td>
+                    </tr>
+                </tbody>
+            </table>
+        </section>
+
+        <section style="margin-top:2rem;">
+            <h2>Reference Documents</h2>
+            <table style="width:100%; border-collapse:collapse; margin-top:1rem;">
+                <thead>
+                    <tr style="background:var(--navy); color:white;">
+                        <th style="padding:0.75rem; text-align:left; border:1px solid var(--navy);">Document</th>
+                        <th style="padding:0.75rem; text-align:left; border:1px solid var(--navy);">Description</th>
+                        <th style="padding:0.75rem; text-align:left; border:1px solid var(--navy);">Format</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td style="padding:0.75rem; border:1px solid #ddd;"><a href="majority-vote.md" target="_blank">majority-vote.md</a></td>
+                        <td style="padding:0.75rem; border:1px solid #ddd;">Majority Vote (MAJ1/MAJ3) — H0 Computation in Bin32</td>
+                        <td style="padding:0.75rem; border:1px solid #ddd;">Markdown</td>
+                    </tr>
+                    <tr>
+                        <td style="padding:0.75rem; border:1px solid #ddd;"><a href="ottoscore.md" target="_blank">otto-score.md</a></td>
+                        <td style="padding:0.75rem; border:1px solid #ddd;">Otto Score — DRAM-Native Bayes Classification</td>
+                        <td style="padding:0.75rem; border:1px solid #ddd;">Markdown</td>
+                    </tr>
+                    <tr>
+                        <td style="padding:0.75rem; border:1px solid #ddd;"><a href="bitmass.md" target="_blank">bitmass.md</a></td>
+                        <td style="padding:0.75rem; border:1px solid #ddd;">Bit-Mass Theory — The Container Principle</td>
+                        <td style="padding:0.75rem; border:1px solid #ddd;">Markdown</td>
+                    </tr>
+                    <tr>
+                        <td style="padding:0.75rem; border:1px solid #ddd;"><a href="encoding.md" target="_blank">encoding.md</a></td>
+                        <td style="padding:0.75rem; border:1px solid #ddd;">Input Encoding — The Number World vs Binary World</td>
+                        <td style="padding:0.75rem; border:1px solid #ddd;">Markdown</td>
+                    </tr>
+                    <tr>
+                        <td style="padding:0.75rem; border:1px solid #ddd;"><a href="bitvoting-baseline.md" target="_blank">bitvoting-baseline.md</a></td>
+                        <td style="padding:0.75rem; border:1px solid #ddd;">Bit-Voting Baseline — Linear Perceptron on Bits</td>
+                        <td style="padding:0.75rem; border:1px solid #ddd;">Markdown</td>
+                    </tr>
+                    <tr>
+                        <td style="padding:0.75rem; border:1px solid #ddd;"><a href="hebbian.md" target="_blank">hebbian.md</a></td>
+                        <td style="padding:0.75rem; border:1px solid #ddd;">Hebbian Baseline — Counter-based Co-occurrence</td>
+                        <td style="padding:0.75rem; border:1px solid #ddd;">Markdown</td>
+                    </tr>
+                    <tr>
+                        <td style="padding:0.75rem; border:1px solid #ddd;"><a href="adamw.md" target="_blank">adamw.md</a></td>
+                        <td style="padding:0.75rem; border:1px solid #ddd;">Float32 AdamW Baseline</td>
+                        <td style="padding:0.75rem; border:1px solid #ddd;">Markdown</td>
+                    </tr>
+                    <tr>
+                        <td style="padding:0.75rem; border:1px solid #ddd;"><a href="bitvoting-baseline.md" target="_blank">bitvoting-baseline.md</a></td>
+                        <td style="padding:0.75rem; border:1px solid #ddd;">Bit-Voting Baseline — Linear Perceptron on Bits</td>
+                        <td style="padding:0.75rem; border:1px solid #ddd;">Markdown</td>
+                    </tr>
+                    <tr>
+                        <td style="padding:0.75rem; border:1px solid #ddd;"><a href="popcount.md" target="_blank">popcount.md</a></td>
+                        <td style="padding:0.75rem; border:1px solid #ddd;">Popcount Analysis</td>
+                        <td style="padding:0.75rem; border:1px solid #ddd;">Markdown</td>
+                    </tr>
+                    <tr>
+                        <td style="padding:0.75rem; border:1px solid #ddd;"><a href="random-projection-coverage.md" target="_blank">random-projection-coverage.md</a></td>
+                        <td style="padding:0.75rem; border:1px solid #ddd;">Random Projection Coverage Analysis</td>
+                        <td style="padding:0.75rem; border:1px solid #ddd;">Markdown</td>
+                    </tr>
+                    <tr>
+                        <td style="padding:0.75rem; border:1px solid #ddd;"><a href="majority-vote.md" target="_blank">majority-vote.md</a></td>
+                        <td style="padding:0.75rem; border:1px solid #ddd;">Majority Vote (MAJ1/MAJ3) — H0 Computation in Bin32</td>
+                        <td style="padding:0.75rem; border:1px solid #ddd;">Markdown</td>
+                    </tr>
+                </tbody>
+            </table>
+        </section>
+
+        <section style="margin-top:2rem;">
+            <h2>Status Reports & Papers</h2>
+            <table style="width:100%; border-collapse:collapse; margin-top:1rem;">
+                <thead>
+                    <tr style="background:var(--navy); color:white;">
+                        <th style="padding:0.75rem; text-align:left; border:1px solid var(--navy);">Document</th>
+                        <th style="padding:0.75rem; text-align:left; border:1px solid var(--navy);">Description</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td style="padding:0.75rem; border:1px solid #ddd;"><a href="status-2026-08.html" target="_blank">status-2026-08.html</a> 🆕</td>
+                        <td style="padding:0.75rem; border:1px solid #ddd;">Status Report August 2026 — Float32 drift fixed, ensemble beam-search, 69.99% CIFAR</td>
+                    </tr>
+                    <tr>
+                        <td style="padding:0.75rem; border:1px solid #ddd;"><a href="status-2026-07.html" target="_blank">status-2026-07.html</a></td>
+                        <td style="padding:0.75rem; border:1px solid #ddd;">Status Report July 2026 — --export-gb cache, --maj 1 default, 65% ceiling</td>
+                    </tr>
+                    <tr>
+                        <td style="padding:0.75rem; border:1px solid #ddd;"><a href="paper-2026-06-29-otto-score-summary.md" target="_blank">paper-2026-06-29-otto-score-summary.md</a></td>
+                        <td style="padding:0.75rem; border:1px solid #ddd;">Otto Score Summary Paper (June 2026)</td>
+                    </tr>
+                    <tr>
+                        <td style="padding:0.75rem; border:1px solid #ddd;"><a href="cifar-10.html" target="_blank">cifar-10.html</a></td>
+                        <td style="padding:0.75rem; border:1px solid #ddd;">CIFAR-10 Breakthrough Paper (64.4% ceiling)</td>
+                    </tr>
+                </tbody>
+            </table>
+        </section>
+
+        <section style="margin-top:2rem;">
+            <h2>Source Repository</h2>
+            <p>All documentation source files are in the <a href="https://github.com/aotto1968/forward-prop/tree/master/docs" target="_blank">GitHub docs/ directory</a>. The documentation is written in Markdown and rendered by GitHub.</p>
+        </section>
+    </main>
+
+    <footer>
+        <div class="container" style="text-align:center; padding:2rem 0; font-size:0.8rem; color:var(--mid-gray);">
+            <p><a href="https://forward-prop.nhi1.de/">forward-prop.nhi1.de</a> &nbsp;|&nbsp; <a href="https://github.com/aotto1968/forward-prop" target="_blank">GitHub</a></p>
+        </div>
+    </footer>
+</body>
+</html>

@@ -48,8 +48,16 @@
 #include <sys/time.h>
 #include <regex.h>
 #include <omp.h>
+/* USE_CARQUET=1 enables --sample-index (Parquet export via carquet).
+ * Default is 0 — no carquet dependency, no --sample-index option. */
+#ifndef USE_CARQUET
+#define USE_CARQUET 0
+#endif
+
+#if USE_CARQUET
 #include <carquet/carquet.h> /* --sample-index: Parquet writer (2026-08-15,
                                replaces SQLite — see DESIGN comment below) */
+#endif
 /* Define ki_Args aa in this file (make KI_ARGS_EXTERN empty) */
 #define KI_ARGS_EXTERN
 #include "ki-config.h"
@@ -99,6 +107,7 @@ static uint64_t score_crc64(const SCORE_TYPE *scores, size_t n) {
     return h;
 }
 
+#if USE_CARQUET
 /* ── FNV-1a 64-bit — stable member ID for --sample-index (2026-08-14) ──
  * The member_id in the sample-index Parquet files is FNV-1a over the .ens
  * basename (the spec, e.g. "colswap-1-4@rot112:lbp:tri8"). Deterministic
@@ -114,6 +123,7 @@ static uint64_t member_id_fnv1a(const char *name) {
     }
     return h;
 }
+#endif
 
 #ifndef KI_NCLASSES
 #define KI_NCLASSES 10
@@ -976,11 +986,15 @@ static int    g_debug_confusion = 0;   /* --debug-confusion: print the final ens
                                           greedy / multi-try search (2026-08-14) */
 static int    g_seed_sort = 0;         /* --seed-sort: print single-member eval table */
 static int    g_seed_top = 0;          /* --seed-sort N: show only top N rows (0 = all) */
-static char   g_sample_index[1024] = ""; /* --sample-index FILE: write member↔sample
-                                           recognition pairs as Parquet
-                                           (2026-08-15, 3rd gen) — full pair table,
-                                           ALL assignments (argmax pred) + margin */
-static int    g_stdout = 0;            /* --stdout: pure filter-export — print the filtered
+#if USE_CARQUET
+static char   g_sample_index[1024] = ""; /* --sample-index FILE: write member+sample
+                                            recognition pairs as Parquet
+                                            (2026-08-15, 3rd gen) - full pair table,
+                                            ALL assignments (argmax pred) + margin */
+#else
+#define g_sample_index ""
+#endif
+static int    g_stdout = 0;            /* --stdout: pure filter-export - print the filtered
                                           XF:CHAN:ENC specs to stdout, suppress normal output */
 static int    g_stdout_field = 0;      /* --stdout column extraction: 0=full spec,
                                           1=xform, 2=channel, 3=encoding (--xform/--channel/--encoding) */
@@ -1010,7 +1024,9 @@ static const struct _comp_entry merge_comp_table[] = {
     {"--target-binary",    "none",  NULL},
     {"--filter-sample",    "token", "0 1 2 3 4 5 6 7 8 9"},
     {"--seed-sort",        "num",   NULL},
+#if USE_CARQUET
     {"--sample-index",     "file",  NULL},
+#endif
     {"--greedy",           "none",  NULL},
     {"--greedy-clarity",   "none",  NULL},
     {"--beam",             "num",   NULL},
@@ -2436,6 +2452,7 @@ static void backup_member_to_dir(const char *dir, const char *path) {
  * NOTE: carquet API uses CARQUET_WARN_UNUSED_RESULT — every call's
  * return value is checked (build has -Werror). */
 
+#if USE_CARQUET
 /* qsort helper for build_sample_index: sort (member_id, block-index) pairs
  * by member_id (stable tiebreak on block index). This gives the blocks in
  * member_id order, so the pairs stream out in (member_id, sample_id) order
@@ -2725,6 +2742,7 @@ static int build_sample_index(const char *path) {
     free(member_ids);
     return (fail || rc) ? 1 : 0;
 }
+#endif
 
 /* ═══════════════════════════════════════════════════════════════════
  * print_ensemble_confusion — --debug-confusion: confusion matrix of the
@@ -5296,9 +5314,11 @@ int main(int argc, char **argv) {
             }
         } else if (strcmp(argv[i], "--stdout") == 0) {
             g_stdout = 1;
+#if USE_CARQUET
         } else if (strcmp(argv[i], "--sample-index") == 0 && i + 1 < argc) {
             strncpy(g_sample_index, argv[++i], sizeof(g_sample_index) - 1);
             g_sample_index[sizeof(g_sample_index) - 1] = '\0';
+#endif
         } else if (strcmp(argv[i], "--member-seed") == 0 && i + 1 < argc) {
             strncpy(g_member_seed_spec, argv[++i], sizeof(g_member_seed_spec) - 1);
             g_member_seed_spec[sizeof(g_member_seed_spec) - 1] = '\0';
@@ -5747,10 +5767,12 @@ int main(int argc, char **argv) {
      * beendet sich danach — kein Beam/Greedy. Nutzt die geladenen Scores
      * (post-filter) und g_labels. Reihenfolge ist egal (Member-IDs sind
      * Namens-Hashes; der Parquet-Writer sortiert via block_order). */
+#if USE_CARQUET
     if (g_sample_index[0]) {
         int rc = build_sample_index(g_sample_index);
         return rc;
     }
+#endif
 
     /* ── Debug: block CRC table after dedup+sort ── */
     if (g_debug) {

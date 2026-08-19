@@ -29,12 +29,19 @@ GLIB_CFLAGS = $(shell pkg-config --cflags glib-2.0)
 GLIB_LIBS   = $(shell pkg-config --libs glib-2.0)
 
 # carquet (Parquet-Writer für --sample-index) — merge-ensemble.c needs it.
-# The ORIGINAL lives here (otto-score-ifc/3rdparty) so this tree is autonomous;
-# ../3rdparty in the forward-prop dev dirs is a symlink to it.
-CARQUET_ROOT   = $(abspath ../3rdparty/carquet-install)
-CARQUET_CFLAGS = -I$(CARQUET_ROOT)/include
-CARQUET_LIBS   = $(CARQUET_ROOT)/lib64/libcarquet.a \
-                 $(CARQUET_ROOT)/lib64/liblz4.a -lzstd -lz -lm -lpthread -fopenmp
+# Default: USE_CARQUET=0 (no carquet dependency, no --sample-index option).
+# Override with: make USE_CARQUET=1
+USE_CARQUET ?= 0
+
+ifeq ($(USE_CARQUET),1)
+  CARQUET_ROOT   = $(abspath ../3rdparty/carquet-install)
+  CARQUET_CFLAGS = -I$(CARQUET_ROOT)/include -DUSE_CARQUET=1
+  CARQUET_LIBS   = $(CARQUET_ROOT)/lib64/libcarquet.a \
+                   $(CARQUET_ROOT)/lib64/liblz4.a -lzstd -lz -lm -lpthread -fopenmp
+else
+  CARQUET_CFLAGS =
+  CARQUET_LIBS   =
+endif
 
 MODEL_DIR = ../models
 

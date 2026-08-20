@@ -922,6 +922,13 @@ static int    g_meta_majt = -999;   /* -999 = field absent */
 static char   g_member_out[1024] = "";  /* --member-out PATH: write optimal subset as member file */
 static int    g_member_out_default = 0; /* --member-out-default: derive member-{DIR}.out
                                            from the corpus dir (2026-08-16) */
+/* --member-backup ALWAYS-ON (2026-08-20): write a timestamped safety copy of
+ * the optimal member subset into SCORES/.member/<timestamp>.member after EVERY
+ * successful run (beam/greedy/eval), even when no --member-out is given. The
+ * header (incl. the full command line) is identical to --member-out /
+ * --member-out-default, so all three outputs share one format. */
+static int    g_cmdline_set = 0;
+static char   g_cmdline[2048] = "";     /* reconstructed argv for the # command: header */
 static char   g_xform_spec[1024] = "";  /* --xform SPEC: expand xform list (e.g. "sweep@spiral") */
 static char   g_member_seed_spec[256] = ""; /* --member-seed SPEC: pre-seed beam with this member spec */
 static char   g_start_member_file[1024] = ""; /* --member-start FILE: start the beam from a
@@ -1734,10 +1741,13 @@ static int load_directory(const char *dir) {
 }
 
 
-/* Forward decl — export_member_file is defined with the beam writers below. */
+/* Forward decl — export_member_file is defined with the beam writers below.
+ * log_member (2026-08-20): 1 = print the "Member-file:" line (explicit
+ * --member-out / --member-out-default paths), 0 = silent (the always-on
+ * SCORES/.member/ safety copy — only backup_set_to_dir prints "[BACKUP]"). */
 static void export_member_file(const char *path, const uint8_t *set,
-                               int n_members, float eval, int beam_width);
-static void backup_member_to_dir(const char *dir, const char *path);
+                               int n_members, float eval, int beam_width,
+                               int log_member);
 /* Forward decl — defined with the --debug-member block below (greedy calls
  * it before the definition site). 2026-08-14. */
 static void print_ensemble_confusion(const uint8_t *set, int n_blk);
@@ -1860,9 +1870,19 @@ static int merge_and_eval(const char *save_path, int max_en)
     if (save_f) { fclose(save_f); printf("  Saved:  %s\n", save_path); }
     /* --member-out in merge mode: write ALL loaded (post-filter) members as
      * XF:CHAN:ENC specs. Combined with --filter eval this halves the training
-     * set — TRN --member-file recomputes only the relevant members. */
-    if (g_member_out[0])
-        export_member_file(g_member_out, NULL, n_blocks, prev_acc, 0);
+     * set — TRN --member-file recomputes only the relevant members.
+     * The ALL-members set is also stored in g_best_used for the always-on
+     * SCORES/.member/ safety copy (2026-08-20). */
+    if (n_blocks > 0) {
+        uint8_t *all_set = (uint8_t *)calloc((size_t)n_blocks, 1);
+        if (!all_set) { fprintf(stderr, "[FATAL] OOM\n"); exit(1); }
+        memset(all_set, 1, (size_t)n_blocks);
+        free(g_best_used); g_best_used = all_set;
+        g_best_n = n_blocks;
+        g_best_eval = prev_acc;
+        if (g_member_out[0])
+            export_member_file(g_member_out, g_best_used, n_blocks, prev_acc, 0, 1);
+    }
 
     int _bc = (int)(best_acc * (float)eval_denom() / 100.0f + 0.5f);
     struct timeval _t1; gettimeofday(&_t1, NULL);
@@ -2269,14 +2289,19 @@ static int merge_and_greedy(const char *save_path, int initial_member, int beam_
      * best_en-1]) — same semantics as beam, which exports g_best_used up to
      * the best eval. Greedy walks the full pool (order_n == n), but the
      * winning subset is the first best_en members; exporting all would make
-     * member.out == the whole pool and break the REPORT==retrain guarantee. */
-    if (g_member_out[0] && best_en > 0) {
+     * member.out == the whole pool and break the REPORT==retrain guarantee.
+     * The winning set is ALSO stored in g_best_used/g_best_n/g_best_eval so
+     * main can always write the SCORES/.member/ safety copy (2026-08-20). */
+    if (best_en > 0) {
         uint8_t *greedy_set = (uint8_t *)calloc((size_t)n, 1);
         if (!greedy_set) { fprintf(stderr, "[FATAL] OOM\n"); exit(1); }
         for (int i = 0; i < best_en; i++)
             greedy_set[order[i]] = 1;
-        export_member_file(g_member_out, greedy_set, best_en, best_acc, 0);
-        free(greedy_set);
+        free(g_best_used); g_best_used = greedy_set;
+        g_best_n = best_en;
+        g_best_eval = best_acc;
+        if (g_member_out[0])
+            export_member_file(g_member_out, g_best_used, best_en, best_acc, 0, 1);
     }
     /* --debug-confusion: confusion matrix of the winning greedy subset
      * (order[0..best_en-1] — same set as member-out/REPORT). */
@@ -2347,46 +2372,13 @@ typedef struct {
 
 /* ── Member file schreiben (best CHAN:ENC + optional Xform-Expansion) ── */
 /* ═══════════════════════════════════════════════════════════════════
- * backup_member_to_dir — timestamped copy of a member file into DIR/.member/
- * ═══════════════════════════════════════════════════════════════════
- * Every --member-out result is additionally stored as DIR/.member/YYYY-MM-DD_HH-MM-SS.member
- * so old runs can be reproduced later (e.g. the 2026-07-28 69.6% run whose
- * member file was not kept). The backup lives in the SCORES directory (.member
- * subdir), independent of where --member-out points. Uses mkdir() + byte copy
- * (no system()), no-op when path is empty or the source cannot be opened. */
-static void backup_member_to_dir(const char *dir, const char *path) {
-    if (!dir || !dir[0] || !path || !path[0]) return;
-    FILE *src = fopen(path, "rb");
-    if (!src) return;
-    /* Ensure DIR/.member exists */
-    char subdir[1024];
-    snprintf(subdir, sizeof(subdir), "%s/.member", dir);
-    if (mkdir(subdir, 0755) != 0 && errno != EEXIST) {
-        fclose(src);
-        fprintf(stderr, "  [WARN] cannot create %s: %s\n", subdir, strerror(errno));
-        return;
-    }
-    /* Timestamp: YYYY-MM-DD_HH-MM-SS */
-    struct timeval tv; gettimeofday(&tv, NULL);
-    struct tm tmv; localtime_r(&tv.tv_sec, &tmv);
-    char stamp[64];
-    snprintf(stamp, sizeof(stamp), "%04d-%02d-%02d_%02d-%02d-%02d",
-             tmv.tm_year + 1900, tmv.tm_mon + 1, tmv.tm_mday,
-             tmv.tm_hour, tmv.tm_min, tmv.tm_sec);
-    char dst[1100];
-    snprintf(dst, sizeof(dst), "%s/%s.member", subdir, stamp);
-    FILE *out = fopen(dst, "wb");
-    if (!out) {
-        fclose(src);
-        fprintf(stderr, "  [WARN] cannot write backup %s: %s\n", dst, strerror(errno));
-        return;
-    }
-    char buf[65536]; size_t r;
-    while ((r = fread(buf, 1, sizeof(buf), src)) > 0)
-        fwrite(buf, 1, r, out);
-    fclose(out); fclose(src);
-    printf("  [BACKUP] %s\n", dst);
-}
+ * SUPERSEDED (2026-08-20): the old backup_member_to_dir() (timestamped copy
+ * of an already-written --member-out file into DIR/.member/) is replaced by
+ * backup_set_to_dir() below, which writes the safety copy DIRECTLY from the
+ * result set on every run — including runs without --member-out. The always-on
+ * .member/ safety copy is now unconditional and shares the exact same format
+ * (incl. the # command: header) as --member-out / --member-out-default.
+ * ═══════════════════════════════════════════════════════════════════ */
 
 /* ═══════════════════════════════════════════════════════════════════
  * build_sample_index — --sample-index FILE (2026-08-14, 3rd gen 08-15)
@@ -2993,7 +2985,8 @@ static void print_debug_members(const uint8_t *set, const int *order,
  *   - otherwise: write XF:CHAN:ENC + W0-marker per selected member
  * One function = one header/set semantics → no more display/export drift. */
 static void export_member_file(const char *path, const uint8_t *set,
-                               int n_members, float eval, int beam_width) {
+                               int n_members, float eval, int beam_width,
+                               int log_member) {
     if (!path[0]) return;
     FILE *mf = fopen(path, "w");
     if (!mf) { fprintf(stderr, "  [ERROR] Cannot write %s\n", path); return; }
@@ -3003,6 +2996,11 @@ static void export_member_file(const char *path, const uint8_t *set,
     } else {
         fprintf(mf, "# Optimal subset: XF:CHAN:ENC (original xforms)\n");
     }
+    /* Command line as memory-jog (2026-08-20) — reproduces the exact flags.
+     * Written to ALL member-file outputs so the format is identical for
+     * --member-out, --member-out-default and the always-on .member copy. */
+    if (g_cmdline[0])
+        fprintf(mf, "# command: %s\n", g_cmdline);
     fprintf(mf, "# Generated by merge-ensemble  H=%d  EP=%d  beam=%d  eval=%.2f%%  members=%d\n",
             g_hidden, g_epochs, beam_width, eval, n_members);
     /* META header — the TRN reads this BEFORE the CLI options and adopts
@@ -3067,7 +3065,8 @@ static void export_member_file(const char *path, const uint8_t *set,
                     ki_color_name(best_col[si]),
                     ki_enc_name_short(best_typ[si]), best_wid[si]);
         }
-        printf("  Member-file: %s  (%d best CHAN:ENC × %d xforms = %d specs)\n",
+        if (log_member)
+            printf("  Member-file: %s  (%d best CHAN:ENC × %d xforms = %d specs)\n",
                path, n_best, n_xf, n_best * n_xf);
     } else {
         /* Original xforms: iterate the set (NULL = all blocks) */
@@ -3082,9 +3081,44 @@ static void export_member_file(const char *path, const uint8_t *set,
             fprintf(mf, "%s:%s  0x%08X\n", _xn, label, blocks[bi].w0_marker);
             _n_members++;
         }
-        printf("  Member-file: %s  (%d members)\n", path, _n_members);
+        if (log_member)
+            printf("  Member-file: %s  (%d members)\n", path, _n_members);
     }
     fclose(mf);
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+ * backup_set_to_dir — ALWAYS-ON safety copy into SCORES/.member/ (2026-08-20)
+ * ═══════════════════════════════════════════════════════════════════
+ * Writes the optimal member subset directly to DIR/.member/<timestamp>.member
+ * after EVERY successful run (beam/greedy/eval) — even when no --member-out
+ * is given. Reuses export_member_file() so the format (incl. the # command:
+ * header) is byte-identical to --member-out / --member-out-default. The file
+ * is short (a few dozen member lines + header), so always writing it costs
+ * negligible disk. The old run that produced a 69.6% attractor was lost
+ * because its member file was never kept — this makes that impossible. */
+static void backup_set_to_dir(const char *dir, const uint8_t *set,
+                              int n_members, float eval, int beam_width) {
+    if (!dir || !dir[0]) return;
+    char subdir[1024];
+    snprintf(subdir, sizeof(subdir), "%s/.member", dir);
+    if (mkdir(subdir, 0755) != 0 && errno != EEXIST) {
+        fprintf(stderr, "  [WARN] cannot create %s: %s\n", subdir, strerror(errno));
+        return;
+    }
+    /* Timestamp: YYYY-MM-DD_HH-MM-SS (matches backup_member_to_dir) */
+    struct timeval tv; gettimeofday(&tv, NULL);
+    struct tm tmv; localtime_r(&tv.tv_sec, &tmv);
+    char stamp[64];
+    snprintf(stamp, sizeof(stamp), "%04d-%02d-%02d_%02d-%02d-%02d",
+             tmv.tm_year + 1900, tmv.tm_mon + 1, tmv.tm_mday,
+             tmv.tm_hour, tmv.tm_min, tmv.tm_sec);
+    char dst[1100];
+    snprintf(dst, sizeof(dst), "%s/%s.member", subdir, stamp);
+    /* log_member=0: suppress the "Member-file:" line — the safety copy is not
+     * an explicit request, only the [BACKUP] line below is printed (2026-08-20). */
+    export_member_file(dst, set, n_members, eval, beam_width, 0);
+    printf("  [BACKUP] %s\n", dst);
 }
 
 /* Global beam pointer for qsort comparator */
@@ -5522,6 +5556,21 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+    /* Reconstruct the full command line for the # command: header (2026-08-20).
+     * Stored once here — all member-file outputs (--member-out, --member-out-
+     * default, and the always-on .member safety copy) embed it as a comment so
+     * the exact flags that produced the optimum are reproducible later. */
+    if (!g_cmdline_set) {
+        int _off = 0;
+        for (int _i = 0; _i < argc && _off < (int)sizeof(g_cmdline) - 2; _i++) {
+            int _n = snprintf(g_cmdline + _off, sizeof(g_cmdline) - (size_t)_off,
+                              "%s%s", _i ? " " : "", argv[_i]);
+            if (_n < 0) break;
+            _off += _n;
+        }
+        g_cmdline_set = 1;
+    }
+
     /* NORMALIZE DIR (2026-08-18): strip trailing slashes ONCE, centrally.
      * dir may arrive as "scores-.../" (shell completion / user typing with a
      * trailing slash). Without this every "%s/.index", "%s/.meta", "%s/%s"
@@ -5860,10 +5909,11 @@ int main(int argc, char **argv) {
                 print_debug_members(g_best_used, g_best_order, g_best_order_n, g_best_n, n_blocks, g_best_eval);
             if (g_debug_confusion)
                 print_ensemble_confusion(g_best_used, n_blocks);
-            if (g_member_out[0]) {
-                export_member_file(g_member_out, g_best_used, g_best_n, g_best_eval, beam_width);
-                backup_member_to_dir(dir, g_member_out);
-            }
+            /* Always-on safety copy into SCORES/.member/ (2026-08-20) — even
+             * without --member-out the optimal subset is preserved. */
+            backup_set_to_dir(dir, g_best_used, g_best_n, g_best_eval, beam_width);
+            if (g_member_out[0])
+                export_member_file(g_member_out, g_best_used, g_best_n, g_best_eval, beam_width, 1);
         } else {
             /* Multi-try: each try searches for the strongest still-free member as seed */
             char saved_member_out[1024];
@@ -6040,10 +6090,10 @@ int main(int argc, char **argv) {
                      print_debug_members(g_best_used, g_best_order, g_best_order_n, g_best_n, n_blocks, g_best_eval);
                  if (g_debug_confusion)
                      print_ensemble_confusion(g_best_used, n_blocks);
-                 if (g_member_out[0]) {
-                     export_member_file(g_member_out, g_best_used, g_best_n, g_best_eval, beam_width);
-                     backup_member_to_dir(dir, g_member_out);
-                 }
+                 /* Always-on safety copy into SCORES/.member/ (2026-08-20). */
+                 backup_set_to_dir(dir, g_best_used, g_best_n, g_best_eval, beam_width);
+                 if (g_member_out[0])
+                     export_member_file(g_member_out, g_best_used, g_best_n, g_best_eval, beam_width, 1);
 
                 /* Machine-readable REPORT with the GLOBAL best over all tries.
                  * merge_and_beam suppresses its own REPORT in multi-try mode,
@@ -6072,14 +6122,16 @@ int main(int argc, char **argv) {
                         g_member_seed_spec, n_blocks);
         }
         merge_and_greedy(save_path, _gseed, beam_width);
-        /* Greedy exports its member-out internally — back it up here. */
-        if (g_member_out[0])
-            backup_member_to_dir(dir, g_member_out);
+        /* Greedy exports its member-out internally — always write the
+         * SCORES/.member/ safety copy too (2026-08-20). */
+        if (g_best_n > 0)
+            backup_set_to_dir(dir, g_best_used, g_best_n, g_best_eval, beam_width);
     } else {
         merge_and_eval(save_path, 0);
-        /* merge-eval exports ALL members as member-out — back it up too. */
-        if (g_member_out[0])
-            backup_member_to_dir(dir, g_member_out);
+        /* merge-eval exports ALL members as member-out — always write the
+         * SCORES/.member/ safety copy too (2026-08-20). */
+        if (g_best_n > 0)
+            backup_set_to_dir(dir, g_best_used, g_best_n, g_best_eval, 0);
     }
     for (int i = 0; i < n_blocks; i++) free(blocks[i].scores);
     free(blocks); free(g_labels);

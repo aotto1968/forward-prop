@@ -1075,6 +1075,8 @@ static const ki_ColorAlias ki_color_alias_table[] = {
     {"diff",  "RG,RB,GB", "3-channel color difference set"},
     {"all-channel", "R,G,B,Y,AL,AM,AP,RG,RB,GB,BL,BM,BP,H,S,C,CL,CM,CP,edge,bin,lbp,dog,var,dir,range,lbp-rg,lbp-rb,lbp-gb",
                    "every channel incl. structure channels (2026-08-14)"},
+    {"sweep-cifar", "AL,AM,AP,RG,RB,GB,BL,BM,BP,H,S,C,CL,CM,CP,edge,lbp,dog,var,dir,range",
+                   "every channel incl. structure channels for fashion (2026-08-14)"},
     {"sweep-fashion", "mnist,edge,lbp,dog,var,dir,range",
                    "every channel incl. structure channels for fashion (2026-08-14)"},
     {"sweep", "R,G,B,Y,AL,AM,AP,RG,RB,GB,BL,BM,BP,H,S,C,CL,CM,CP,edge,bin,lbp,dog,var,dir,range,lbp-rg,lbp-rb,lbp-gb", "all for sweep test"},
@@ -1138,6 +1140,7 @@ static const ki_EncAlias ki_enc_alias_table[] = {
     {"latest-2",  "g:down,bl:gamma,bm:sig,bp:sig,b:sqrt,al:down,am:sig,ap:sig,h:lin,c:cbrt,gb:sig",
                                                                 "Optimized 11-member set"},
     {"sweep",         "lin,down,up,mid,log,exp,sig,sqrt,cbrt,gamma,tri,inv-exp", "all for sweep test"},
+    {"sweep-cifar",   "lin,down,up,mid,log,exp,sig,sqrt,cbrt,gamma,tri,inv-exp", "all for sweep test"},
     {"sweep-fashion", "lin,down,up,mid,log,exp,sig,sqrt,cbrt,gamma,tri,inv-exp", "all for sweep test"},
     {"sweep-performance", KI_SWEEP_PERFORMANCE_ENCODING,        "optimized sweep"},
 

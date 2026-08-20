@@ -118,6 +118,7 @@ clean-all:
 	$(MAKE) -C mnist clean-all
 	$(MAKE) -C cifar clean-all
 	$(MAKE) -C fashion clean-all
+	rm -fr ./data/prepped
 
 # ── Push ──────────────────────────────────────────────────────
 push:

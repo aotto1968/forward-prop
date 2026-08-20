@@ -1001,10 +1001,10 @@ static int    g_stdout_field = 0;      /* --stdout column extraction: 0=full spe
 static float    g_best_eval = -1.0f;      /* global best across tries (beam) */
 static int      g_best_n = 0;            /* member count for global best */
 static uint8_t *g_best_used = NULL;     /* used mask for global best */
-/* Additionsreihenfolge des global besten Ensembles (order[] aus dem Beam),
- * in der Reihenfolge, in der die Member dem Ensemble hinzugefügt wurden.
- * --debug-member iteriert darüber, damit acc[%] kumulativ monoton steigt
- * und die Tabelle exakt die Member des member-out files zeigt (gleiche
+/* Addition order of the globally best ensemble (order[] from the beam),
+ * in the order in which the members were added to the ensemble.
+ * --debug-member iterates over it so acc[%] rises cumulatively and monotonically
+ * and the table shows exactly the members of the member-out file (same
  * Menge, andere Sortierung). 2026-08-14. */
 static int      g_best_order_n = 0;      /* Anzahl Member in g_best_order */
 static int     *g_best_order = NULL;     /* block-Indizes in Additionsreihenfolge */
@@ -1990,7 +1990,7 @@ static int merge_and_greedy(const char *save_path, int initial_member, int beam_
         /* --max N: Stopp bei N Membern */
         if (g_max_members > 0 && order_n >= g_max_members) break;
 
-        /* Try every unused member — parallel über Member.
+        /* Try every unused member — parallel across members.
          * INTENTIONAL: per-thread local best + ONE global critical compare
          * instead of reduction(max)+critical mixing. The old pattern
          *   #pragma omp parallel for reduction(max:best_step_acc)
@@ -2328,7 +2328,7 @@ static void dedup_blocks(void) {
     n_blocks = write;
 }
 
-/* ── Beam/Expansion types (file scope für qsort comparator) ── */
+/* ── Beam/Expansion types (file scope for qsort comparator) ── */
 typedef struct {
     SCORE_TYPE *sum; /* [score_sz] cumulative — SCORE_TYPE is double in FLT
                         mode (order-independent accumulation, bug 2026-08-02)
@@ -2469,7 +2469,7 @@ static int build_sample_index(const char *path) {
     if (!path || !path[0] || !g_labels || g_n_test <= 0 || g_n_classes <= 0)
         return 0;
 
-    /* ── Member-IDs einmal vorberechnen + Blocks nach member_id sortieren ──
+    /* ── Precompute member IDs once + sort blocks by member_id ──
      * (2026-08-15, 3rd gen) The pairs Parquet is written in
      * (member_id, sample_id) order — sorting the block indices by
      * member_id ONCE here makes Pass 2 stream the pairs in exactly that
@@ -2486,9 +2486,9 @@ static int build_sample_index(const char *path) {
         mid_sorted[i].block = i;
     }
     qsort(mid_sorted, (size_t)n_blocks, sizeof(MidSortEnt), cmp_mid_sort);
-    /* Kollisionen auflösen: benachbarte gleiche IDs (sortiert → einmal scannen).
-     * Praktisch nie, aber der PK erzwingt Eindeutigkeit — prüfen statt raten.
-     * Suffix "_2"/"_2_"... wird angehängt, bis der Hash frei ist. */
+    /* Resolve collisions: adjacent identical IDs (sorted → scan once).
+     * Practically never, but the PK enforces uniqueness — check rather than guess.
+     * A suffix "_2"/"_2_"... is appended until the hash is free. */
     for (int i = 1; i < n_blocks; i++) {
         if (mid_sorted[i].id != mid_sorted[i - 1].id) continue;
         const char *name = blocks[mid_sorted[i].block].source_file;
@@ -2501,7 +2501,7 @@ static int build_sample_index(const char *path) {
                 if (mid_sorted[j].id == id2 || strcmp(buf, blocks[mid_sorted[j].block].source_file) == 0)
                     { dup = 1; break; }
             if (!dup) { mid_sorted[i].id = id2; break; }
-            if (strlen(buf) >= sizeof(buf) - 2) break;   /* Überlaufschutz */
+            if (strlen(buf) >= sizeof(buf) - 2) break;   /* overflow protection */
             strncat(buf, "_", sizeof(buf) - strlen(buf) - 1);
         }
         fprintf(stderr, "  [WARN] --sample-index: member-id collision for '%s' — used suffix\n", name);
@@ -2682,8 +2682,8 @@ static int build_sample_index(const char *path) {
             }
             chunk_cnt[tid] = n;
         }
-        /* seriell (Haupt-Thread): Chunk-Puffer aller Threads in
-         * Thread-Reihenfolge via carquet schreiben (Spalte für Spalte) —
+        /* serial (main thread): chunk buffer of all threads, in
+         * thread order written via carquet (column by column) —
          * carquet wants one contiguous array per column, so the trip
          * buffers are transposed into four column arrays first. */
         {
@@ -2715,10 +2715,10 @@ static int build_sample_index(const char *path) {
         for (int t = 0; t < n_threads; t++)
             total_rows += chunk_cnt[t];
         done_blocks += (cend - cstart);
-        /* Progressive Score-Freigabe (2026-08-15): jeder Block wird nur
-         * EINMAL gelesen (Pass 2 ist der letzte Nutzer). Freigeben direkt
-         * nach dem Chunk → Peak-RAM = Score-Load-Peak (zu Beginn) bzw.
-         * Dateigröße (am Ende), nie die Summe beider. */
+        /* Progressive score release (2026-08-15): each block is only
+         * read ONCE (Pass 2 is the last consumer). Release immediately
+         * after the chunk → peak RAM = score-load peak (at the start) or
+         * the file size (at the end), never the sum of both. */
         for (int m = cstart; m < cend; m++) {
             int b = block_order[m];
             free(blocks[b].scores);
@@ -2805,21 +2805,21 @@ static void print_ensemble_confusion(const uint8_t *set, int n_blk) {
  * TABLE FORMAT (2026-08-14, user design):
  *   EN  acc[%]  eval[%]  evl-all[%]  err  member  W0  MIN  MAX
  * - acc[%]     = kumulative Ensemble-Accuracy in ADDITIONSREIHENFOLGE
- *                (order[] aus dem Beam, monoton steigend, endet bei ens-total)
+ *                (order[] from the beam, monotonically rising, ends at ens-total)
  * - eval[%]    = Target-Eval des Members (eval_sample_correct(), Nenner
  *                eval_denom() — unter --target k nur die Target-Samples,
- *                identisch zur Search-Tabelle; ohne --target == evl-all[%])
- * - evl-all[%] = volle Member-Eval (roher argmax über g_n_test, wie die
- *                Trainer-Evl% — zeigt, ob ein Member die Nicht-Target-
- *                Klassen zerstört, während er die 0624-Familie optimiert)
- * - err        = eval_denom() - correct (Target-Fehler wie die Search)
- * Die Menge der Member ist EXAKT die des member-out files (set ==
- * g_best_used) — nur die Sortierung folgt der Additionsreihenfolge statt
+ *                identical to the search table; without --target == evl-all[%])
+ * - evl-all[%] = full member eval (raw argmax over g_n_test, like the
+ *                trainer eval% — shows whether a member destroys the non-target-
+ *                classes while it optimizes the 0624 family)
+ * - err        = eval_denom() - correct (target error like the search)
+ * The member set is EXACTLY that of the member-out file (set ==
+ * g_best_used) — only the sort follows the addition order instead of
  * der Block-Reihenfolge. "time", "pxz", "trn%" (mem=-.-%) entfallen.
  *
  * set:    member bitmask (g_best_used) of the winning ensemble.
  * order:  Additionsreihenfolge (g_best_order); NULL → set in Block-Reihenfolge.
- * order_n: Anzahl Einträge in order.
+ * order_n: number of entries in order.
  * n_used: number of set members (= g_best_n).
  * n_blk:  total blocks.
  * best_eval: final ensemble eval (%). */
@@ -2830,10 +2830,10 @@ static void print_debug_members(const uint8_t *set, const int *order,
     printf("\n══╡ MEMBERS (--debug-member) ╞═  %d members  ens-eval=%.2f%%  ══════════\n",
            n_used, best_eval);
 
-    /* ── Anzeige-Reihenfolge bauen: 1) order[]-Einträge die in set sind
-     * (Additionsreihenfolge), 2) restliche set-Member in Block-Reihenfolge
-     * (nur im --max-Sonderfall relevant, wo best_set_best von order[]
-     * abweichen kann). Menge bleibt == set == member-out file. */
+    /* ── Build the display order: 1) order[] entries that are in the set
+     * (addition order), 2) remaining set members in block order
+     * (only relevant in the --max special case, where best_set_best can
+     * deviate from order[]). The set stays == set == member-out file. */
     int *disp = (int *)malloc((size_t)n_used * sizeof(int));
     if (!disp) { fprintf(stderr, "[FATAL] OOM\n"); exit(1); }
     int disp_n = 0;
@@ -2854,9 +2854,9 @@ static void print_debug_members(const uint8_t *set, const int *order,
     if (disp_n == 0) { free(disp); return; }
 
     /* Tabellenkopf + Zeilen via libtprint (2026-08-14) — dieselbe
-     * Tabellen-Library wie die Trainer (tprint_create/…), damit die
-     * Spaltenbreiten automatisch zur längsten Zelle passen (hand-rolled
-     * %-7s brach bei langen Specs wie "colswap-1-4@rot112:lbp:tri8"). */
+     * table library like the trainers (tprint_create/...), so that the
+     * column widths automatically fit the longest cell (hand-rolled
+     * %-7s broke on long specs like "colswap-1-4@rot112:lbp:tri8"). */
     TPrint *tp = tprint_create(stdout, TRUE, TRUE, 2, 2);
     tprint_set_double_fmt(tp, "%7.2f");
     tprint_column_add(tp, "EN",       TPAlign_center, TPAlign_right);
@@ -2869,9 +2869,9 @@ static void print_debug_members(const uint8_t *set, const int *order,
     tprint_column_add(tp, "MIN",      TPAlign_center, TPAlign_right);
     tprint_column_add(tp, "MAX",      TPAlign_center, TPAlign_right);
 
-    /* Kumulative Ensemble-Summe: pro Schritt die Scores des Members addieren
-     * und argmax-vs-truth über g_n_test (wie die FINAL-RE-EVALUATION im
-     * Beam). Am Ende == ens-total. */
+    /* Cumulative ensemble sum: per step add the member's scores
+     * and argmax-vs-truth over g_n_test (like the FINAL RE-EVALUATION in the
+     * beam). At the end == ens-total. */
     size_t row_sz = (size_t)g_n_classes;
     size_t score_sz = (size_t)g_n_test * row_sz;
     SCORE_TYPE *acc_sum = (SCORE_TYPE *)calloc(score_sz, sizeof(SCORE_TYPE));
@@ -2882,11 +2882,11 @@ static void print_debug_members(const uint8_t *set, const int *order,
     for (int di = 0; di < disp_n; di++) {
         int i = disp[di];
         /* ZWEI Member-Evals (2026-08-14, user design):
-         * - m_correct_all : volle Eval über ALLE g_n_test Samples (roher
-         *   argmax) — "evl-all[%]", konsistent zur Trainer-Evl%.
-         * - m_correct_tgt : Target-Eval über eval_sample_correct() —
-         *   "eval[%]", identisch zur Search-Tabelle (unter --target k
-         *   zählt nur die Target-Samples). Ohne --target sind beide gleich. */
+         * - m_correct_all : full eval over ALL g_n_test samples (raw
+         *   argmax) — "evl-all[%]", consistent with the trainer eval%.
+         * - m_correct_tgt : target eval via eval_sample_correct() —
+         *   "eval[%]", identical to the search table (under --target k
+         *   only the target samples count). Without --target both are equal. */
         int m_correct_all = 0;
         int m_correct_tgt = 0;
         if (g_labels && blocks[i].scores) {
@@ -2913,7 +2913,7 @@ static void print_debug_members(const uint8_t *set, const int *order,
             for (int s = 0; s < g_n_test && g_labels; s++) {
                 const SCORE_TYPE *row = acc_sum + (size_t)s * row_sz;
                 if (eval_sample_correct(row, g_labels[s])) e_ok++;
-                /* volle Ensemble-Eval: roher argmax über alle Samples */
+                /* full ensemble eval: raw argmax over all samples */
                 int best = 0;
                 for (int k = 1; k < g_n_classes; k++)
                     if (row[k] > row[best]) best = k;
@@ -2951,10 +2951,10 @@ static void print_debug_members(const uint8_t *set, const int *order,
     }
     /* ens-total: finale Ensemble-Eval (acc_sum der kompletten Menge).
      * INTENTIONAL (2026-08-14): eval[%] (Spalte 2) nutzt eval_denom() —
-     * identisch zur Search-Tabelle, die unter --target k nur die
-     * Target-Samples zählt. evl-all[%] (Spalte 3) zeigt die volle
-     * Ensemble-Eval über alle Samples. Vorher gab es nur den g_n_test-
-     * Nenner: unter --target 0,2,4,6 zeigte ens-total 33.90% statt der
+     * identical to the search table, which under --target k only
+     * counts the target samples. evl-all[%] (column 3) shows the full
+     * ensemble eval over all samples. Before there was only the g_n_test-
+     * denominator: under --target 0,2,4,6 ens-total showed 33.90% instead of the
      * Search-84.75% (gleiche correct-Zahl, falscher Nenner). */
     {
         float e_eval = (eval_denom() > 0)
@@ -3153,12 +3153,12 @@ static int merge_and_beam(const char *save_path, int beam_width,
                            int initial_member, uint8_t *pool_exclude)
 {
     if (n_blocks == 0) { printf("  No score blocks loaded.\n"); return 0; }
-    /* Eigenen pool_exclude allozieren wenn keiner übergeben (single beam run).
-     * _owned_exclude != NULL → single-try: pool_exclude darf Mitglieder NICHT
-     * global sperren (sonst verbraucht breiterer Beam schneller den Pool
-     * und findet schlechtere Lösungen als schmalerer Beam).
-     * _owned_exclude == NULL → multi-try: pool_exclude vom Aufrufer, Mitglieder
-     * müssen global gesperrt werden, damit Tries sich nicht überlappen. */
+    /* Allocate our own pool_exclude when none is passed (single beam run).
+     * _owned_exclude != NULL → single-try: pool_exclude must NOT
+     * lock members globally (otherwise a wider beam consumes the pool faster
+     * and finds worse solutions than a narrower beam).
+     * _owned_exclude == NULL → multi-try: pool_exclude from the caller, members
+     * must be locked globally so tries do not overlap. */
     uint8_t *_owned_exclude = NULL;
     if (!pool_exclude) {
         _owned_exclude = (uint8_t *)calloc((size_t)n_blocks, 1);
@@ -3351,18 +3351,18 @@ static int merge_and_beam(const char *save_path, int beam_width,
     int *pending = (int *)malloc((size_t)(g_max_mode ? (size_t)n : 1) * sizeof(int));
     if (!pending) { fprintf(stderr, "[FATAL] OOM\n"); exit(1); }
     int pending_n = 0;
-    /* Additionsreihenfolge des akzeptierten Ensembles (2026-08-14): jeder
-     * akzeptierte Member wird hier in der Reihenfolge notiert, in der der
-     * Beam ihn annahm. --debug-member zeigt damit die kumulative acc[%]
+    /* Addition order of the accepted ensemble (2026-08-14): each
+     * accepted member is recorded here in the order in which the
+     * beam accepted it. --debug-member then shows the cumulative acc[%]
      * monoton steigend (identisch zur EN-Tabelle). Menge == best_used. */
     int *accepted = (int *)malloc((size_t)n * sizeof(int));
     if (!accepted) { fprintf(stderr, "[FATAL] OOM\n"); exit(1); }
     int accepted_n = 0;
     if (initial_member >= 0) {
         best_used[initial_member] = 1;  /* seed immer tracken */
-        /* INTENTIONAL (2026-08-14): der Seed gehört an den ANFANG der
-         * Additionsreihenfolge — vorher fehlte er in accepted[] und die
-         * --debug-member Tabelle startete mit EN=2 statt EN=1 (die kumulative
+        /* INTENTIONAL (2026-08-14): the seed belongs at the START of the
+         * addition order — before it was missing from accepted[] and the
+         * --debug-member table started at EN=2 instead of EN=1 (the cumulative
          * acc[%] begann beim falschen Member). */
         if (accepted_n < n) accepted[accepted_n++] = initial_member;
     }
@@ -3498,9 +3498,9 @@ static int merge_and_beam(const char *save_path, int beam_width,
         int n_exp = 0;
 
         /* ── Parallel expand: beam × unused members ── *
-          * KEIN memcpy, KEIN trial-Buffer: base+sc wird ON THE FLY
-          * im argmax-Loop addiert. Spart 2×400KB Speicherzugriff pro
-          * Expansion — bei 10530 Exp./Step × 221 Steps = ~1.9TB weniger
+          * NO memcpy, NO trial buffer: base+sc is computed ON THE FLY
+          * added in the argmax loop. Saves 2x400KB memory access per
+          * expansion — at 10530 exp./step × 221 steps = ~1.9TB less
           * Traffic. */
         #pragma omp parallel
         {
@@ -3580,9 +3580,9 @@ static int merge_and_beam(const char *save_path, int beam_width,
             fflush(stdout);
         }
 
-        /* Build new beam: jedes Member kann NUR EINMAL über ALLE Slots+Steps ausgewählt werden.
-         * Ersetzt das alte seen_mi + pairwise-diversity durch globale pool_exclude.
-         * Dadurch sind alle Beam-Pfade automatisch divers (kein --diversity nötig). */
+        /* Build new beam: each member can be selected ONLY ONCE across ALL slots+steps.
+         * Replaces the old seen_mi + pairwise-diversity with a global pool_exclude.
+         * Thus all beam paths are automatically diverse (no --diversity needed). */
         BeamSlot *next = (BeamSlot *)calloc((size_t)beam_width, sizeof(BeamSlot));
         int n_next = 0;
         uint8_t *seen_mask = (uint8_t *)calloc((size_t)n, 1); /* temp for dedup */
@@ -3597,7 +3597,7 @@ static int merge_and_beam(const char *save_path, int beam_width,
             int si = exp[ei].slot_idx;
             int mi = exp[ei].member_idx;
 
-            /* Global exclusion: jedes Member kann NUR EINMAL gewählt werden (über alle Schritte) */
+            /* Global exclusion: each member can be chosen ONLY ONCE (across all steps) */
             if (pool_exclude && pool_exclude[mi]) continue;
 
             /* Build candidate: copy parent, add mi */
@@ -3963,16 +3963,16 @@ static int merge_and_beam(const char *save_path, int beam_width,
         g_best_n    = real_n;
         if (!g_best_used) g_best_used = (uint8_t *)calloc((size_t)n, 1);
         for (int i = 0; i < n; i++) g_best_used[i] = best_used[i];
-        /* INTENTIONAL (2026-08-14): Additionsreihenfolge des besten Ensembles
-         * sichern — --debug-member iteriert darüber, damit acc[%] kumulativ
-         * in der Beam-Additionsreihenfolge steigt. Menge == g_best_used
-         * (accepted[] enthält genau die akzeptierten Member), nur die
-         * Sortierung unterscheidet sich von der Block-Reihenfolge des
-         * member-out files. Im --max-Modus kann die Best-Set-Kopie
-         * (best_set_best) von accepted[] abweichen — dann zeigt die Tabelle
-         * die accepted[]-Reihenfolge der finalen best_used-Menge
-         * (best_set_best ist bereits in best_used kopiert; accepted[] enthält
-         * die Additionsreihenfolge der Kandidaten). */
+        /* INTENTIONAL (2026-08-14): save the addition order of the best ensemble
+         * — --debug-member iterates over it so acc[%] rises cumulatively
+         * in the beam addition order. Set == g_best_used
+         * (accepted[] holds exactly the accepted members), only the
+         * sort differs from the block order of the
+         * member-out file. In --max mode the best-set copy
+         * (best_set_best) can differ from accepted[] — then the table shows
+         * the accepted[] order of the final best_used set
+         * (best_set_best is already copied into best_used; accepted[] holds
+         * the addition order of the candidates). */
         free(g_best_order);
         g_best_order = NULL;
         if (accepted_n > 0) {
@@ -4466,7 +4466,7 @@ static CheckResult check_archive(const char *path) {
     /* v14+ precision vs .meta (2026-08-12): a MISMATCH is an ERROR — the
      * archive's logits would not sum correctly with the other members.
      * Old archives (v<14) are valid but carry no precision block: reported
-     * as OK + a [WARN: ...] text suffix (they have "höheren Zweifel", not
+     * as OK + a [WARN: ...] text suffix (they have "higher doubt", not
      * a defect — the user decision 2026-08-12). */
     int prec_verdict = 0;    /* 0 = none/ok, 1 = v<14 (warn-text), -1 = mismatch (error) */
     if (version >= 14 && (g_meta_otp != 0 || g_meta_bits != 0 || g_meta_ct[0])) {
@@ -5123,7 +5123,7 @@ int main(int argc, char **argv) {
     /* merge-ensemble defines aa zero-initialized (no struct initializer) —
      * set the eff-lambda default explicitly (--eff-lambda can override). */
     aa.eff_lambda = 0.02f;
-    /* OMP: alle verfügbaren Kerne nutzen */
+    /* OMP: use all available cores */
     omp_set_num_threads(omp_get_num_procs());
     if (getenv("OMP_NUM_THREADS"))
         omp_set_num_threads(atoi(getenv("OMP_NUM_THREADS")));
@@ -5391,13 +5391,13 @@ int main(int argc, char **argv) {
         } else if (strcmp(argv[i], "--check") == 0) {
             check_mode = 1;
         } else if (strcmp(argv[i], "--filter-t1") == 0) {
-            /* Benannter Filter (2026-08-15): Kurzform für
+            /* Named filter (2026-08-15): shorthand for
              *   --filter regex '\<rot[0-9]+@(id|spiral|avg2|avg3|avg4):'
-             * Behält nur Members, deren XF:CHAN:ENC-Spec mit einer rot-Kette
-             * beginnt, deren Pipeline-Ausgang id/spiral/avg2/avg3/avg4 ist.
-             * Nutzt denselben g_filter_re[]-Pfad wie --filter regex — die
-             * Filter-Semantik (member_is_filtered) ist identisch. Additiv zu
-             * weiteren --filter-Aufrufen (kein Reset). */
+             * Keeps only members whose XF:CHAN:ENC spec begins with a rot-chain
+             * whose pipeline exit is id/spiral/avg2/avg3/avg4.
+             * Uses the same g_filter_re[] path as --filter regex — the
+             * filter semantics (member_is_filtered) is identical. Additive to
+             * further --filter calls (no reset). */
             if (g_filter_re_count >= 64) {
                 fprintf(stderr, "[ERROR] too many regex filters\n");
                 return 1;
@@ -5762,10 +5762,10 @@ int main(int argc, char **argv) {
      * load_scores_directory as a single line of dots. */
     load_scores_directory(dir);
 
-    /* ── --sample-index: eigenständiger Check-Modus (2026-08-15) ──
-     * Schreibt die Member↔Sample-Zuordnung als 3 Parquet-Dateien und
-     * beendet sich danach — kein Beam/Greedy. Nutzt die geladenen Scores
-     * (post-filter) und g_labels. Reihenfolge ist egal (Member-IDs sind
+    /* ── --sample-index: standalone check mode (2026-08-15) ──
+     * Writes the member↔sample assignment as 3 Parquet files and
+     * exits afterwards — no beam/greedy. Uses the loaded scores
+     * (post-filter) and g_labels. Order does not matter (member IDs are
      * Namens-Hashes; der Parquet-Writer sortiert via block_order). */
 #if USE_CARQUET
     if (g_sample_index[0]) {
@@ -5865,7 +5865,7 @@ int main(int argc, char **argv) {
                 backup_member_to_dir(dir, g_member_out);
             }
         } else {
-            /* Multi-try: jeder Try sucht den stärksten noch freien Member als Seed */
+            /* Multi-try: each try searches for the strongest still-free member as seed */
             char saved_member_out[1024];
             strncpy(saved_member_out, g_member_out, sizeof(saved_member_out));
             g_member_out[0] = '\0';
@@ -5907,11 +5907,11 @@ int main(int argc, char **argv) {
                      * diversity source. The winning bestN is recorded for the
                      * REPORT lr= field (reproducibility). */
                     g_beam_bestN = (ti % _n_tries) + 1;
-                    /* Seed finden: stärksten Member aus dem Pool der Noch-Nicht-Genutzten.
-                     * --tries-no-lock: pool_exclude hält NUR die bereits als Seed
-                     * benutzten Member (Locking-Block unten markiert g_best_used NICHT)
-                     * → top-seed = k-ter stärkster freier Member (Try 1 = stärkster,
-                     * Try 2 = 2.-stärkster, ...), deterministisch. */
+                    /* Find seed: strongest member from the pool of not-yet-used ones.
+                     * --tries-no-lock: pool_exclude holds ONLY the members already used as seed
+                     * (the locking block below does NOT mark g_best_used)
+                     * → top-seed = k-th strongest free member (Try 1 = strongest,
+                     * Try 2 = 2nd strongest, ...), deterministic. */
                     if (ti > 0 || member_seed_idx < 0) {
                         _seed_idx = -1;
                         if (g_tries_seed) {
@@ -5964,7 +5964,7 @@ int main(int argc, char **argv) {
                     printf("\n══╡ TRY %d/%d ══ seed=%d (%.2f%%) bestN=%d ╞═══════════════════════════════\n",
                            ti + 1, _n_tries, _seed_idx, _seed_eval, g_beam_bestN);
 
-                    /* g_best_used zurücksetzen — merge_and_beam füllt es neu für diesen Try */
+                    /* Reset g_best_used — merge_and_beam refills it for this try */
                     free(g_best_used); g_best_used = NULL;
                     free(g_best_order); g_best_order = NULL; g_best_order_n = 0;
                     g_best_eval = -1.0f;
@@ -5978,7 +5978,7 @@ int main(int argc, char **argv) {
                                    _fresh ? _fresh : pool_exclude);
                     free(_fresh);
 
-                    /* Globalen Best über alle Trys aktualisieren */
+                    /* Update the global best across all tries */
                     if (g_best_eval > _global_best_eval && g_best_used) {
                         _global_best_eval = g_best_eval;
                         _global_best_n = g_best_n;
@@ -5987,9 +5987,9 @@ int main(int argc, char **argv) {
                         _global_best_used = (uint8_t *)malloc((size_t)n_blocks);
                         memcpy(_global_best_used, g_best_used, (size_t)n_blocks);
                         /* INTENTIONAL (2026-08-14): Additionsreihenfolge des
-                         * besten Trys mitkopieren, damit --debug-member nach
-                         * dem Multi-Try-Merge weiter die kumulative acc[%] in
-                         * der richtigen Reihenfolge zeigen kann. */
+                         * copy the best try's order so --debug-member can, after
+                         * the multi-try merge, still show the cumulative acc[%] in
+                         * the correct order. */
                         free(_global_best_order);
                         _global_best_order = NULL;
                         _global_best_order_n = 0;
@@ -6003,9 +6003,9 @@ int main(int argc, char **argv) {
                         }
                     }
 
-                    /* Member dieses Trys für alle folgenden Trys sperren:
-                     * - immer den Seed selbst (auch wenn er nicht im Beam-Ergebnis landete)
-                     * - alle Mitglieder aus g_best_used
+                    /* Lock this try's members for all following tries:
+                     * - always the seed itself (even if it did not land in the beam result)
+                     * - all members from g_best_used
                      * --tries-no-lock: ONLY the seed is marked (for the next seed
                      * choice); g_best_used members stay free so later tries can
                      * combine them with other seeds (diversity, not partition). */
@@ -6017,7 +6017,7 @@ int main(int argc, char **argv) {
                 }
                 free(pool_exclude);
 
-                /* g_best_used = global best (für --member-out + write_member_file_from_best) */
+                /* g_best_used = global best (for --member-out + write_member_file_from_best) */
                 free(g_best_used); g_best_used = _global_best_used;
                 free(g_best_order); g_best_order = _global_best_order;
                 g_best_order_n = _global_best_order_n;

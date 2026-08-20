@@ -122,7 +122,7 @@ static inline int ki_color_parse(const char *tok) {
     for (int i = 0; i < (int)(sizeof(ki_color_table)/sizeof(ki_color_table[0])); i++)
         if (strcasecmp(tok, ki_color_table[i].name) == 0)
             return ki_color_table[i].id;
-    return -1;  /* kein Farbname — Aliase werden vorher expandiert */
+    return -1;  /* no color name — aliases are expanded beforehand */
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
@@ -2469,20 +2469,20 @@ static inline double ot_precision(double in) {
 #endif
 
 /* ═══════════════════════════════════════════════════════════════════════
- * DEFAULT-NAME-STAMM — H512-E10-OT8-M1-105-INT32 (2026-08-18)
+ * DEFAULT-NAME-STEM — H512-E10-OT8-M1-105-INT32 (2026-08-18)
  * ═══════════════════════════════════════════════════════════════════════
- * Zentrale Ableitung des "Stamms" aus bekannten Parametern — identisch fuer
- * Trainer (--export-default → export-{STAMM}) und MERGE (--member-out-default
- * → member-{STAMM}.out). KEIN Bezug auf Datei-/Dir-Namen.
+ * Central derivation of the "stem" from known parameters — identical for
+ * trainer (--export-default → export-{STEM}) and MERGE (--member-out-default
+ * → member-{STEM}.out). No reference to file/dir names.
  *
  * Schema: H{h}-E{ep}-{OT|BV}{KI_BIT_WIDTH}-M{maj}[-{m1t}]-{INT32|FLT32|FLT64}
  *
- *   - maj1_thresh (m1t) kommt AUFGELOEST herein (expliziter Wert oder
- *     ki_default_half()-Ergebnis — die Aufloesung macht der Trainer, weil nur
- *     er maj1.h inkludiert). m1t < 0 ⇒ kein Suffix (M3 / Bit-Voting).
- *   - M-Kennung ist die Majority-Kennung ("1"/"3"/"-1"), NICHT der Enum-Wert
- *     (KI_MAJ_1=0, KI_MAJ_3=1). Wird via maj_mode uebergeben.
- *   - Arch = "OT" (Otto) oder "BV" (Bit-Voting), via KI_BITVOTING.
+ *   - maj1_thresh (m1t) arrives RESOLVED here (explicit value or
+ *     ki_default_half() result — resolution is done by the trainer, because only
+ *     it includes maj1.h). m1t < 0 ⇒ no suffix (M3 / Bit-Voting).
+ *   - M identifier is the majority identifier ("1"/"3"/"-1"), NOT the enum value
+ *     (KI_MAJ_1=0, KI_MAJ_3=1). Passed via maj_mode.
+ *   - Arch = "OT" (Otto) or "BV" (Bit-Voting), via KI_BITVOTING.
  */
 static inline void ki_default_tag(char *buf, size_t bufsz, int H, int ep,
                                   int maj_mode, int m1t) {

@@ -924,7 +924,7 @@ static void compute_class_offset(SCORE_TYPE class_offset[KI_NCLASSES],
             for (int v = 0; v < V; v++) {
                 int t = (int)target[TGT_IDX(k, h, v, H_local, V)];
                 double p1 = (double)(nk - t + 1) / (double)(nk + 2);
-                acc += log(p1);   /* volle double-Genauigkeit, keine Zwischen-Rundung */
+                acc += log(p1);   /* full double precision, no intermediate rounding */
             }
         }
         class_offset[k] = (SCORE_TYPE)ot_precision(acc);   /* genau 1 Rundung */
@@ -1064,10 +1064,10 @@ static __attribute__((unused)) void export_model(const char *out_dir,
 /* Real-type labels (ki_counter_type_str/ki_score_type_str) are now shared
  * static inline in ki-common.h — the merge needs them too (2026-08-06). */
 
-/* Print score range (--debug-member) — SCORE_TYPE kann per -D übersteuert
- * werden (float/double/int64_t); das Format muss zum echten Typ passen.
- * (War per COUNTER_TYPE_IS_FLOAT geteilt — falsch für Misch-Builds wie
- * -DSCORE_TYPE=double oder float-Counter+int64-Scores, 2026-08-05.) */
+/* Print score range (--debug-member) — SCORE_TYPE can be overridden via -D
+ * (float/double/int64_t); the format must match the actual type.
+ * (Was previously split by COUNTER_TYPE_IS_FLOAT — wrong for mixed builds like
+ * -DSCORE_TYPE=double or float-counter+int64-scores, 2026-08-05.) */
 static void ki_print_scr_minmax(SCORE_TYPE mn, SCORE_TYPE mx, int pxz) {
     _Generic((SCORE_TYPE)0,
         int64_t: printf("  MIN=%" PRId64 "  MAX=%" PRId64 "  pxz=%d\n",
@@ -2658,9 +2658,9 @@ int main(int argc, char *argv[]) {
         }
         else {
             /* IMPLICIT --member-file (2026-08-18): ein Positions-Argument das auf
-             * ".out" endet und als Datei existiert, wird NICHT an ki_parse_args
-             * durchgereicht (es ist kein CLI-Flag) — der member-file-Scan weiter
-             * unten setzt aa.member_file daraus. */
+             * ".out" and exists as a file is NOT passed through to ki_parse_args
+             * (it is not a CLI flag) — the member-file scan below
+             * sets aa.member_file from it. */
             size_t _dl = strlen(argv[i]);
             int _is_implicit_mf = 0;
             if (argv[i][0] != '-' && _dl > 4 && strcmp(argv[i] + _dl - 4, ".out") == 0) {
@@ -2680,9 +2680,9 @@ int main(int argc, char *argv[]) {
      * (ki-common.h:1491), which is why the parse happens after it. */
     {
         /* IMPLICIT --member-file (2026-08-18): ein Positions-Argument, das auf
-         * ".out" endet und als Datei existiert, impliziert --member-file <arg>.
-         * bsp: run-research.sh ...x.exe member-H512-E10-OT8-M1-105-INT32.out.
-         * Ein explizites --member-file (naechster Scan) gewinnt immer. */
+         * ".out" and exists as a file implies --member-file <arg>.
+         * e.g.: run-research.sh ...x.exe member-H512-E10-OT8-M1-105-INT32.out.
+         * An explicit --member-file (next scan) always wins. */
         for (int _ai = 1; _ai < argc; _ai++) {
             if (argv[_ai][0] == '-') continue;          /* Optionen ueberspringen */
             size_t _l = strlen(argv[_ai]);
@@ -2764,7 +2764,7 @@ int main(int argc, char *argv[]) {
     }
 
     /* Parse --member/--member-file EARLY (vor n_cont/load_input),
-     * damit load_input alle benötigten Encodings packt. */
+     * so load_input packs all required encodings. */
     {
         int n_mems = 0;
         n_mems = ki_member_file_parse();
@@ -3363,8 +3363,8 @@ int main(int argc, char *argv[]) {
     int uses_pixel = (aa.maj_mode == KI_MAJ_1P || aa.maj_mode == KI_MAJ_1RP);
     int pixel_groups = uses_pixel ? KI_PIXEL_GROUPS : 1;
     size_t w0_m_sz = (size_t)H_local * (size_t)NC_slice * (size_t)pixel_groups;
-    /* W0_ens wird nach member_spec Generation alloziiert + befüllt (s.u.).
-     * Hier nur Platzhalter — das eigentliche W0-Seeding kommt nach member_spec. */
+    /* W0_ens is allocated + filled after member_spec generation (see below).
+     * Placeholder here only — the actual W0 seeding comes after member_spec. */
     uint32_t *W0_ens = NULL;
 #ifndef KI_BITVOTING
     size_t w0_sz = 0;
@@ -3373,7 +3373,7 @@ int main(int argc, char *argv[]) {
 #endif
 
 #ifdef USE_HIP
-    /* ── GPU init: upload all W0 once (W0_ens wird später alloziiert) ── */
+    /* ── GPU init: upload all W0 once (W0_ens is allocated later) ── */
     int gpu_ok = 0;
 #endif
 
@@ -3411,7 +3411,7 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    /* ── W0: Allozieren und befüllen (jetzt ist member_spec_count bekannt) ── */
+    /* ── W0: allocate and fill (member_spec_count is now known) ── */
 #ifndef KI_BITVOTING
     w0_sz = (size_t)total_members * w0_m_sz;
     if (w0_sz == 0) w0_sz = (size_t)w0_m_sz;
@@ -3456,7 +3456,7 @@ int main(int argc, char *argv[]) {
 #endif
 
 #ifdef USE_HIP
-    /* ── GPU init: upload all W0 once (jetzt ist W0_ens alloziiert) ── */
+    /* ── GPU init: upload all W0 once (W0_ens is now allocated) ── */
     int gpu_ok = 0;
     if (!aa.dry_run) {
         if (hip_mem_init(total_train, H_local, NC_slice, nc_blk, total_members) == 0) {
@@ -3818,6 +3818,14 @@ int main(int argc, char *argv[]) {
 
     int _sweep_trained = 0, _sweep_skipped = 0;
     int _sweep_done = 0; /* progress lines emitted (ETA base; atomic via critical(progress)) */
+    /* FIX (2026-08-19): ETA on a restarted (aborted) sweep — many members are
+     * SKIPped up front (already done). Those SKIP passes cost ~0 time but inflate
+     * tv_start-relative elapsed, so the per-member rate must be measured from the
+     * FIRST actual TRAIN, not from loop start. tv_work_start is set on the first
+     * TRAIN progress line (in the critical(progress) block below). See:
+     * logs/fashion-...-2026-08-19_17-41-23.log (2843 SKIPs -> bogus 7h09m ETA). */
+    struct timeval tv_work_start;
+    int tv_work_start_set = 0;
     int _last_xf = -1;   /* xform of the previously processed member (cache clear) */
 
     /* [PROF] phase accumulators (--prof, prof trainer only, 2026-08-08) */
@@ -4506,22 +4514,35 @@ int _half = ki_compute_half(mem->NC_slice);
             #pragma omp critical(progress)
             {
                 _sweep_done++;
+                /* FIX (2026-08-19): anchor the ETA rate at the FIRST actual TRAIN,
+                 * not at loop start. On a restarted sweep the leading SKIP passes
+                 * (already-done members) cost ~0 time but would otherwise inflate
+                 * the elapsed divisor and deflate the rate. */
+                if (!tv_work_start_set) {
+                    gettimeofday(&tv_work_start, NULL);
+                    tv_work_start_set = 1;
+                }
                 printf("  [%3d/%d] TRAIN%s  err=%d/%d  evl=%d/%d (%.1f%%)",
                        mb+1, active_members, _mi,
                        mem->last_err, total_train,
                        _member_evl, total_eval,
                        (float)_member_evl * 100.0f / (float)(total_eval > 0 ? total_eval : 1));
-                /* ETA from elapsed wall time and _sweep_done (2026-08-16):
-                 * rate = done / elapsed → remaining / rate. Only shown once
-                 * the rate is stable (>= 20 members). */
+                /* ETA from elapsed TRAIN time and _sweep_done (2026-08-16, fixed
+                 * 2026-08-19): rate = done / train-elapsed. Remaining work is only
+                 * the members neither SKIPped (already done) nor trained yet:
+                 * active_members - _sweep_skipped - _sweep_done. The old formula
+                 * (active_members - _sweep_done) counted every skipped member as
+                 * still-to-do → ETA far too high on a restarted sweep. */
                 if (_sweep_done >= 20) {
                     struct timeval _eta_tv;
                     gettimeofday(&_eta_tv, NULL);
-                    double _el = (double)(_eta_tv.tv_sec - tv_start.tv_sec)
-                               + (double)(_eta_tv.tv_usec - tv_start.tv_usec) / 1e6;
+                    double _el = (double)(_eta_tv.tv_sec - tv_work_start.tv_sec)
+                               + (double)(_eta_tv.tv_usec - tv_work_start.tv_usec) / 1e6;
                     if (_el > 0.0) {
                         double _rate = (double)_sweep_done / _el; /* members/s */
-                        double _eta = (double)(active_members - _sweep_done) / _rate;
+                        double _remaining = (double)(active_members - _sweep_skipped - _sweep_done);
+                        if (_remaining < 0.0) _remaining = 0.0;
+                        double _eta = _remaining / _rate;
                         int _eh = (int)(_eta / 3600.0);
                         int _em = (int)(_eta / 60.0) % 60;
                         printf("  ETA %dh%02dm (%.1f/min)", _eh, _em, _rate * 60.0);
@@ -4558,7 +4579,7 @@ int _half = ki_compute_half(mem->NC_slice);
         free(mem->gb_buf); mem->gb_buf = NULL;
         if (aa.sweep) { free(mem->gb_buf_te); mem->gb_buf_te = NULL; }
 
-        /* ── Sweep mode: Member sofort zerstören ── */
+        /* ── Sweep mode: destroy member immediately ── */
         if (aa.sweep) {
             ki_member_destroy(mem);
             members[mb] = NULL;

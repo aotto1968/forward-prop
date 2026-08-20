@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Otto Score — DRAM-Native Classification via Bit-Logic</title>
-    <meta name="description" content="Otto Score: DRAM-native classification using only &amp;|~ + int32 — 98.1% MNIST, 91.6% Fashion-MNIST, 64.4% CIFAR-10. Frozen random W0 projection, MAJ1 majority, trained int32 log-odds target.">
+    <meta name="description" content="Otto Score: DRAM-native classification using only &amp;|~ + int32 — 98.1% MNIST, 92.96% Fashion-MNIST, 69.99% CIFAR-10 ensemble. Frozen random W0 projection, MAJ1 majority, trained int32 log-odds target.">
     <meta name="author" content="Andreas Otto">
     <meta name="robots" content="index, follow">
     <meta name="googlebot" content="index, follow">
@@ -12,21 +12,21 @@
     <link rel="stylesheet" href="../style.css">
     <link rel="canonical" href="https://forward-prop.nhi1.de/papers/otto-score.html">
     <meta property="og:title" content="Otto Score — DRAM-Native Classification via Bit-Logic">
-    <meta property="og:description" content="Frozen random W0 projection + MAJ1 majority + trained int32 log-odds target. Pure &amp;|~ + int32 — no float, no multiply-accumulate. 98.1% MNIST, 91.6% Fashion, 64.4% CIFAR-10.">
+    <meta property="og:description" content="Frozen random W0 projection + MAJ1 majority + trained int32 log-odds target. Pure &amp;|~ + int32 — no float, no multiply-accumulate. 98.1% MNIST, 92.96% Fashion, 69.99% CIFAR-10 ensemble.">
     <meta property="og:type" content="article">
     <meta property="og:url" content="https://forward-prop.nhi1.de/papers/otto-score.html">
     <meta property="og:image" content="https://forward-prop.nhi1.de/assets/og-image.png">
     <meta property="og:site_name" content="Forward-Prop Research">
     <meta name="twitter:card" content="summary_large_image">
     <meta name="twitter:title" content="Otto Score — DRAM-Native Classification via Bit-Logic">
-    <meta name="twitter:description" content="Frozen random W0 + MAJ1 majority + int32 log-odds target. Pure bit-logic classification — 98.1% MNIST, 91.6% Fashion, 64.4% CIFAR-10.">
+    <meta name="twitter:description" content="Frozen random W0 + MAJ1 majority + int32 log-odds target. Pure bit-logic classification — 98.1% MNIST, 92.96% Fashion, 69.99% CIFAR-10 ensemble.">
     <meta name="twitter:image" content="https://forward-prop.nhi1.de/assets/og-image.png">
     <script type="application/ld+json">
     {
       "@context": "https://schema.org",
       "@type": "ScholarlyArticle",
       "headline": "Otto Score: DRAM-native Classification via Bit-Logic + MAJ1",
-      "description": "DRAM-native classifier using only &amp;|~ + int32. Frozen random W0 projection with MAJ1 majority, trained int32 Bayes log-Score target. 98.1% MNIST, 91.6% Fashion-MNIST, 64.4% CIFAR-10.",
+      "description": "DRAM-native classifier using only &amp;|~ + int32. Frozen random W0 projection with MAJ1 majority, trained int32 Bayes log-Score target. 98.1% MNIST, 92.96% Fashion-MNIST, 69.99% CIFAR-10 ensemble.",
       "author": { "@type": "Person", "name": "Andreas Otto" },
       "datePublished": "2026-06-14",
       "dateModified": "2026-08-10",
@@ -62,7 +62,7 @@
 <h2><span class="accent-bar">&#8203;</span> Abstract</h2>
 <div class="abstract-box">
 <p>We present <strong>Otto Score</strong>, a classification method designed for DRAM inference chips that use <strong>only bit-level operations</strong> (<code>&amp;</code>, <code>|</code>, <code>~</code>, <code>XNOR</code>, <code>popcount</code>). No floating-point, no integer multiply-accumulate, no division during inference.</p>
-<p>The method achieves <strong>98.1% on MNIST</strong> (H=128, EN=7), <strong>91.6% on Fashion-MNIST</strong> (H=512, 40 members) and <strong>64.4% on CIFAR-10</strong> (H=1024, all xforms) using pure <code>&amp;|~</code> + int32 at inference time. Training uses error-driven int32 target corrections with Bayesian log-odds scoring (no backprop, no float gradients needed for the DRAM-native path).</p>
+<p>The method achieves <strong>98.1% on MNIST</strong> (H=128, EN=7), <strong>92.96% on Fashion-MNIST</strong> (H=512, 59 members, trap broken) and <strong>69.99% on CIFAR-10</strong> (ensemble beam-search) using pure <code>&amp;|~</code> + int32 at inference time. Training uses error-driven int32 target corrections with Bayesian log-odds scoring (no backprop, no float gradients needed for the DRAM-native path).</p>
 <p><strong>Key architectural insight:</strong> Every ensemble member is computed independently and in parallel. Adding more members increases accuracy without increasing inference latency — members simply occupy more DRAM rows running simultaneously. The frozen random projection W0 + MAJ1 majority is the critical nonlinear ingredient: without it (Bit-Voting baseline) accuracy drops 4–9pp at identical bit-mass.</p>
 </div>
 
@@ -374,13 +374,14 @@ for each sample (x, y_true):
 <table class="compare-table">
 <thead><tr><th>Config</th><th>Eval</th><th>Members</th><th>Note</th></tr></thead>
 <tbody>
-<tr><td>H=512, m1t=105, beam10 --max</td><td><strong>91.58%</strong></td><td>40</td><td>2026-08-09, INT32 bit-exact</td></tr>
+    <tr><td>H=512, m1t=105, beam20 --max --filter eval gt 20%</td><td><strong>92.96%</strong></td><td>59</td><td>2026-08-19, INT32 bit-exact — trap broken</td></tr>
+<tr><td>H=512, m1t=105, beam10 --max</td><td>91.58%</td><td>40</td><td>2026-08-09, historical</td></tr>
 <tr><td>H=196, m1t=105 (reference)</td><td>91.44%</td><td>36</td><td>merge=retrain=IFC, 0pp gap</td></tr>
 <tr><td>Bit-Voting (no W0)</td><td>88.94%</td><td>17</td><td>lower technology bound</td></tr>
 </tbody>
 </table>
 </div>
-<p>Fashion-MNIST is the <strong>91% trap</strong>: every search strategy lands in the 88.7–91.6% basin — an architectural ceiling (frozen W0 + maj1 voting, no convolution), not a search problem. The H dimension is fully measured and flat (H=196→512: +0.14pp).</p>
+<p>Fashion-MNIST was the <strong>91% trap</strong> (88.7–91.6% basin) — now <strong>broken at 92.96%</strong> (H=512, beam 20 --max, see <a href="mnist-fashion.html">Fashion paper</a>). The trap was architectural (frozen W0 + maj1), but scale + beam-search unlocks the extra point.</p>
 
 <h3 style="margin-top:2rem;">4.3 CIFAR-10 (current)</h3>
 <div class="table-wrapper">
@@ -429,7 +430,7 @@ is ~19&times; faster (maj1(W0&times;I) not cacheable).
 <p>The random projection W0 is <strong>never trained</strong>. Its role is to create diverse binary fingerprints of the input. <strong><code>--seed-member const</code> (all members share identical W0) regresses to 89.9%</strong> — barely better than N=1.</p>
 
 <h3 style="margin-top:1.5rem;">5.2 Human Color Vision as Blueprint</h3>
-<p>The Otto Score channel set is directly inspired by the <strong>human visual system</strong>: three cone types (L=red, M=green, S=blue) transformed into opponent channels in the retina. See <a href="../docs/color-vision-opponent-channels.md">color-vision-opponent-channels.md</a>.</p>
+<p>The Otto Score channel set is directly inspired by the <strong>human visual system</strong>: three cone types (L=red, M=green, S=blue) transformed into opponent channels in the retina. See <a href="https://github.com/aotto1968/forward-prop/blob/master/docs/color-vision-opponent-channels.md" target="_blank">color-vision-opponent-channels.md</a>.</p>
 <div class="table-wrapper">
 <table class="compare-table">
 <thead><tr><th>Human Visual System</th><th>Otto Score Channel</th><th>Purpose</th></tr></thead>
@@ -467,8 +468,8 @@ is ~19&times; faster (maj1(W0&times;I) not cacheable).
 
 <!-- ── 7. Conclusion ── -->
 <h2 style="margin-top:2.5rem;"><span class="accent-bar">&#8203;</span> 7. Conclusion</h2>
-<p>Otto Score reaches <strong>98.1% on MNIST</strong>, <strong>91.6% on Fashion-MNIST</strong> and
-<strong>64.4% on CIFAR-10</strong> using only <code>&amp;|~</code> + int32 at inference time. The
+<p>Otto Score reaches <strong>98.1% on MNIST</strong>, <strong>92.96% on Fashion-MNIST</strong> and
+<strong>69.99% on CIFAR-10 (ensemble)</strong> using only <code>&amp;|~</code> + int32 at inference time. The
 method is data-limited: accuracy scales logarithmically with bit-mass and
 linearly with training data per evaluation sample. The frozen random W0
 projection + MAJ1 majority is the critical nonlinear ingredient — removing it

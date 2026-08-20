@@ -28,7 +28,7 @@ HDRS = $(wildcard *.h) $(wildcard ../lib/*.h)
 GLIB_CFLAGS = $(shell pkg-config --cflags glib-2.0)
 GLIB_LIBS   = $(shell pkg-config --libs glib-2.0)
 
-# carquet (Parquet-Writer für --sample-index) — merge-ensemble.c needs it.
+# carquet (Parquet writer for --sample-index) — merge-ensemble.c needs it.
 # Default: USE_CARQUET=0 (no carquet dependency, no --sample-index option).
 # Override with: make USE_CARQUET=1
 USE_CARQUET ?= 0

@@ -2,8 +2,8 @@
  * mnist-1/mlp-otto-xform-samples.c — Xform Sample Viewer
  * ========================================================
  *
- * Lädt MNIST/CIFAR/Fashion, wendet alle aktiven --xform auf einen
- * Sample-Index an und exportiert als PNG + index.html.
+ * Loads MNIST/CIFAR/Fashion, applies all active --xform to a
+ * sample index and exports as PNG + index.html.
  *
  * Usage:
  *   ./mnist-mlp-otto-xform-samples.exe --idx 42 --xform all --export out/xf
@@ -14,9 +14,9 @@
  *   make cifar-mlp-otto-xform-samples.exe
  *   ./cifar-mlp-otto-xform-samples.exe --idx 0 --xform performance
  */
-#include "ki-config.h"   /* Konvention (wie Trainer): ki-config VOR ki-common —
-                            * definiert KI_SWEEP_PERFORMANCE_XFORM bevor
-                            * ki-encoding.h den Fallback setzt (sonst -Werror
+#include "ki-config.h"   /* Convention (like trainers): ki-config BEFORE ki-common —
+                            * defines KI_SWEEP_PERFORMANCE_XFORM before
+                            * ki-encoding.h sets the fallback (else -Werror
                             * redefined, make all-all). */
 /* libtprint BEFORE ki-common.h: print_confusion_debug() in ki-common.h uses
  * TPrint (2026-08-14). */

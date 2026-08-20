@@ -53,156 +53,137 @@
 
     <main class="container">
         <h1>Otto Score Documentation</h1>
-        <p class="section-intro">Complete technical documentation for the Otto Score DRAM-Native Classifier. Source: <a href="https://github.com/aotto1968/forward-prop/tree/master/docs" target="_blank">GitHub/docs</a></p>
+        <p class="section-intro">How the site and the GitHub docs fit together: <strong>papers</strong> live here on the site (rendered HTML, deep dives), <strong>technical docs</strong> live on GitHub as Markdown and are linked below — no duplication, single source of truth. Start on the <a href="../">landing page</a> to get hooked, then dive into papers, then drill into docs for the exact math and pipeline.</p>
+        <div style="background:linear-gradient(135deg, rgba(230,168,23,0.08), rgba(230,168,23,0.03)); border-left:4px solid var(--amber); padding:1rem 1.25rem; border-radius:0 6px 6px 0; margin:1rem 0 1.5rem;">
+            <strong>Reading path:</strong> <a href="../">Landing</a> (catch + numbers) → <a href="../papers/otto-score.html">Otto Score</a> (method) → <a href="../papers/mnist-fashion.html">Fashion 92.96%</a> / <a href="../papers/cifar-10.html">CIFAR 69.99%</a> (results) → Docs below (exact math & workflow) → <a href="https://github.com/aotto1968/forward-prop/tree/master/docs" target="_blank" rel="noopener">GitHub/docs</a> (source).
+        </div>
 
         <section>
-            <h2>Core Documents</h2>
+            <h2><span class="accent-bar">&#8203;</span> Core Documents — read these first</h2>
+            <p style="color:var(--mid-gray); font-size:0.9rem; margin-bottom:1rem;">All links open the rendered Markdown on GitHub (no rebuild on site).</p>
             <table style="width:100%; border-collapse:collapse; margin-top:1rem;">
                 <thead>
                     <tr style="background:var(--navy); color:white;">
                         <th style="padding:0.75rem; text-align:left; border:1px solid var(--navy);">Document</th>
-                        <th style="padding:0.75rem; text-align:left; border:1px solid var(--navy);">Description</th>
-                        <th style="padding:0.75rem; text-align:left; border:1px solid var(--navy);">Format</th>
+                        <th style="padding:0.75rem; text-align:left; border:1px solid var(--navy);">What you get</th>
+                        <th style="padding:0.75rem; text-align:left; border:1px solid var(--navy);">Pairs with</th>
                     </tr>
                 </thead>
                 <tbody>
                     <tr>
-                        <td style="padding:0.75rem; border:1px solid #ddd;"><a href="workflow.md" target="_blank">workflow.md</a> 🆕</td>
-                        <td style="padding:0.75rem; border:1px solid #ddd;">Complete 4-phase result generation & validation (sweep → merge → export → import)</td>
-                        <td style="padding:0.75rem; border:1px solid #ddd;">Markdown</td>
+                        <td style="padding:0.75rem; border:1px solid #ddd;"><a href="https://github.com/aotto1968/forward-prop/blob/master/docs/workflow.md" target="_blank" rel="noopener">workflow.md</a> 🆕</td>
+                        <td style="padding:0.75rem; border:1px solid #ddd;">4-phase pipeline: sweep → merge → export → import. How to reproduce 92.96% / 69.99% exactly.</td>
+                        <td style="padding:0.75rem; border:1px solid #ddd;"><a href="../papers/mnist-fashion.html">Fashion</a>, <a href="../papers/cifar-10.html">CIFAR</a></td>
                     </tr>
                     <tr>
-                        <td style="padding:0.75rem; border:1px solid #ddd;"><a href="architecture.md" target="_blank">architecture.md</a></td>
-                        <td style="padding:0.75rem; border:1px solid #ddd;">Internal pipeline, caches, parallelism model, .ens contract</td>
-                        <td style="padding:0.75rem; border:1px solid #ddd;">Markdown</td>
+                        <td style="padding:0.75rem; border:1px solid #ddd;"><a href="https://github.com/aotto1968/forward-prop/blob/master/docs/architecture.md" target="_blank" rel="noopener">architecture.md</a></td>
+                        <td style="padding:0.75rem; border:1px solid #ddd;">Internal pipeline, caches, PRF parallelism, .ens contract — the “how it really runs”.</td>
+                        <td style="padding:0.75rem; border:1px solid #ddd;"><a href="../papers/otto-score.html">Otto Score</a></td>
                     </tr>
                     <tr>
-                        <td style="padding:0.75rem; border:1px solid #ddd;"><a href="scores.md" target="_blank">scores.md</a></td>
-                        <td style="padding:0.75rem; border:1px solid #ddd;">Score math: target counting, logit conversion, class offset, voting</td>
-                        <td style="padding:0.75rem; border:1px solid #ddd;">Markdown</td>
+                        <td style="padding:0.75rem; border:1px solid #ddd;"><a href="https://github.com/aotto1968/forward-prop/blob/master/docs/scores.md" target="_blank" rel="noopener">scores.md</a></td>
+                        <td style="padding:0.75rem; border:1px solid #ddd;">Score math: target counting, logit conversion, class offset, voting — no hand-waving.</td>
+                        <td style="padding:0.75rem; border:1px solid #ddd;"><a href="../papers/otto-score.html">Otto Score §3</a></td>
                     </tr>
                     <tr>
-                        <td style="padding:0.75rem; border:1px solid #ddd;"><a href="ensemble.md" target="_blank">ensemble.md</a></td>
-                        <td style="padding:0.75rem; border:1px solid #ddd;">Merge-ensemble search algorithms (beam, greedy, tries, optimal)</td>
-                        <td style="padding:0.75rem; border:1px solid #ddd;">Markdown</td>
+                        <td style="padding:0.75rem; border:1px solid #ddd;"><a href="https://github.com/aotto1968/forward-prop/blob/master/docs/ensemble.md" target="_blank" rel="noopener">ensemble.md</a></td>
+                        <td style="padding:0.75rem; border:1px solid #ddd;">Beam / greedy / tries / optimal — when to use which search.</td>
+                        <td style="padding:0.75rem; border:1px solid #ddd;"><a href="../papers/cifar-10.html#leaderboard">CIFAR leaderboard</a></td>
                     </tr>
                     <tr>
-                        <td style="padding:0.75rem; border:1px solid #ddd;"><a href="encoding.md" target="_blank">encoding.md</a></td>
-                        <td style="padding:0.75rem; border:1px solid #ddd;">Input encodings (thermometer, raw, sizeN)</td>
-                        <td style="padding:0.75rem; border:1px solid #ddd;">Markdown</td>
+                        <td style="padding:0.75rem; border:1px solid #ddd;"><a href="https://github.com/aotto1968/forward-prop/blob/master/docs/encoding.md" target="_blank" rel="noopener">encoding.md</a></td>
+                        <td style="padding:0.75rem; border:1px solid #ddd;">Thermometer / raw / sizeN — why continuous data needs encoding.</td>
+                        <td style="padding:0.75rem; border:1px solid #ddd;"><a href="../papers/otto-score.html">Otto Score §2</a></td>
                     </tr>
                     <tr>
-                        <td style="padding:0.75rem; border:1px solid #ddd;"><a href="bitmass.md" target="_blank">bitmass.md</a></td>
-                        <td style="padding:0.75rem; border:1px solid #ddd;">Container principle: every neuron = 32-bit container</td>
-                        <td style="padding:0.75rem; border:1px solid #ddd;">Markdown</td>
+                        <td style="padding:0.75rem; border:1px solid #ddd;"><a href="https://github.com/aotto1968/forward-prop/blob/master/docs/bitmass.md" target="_blank" rel="noopener">bitmass.md</a></td>
+                        <td style="padding:0.75rem; border:1px solid #ddd;">Container principle: every neuron = 32-bit container.</td>
+                        <td style="padding:0.75rem; border:1px solid #ddd;">Landing “Why It Matters”</td>
                     </tr>
                 </tbody>
             </table>
         </section>
 
         <section style="margin-top:2rem;">
-            <h2>Reference Documents</h2>
+            <h2><span class="accent-bar">&#8203;</span> Reference — deeper dives</h2>
             <table style="width:100%; border-collapse:collapse; margin-top:1rem;">
                 <thead>
                     <tr style="background:var(--navy); color:white;">
                         <th style="padding:0.75rem; text-align:left; border:1px solid var(--navy);">Document</th>
-                        <th style="padding:0.75rem; text-align:left; border:1px solid var(--navy);">Description</th>
-                        <th style="padding:0.75rem; text-align:left; border:1px solid var(--navy);">Format</th>
+                        <th style="padding:0.75rem; text-align:left; border:1px solid var(--navy);">What you get</th>
                     </tr>
                 </thead>
                 <tbody>
                     <tr>
-                        <td style="padding:0.75rem; border:1px solid #ddd;"><a href="majority-vote.md" target="_blank">majority-vote.md</a></td>
-                        <td style="padding:0.75rem; border:1px solid #ddd;">Majority Vote (MAJ1/MAJ3) — H0 Computation in Bin32</td>
-                        <td style="padding:0.75rem; border:1px solid #ddd;">Markdown</td>
+                        <td style="padding:0.75rem; border:1px solid #ddd;"><a href="https://github.com/aotto1968/forward-prop/blob/master/docs/majority-vote.md" target="_blank" rel="noopener">majority-vote.md</a></td>
+                        <td style="padding:0.75rem; border:1px solid #ddd;">MAJ1 / MAJ3 — H0 computation, thresholds, DRAM mapping.</td>
                     </tr>
                     <tr>
-                        <td style="padding:0.75rem; border:1px solid #ddd;"><a href="ottoscore.md" target="_blank">otto-score.md</a></td>
-                        <td style="padding:0.75rem; border:1px solid #ddd;">Otto Score — DRAM-Native Bayes Classification</td>
-                        <td style="padding:0.75rem; border:1px solid #ddd;">Markdown</td>
+                        <td style="padding:0.75rem; border:1px solid #ddd;"><a href="https://github.com/aotto1968/forward-prop/blob/master/docs/otto-score.md" target="_blank" rel="noopener">otto-score.md</a></td>
+                        <td style="padding:0.75rem; border:1px solid #ddd;">Otto Score in doc form — Bayes log-Score derivation.</td>
                     </tr>
                     <tr>
-                        <td style="padding:0.75rem; border:1px solid #ddd;"><a href="bitmass.md" target="_blank">bitmass.md</a></td>
-                        <td style="padding:0.75rem; border:1px solid #ddd;">Bit-Mass Theory — The Container Principle</td>
-                        <td style="padding:0.75rem; border:1px solid #ddd;">Markdown</td>
+                        <td style="padding:0.75rem; border:1px solid #ddd;"><a href="https://github.com/aotto1968/forward-prop/blob/master/docs/bitvoting-baseline.md" target="_blank" rel="noopener">bitvoting-baseline.md</a></td>
+                        <td style="padding:0.75rem; border:1px solid #ddd;">Linear baseline — Bit-Voting vs W0 at equal H (W0 = free width).</td>
                     </tr>
                     <tr>
-                        <td style="padding:0.75rem; border:1px solid #ddd;"><a href="encoding.md" target="_blank">encoding.md</a></td>
-                        <td style="padding:0.75rem; border:1px solid #ddd;">Input Encoding — The Number World vs Binary World</td>
-                        <td style="padding:0.75rem; border:1px solid #ddd;">Markdown</td>
+                        <td style="padding:0.75rem; border:1px solid #ddd;"><a href="https://github.com/aotto1968/forward-prop/blob/master/docs/popcount.md" target="_blank" rel="noopener">popcount.md</a></td>
+                        <td style="padding:0.75rem; border:1px solid #ddd;">Popcount off-table proof.</td>
                     </tr>
                     <tr>
-                        <td style="padding:0.75rem; border:1px solid #ddd;"><a href="bitvoting-baseline.md" target="_blank">bitvoting-baseline.md</a></td>
-                        <td style="padding:0.75rem; border:1px solid #ddd;">Bit-Voting Baseline — Linear Perceptron on Bits</td>
-                        <td style="padding:0.75rem; border:1px solid #ddd;">Markdown</td>
+                        <td style="padding:0.75rem; border:1px solid #ddd;"><a href="https://github.com/aotto1968/forward-prop/blob/master/docs/DRAM.md" target="_blank" rel="noopener">DRAM.md</a></td>
+                        <td style="padding:0.75rem; border:1px solid #ddd;">KI-DRAM — Boolean-only inference in memory.</td>
                     </tr>
                     <tr>
-                        <td style="padding:0.75rem; border:1px solid #ddd;"><a href="hebbian.md" target="_blank">hebbian.md</a></td>
-                        <td style="padding:0.75rem; border:1px solid #ddd;">Hebbian Baseline — Counter-based Co-occurrence</td>
-                        <td style="padding:0.75rem; border:1px solid #ddd;">Markdown</td>
+                        <td style="padding:0.75rem; border:1px solid #ddd;"><a href="https://github.com/aotto1968/forward-prop/blob/master/docs/random-projection-coverage.md" target="_blank" rel="noopener">random-projection-coverage.md</a></td>
+                        <td style="padding:0.75rem; border:1px solid #ddd;">Random projection coverage analysis.</td>
                     </tr>
                     <tr>
-                        <td style="padding:0.75rem; border:1px solid #ddd;"><a href="adamw.md" target="_blank">adamw.md</a></td>
-                        <td style="padding:0.75rem; border:1px solid #ddd;">Float32 AdamW Baseline</td>
-                        <td style="padding:0.75rem; border:1px solid #ddd;">Markdown</td>
-                    </tr>
-                    <tr>
-                        <td style="padding:0.75rem; border:1px solid #ddd;"><a href="bitvoting-baseline.md" target="_blank">bitvoting-baseline.md</a></td>
-                        <td style="padding:0.75rem; border:1px solid #ddd;">Bit-Voting Baseline — Linear Perceptron on Bits</td>
-                        <td style="padding:0.75rem; border:1px solid #ddd;">Markdown</td>
-                    </tr>
-                    <tr>
-                        <td style="padding:0.75rem; border:1px solid #ddd;"><a href="popcount.md" target="_blank">popcount.md</a></td>
-                        <td style="padding:0.75rem; border:1px solid #ddd;">Popcount Analysis</td>
-                        <td style="padding:0.75rem; border:1px solid #ddd;">Markdown</td>
-                    </tr>
-                    <tr>
-                        <td style="padding:0.75rem; border:1px solid #ddd;"><a href="random-projection-coverage.md" target="_blank">random-projection-coverage.md</a></td>
-                        <td style="padding:0.75rem; border:1px solid #ddd;">Random Projection Coverage Analysis</td>
-                        <td style="padding:0.75rem; border:1px solid #ddd;">Markdown</td>
-                    </tr>
-                    <tr>
-                        <td style="padding:0.75rem; border:1px solid #ddd;"><a href="majority-vote.md" target="_blank">majority-vote.md</a></td>
-                        <td style="padding:0.75rem; border:1px solid #ddd;">Majority Vote (MAJ1/MAJ3) — H0 Computation in Bin32</td>
-                        <td style="padding:0.75rem; border:1px solid #ddd;">Markdown</td>
+                        <td style="padding:0.75rem; border:1px solid #ddd;"><a href="https://github.com/aotto1968/forward-prop/blob/master/docs/hebbian.md" target="_blank" rel="noopener">hebbian.md</a> · <a href="https://github.com/aotto1968/forward-prop/blob/master/docs/adamw.md" target="_blank" rel="noopener">adamw.md</a></td>
+                        <td style="padding:0.75rem; border:1px solid #ddd;">Hebbian / AdamW baselines — how the reference methods compare.</td>
                     </tr>
                 </tbody>
             </table>
         </section>
 
         <section style="margin-top:2rem;">
-            <h2>Status Reports & Papers</h2>
+            <h2><span class="accent-bar">&#8203;</span> Papers on this site</h2>
+            <p style="color:var(--mid-gray); font-size:0.9rem; margin-bottom:1rem;">Rendered HTML deep dives — the smooth counterpart to the GitHub docs.</p>
             <table style="width:100%; border-collapse:collapse; margin-top:1rem;">
                 <thead>
                     <tr style="background:var(--navy); color:white;">
-                        <th style="padding:0.75rem; text-align:left; border:1px solid var(--navy);">Document</th>
-                        <th style="padding:0.75rem; text-align:left; border:1px solid var(--navy);">Description</th>
+                        <th style="padding:0.75rem; text-align:left; border:1px solid var(--navy);">Paper</th>
+                        <th style="padding:0.75rem; text-align:left; border:1px solid var(--navy);">Focus</th>
                     </tr>
                 </thead>
                 <tbody>
                     <tr>
-                        <td style="padding:0.75rem; border:1px solid #ddd;"><a href="status-2026-08.html" target="_blank">status-2026-08.html</a> 🆕</td>
-                        <td style="padding:0.75rem; border:1px solid #ddd;">Status Report August 2026 — Float32 drift fixed, ensemble beam-search, 69.99% CIFAR</td>
+                        <td style="padding:0.75rem; border:1px solid #ddd;"><a href="../papers/otto-score.html">Otto Score</a></td>
+                        <td style="padding:0.75rem; border:1px solid #ddd;">Architecture paper — the method, terminology, parallelism.</td>
                     </tr>
                     <tr>
-                        <td style="padding:0.75rem; border:1px solid #ddd;"><a href="status-2026-07.html" target="_blank">status-2026-07.html</a></td>
-                        <td style="padding:0.75rem; border:1px solid #ddd;">Status Report July 2026 — --export-gb cache, --maj 1 default, 65% ceiling</td>
+                        <td style="padding:0.75rem; border:1px solid #ddd;"><a href="../papers/mnist-fashion.html">Fashion-MNIST — trap broken 92.96%</a> 🆕</td>
+                        <td style="padding:0.75rem; border:1px solid #ddd;">Full leaderboard + search-hebel + speed argument.</td>
                     </tr>
                     <tr>
-                        <td style="padding:0.75rem; border:1px solid #ddd;"><a href="paper-2026-06-29-otto-score-summary.md" target="_blank">paper-2026-06-29-otto-score-summary.md</a></td>
-                        <td style="padding:0.75rem; border:1px solid #ddd;">Otto Score Summary Paper (June 2026)</td>
+                        <td style="padding:0.75rem; border:1px solid #ddd;"><a href="../papers/bitvoting-baseline.html">Bit-Voting Baseline</a></td>
+                        <td style="padding:0.75rem; border:1px solid #ddd;">Equal-H parity — W0 = free width, not magical nonlinearity.</td>
                     </tr>
                     <tr>
-                        <td style="padding:0.75rem; border:1px solid #ddd;"><a href="cifar-10.html" target="_blank">cifar-10.html</a></td>
-                        <td style="padding:0.75rem; border:1px solid #ddd;">CIFAR-10 Breakthrough Paper (64.4% ceiling)</td>
+                        <td style="padding:0.75rem; border:1px solid #ddd;"><a href="../papers/cifar-10.html">CIFAR-10 — 69.99% ensemble</a></td>
+                        <td style="padding:0.75rem; border:1px solid #ddd;">Leaderboard + architecture + August precision/IFC update.</td>
+                    </tr>
+                    <tr>
+                        <td style="padding:0.75rem; border:1px solid #ddd;"><a href="../papers/status-2026-08.html">Status Aug 2026</a> · <a href="../papers/status-2026-07.html">Jul 2026</a></td>
+                        <td style="padding:0.75rem; border:1px solid #ddd;">Monthly progress — what changed, what’s next.</td>
                     </tr>
                 </tbody>
             </table>
         </section>
 
         <section style="margin-top:2rem;">
-            <h2>Source Repository</h2>
-            <p>All documentation source files are in the <a href="https://github.com/aotto1968/forward-prop/tree/master/docs" target="_blank">GitHub docs/ directory</a>. The documentation is written in Markdown and rendered by GitHub.</p>
+            <h2><span class="accent-bar">&#8203;</span> Source</h2>
+            <p>Single source of truth is <a href="https://github.com/aotto1968/forward-prop/tree/master/docs" target="_blank" rel="noopener">GitHub/docs</a> (Markdown, rendered by GitHub). This hub just links there — no duplication. Site papers are <a href="https://github.com/aotto1968/forward-prop/tree/master/otto-score-ifc/www/papers" target="_blank" rel="noopener">otto-score-ifc/www/papers</a>.</p>
         </section>
     </main>
 
